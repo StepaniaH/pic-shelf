@@ -1,0 +1,19 @@
+# runtime data (db, thumbnails, secret key, playlists, exports)
+data/
+.uv-cache/
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# tests
+.pytest_cache/
+.coverage
+
+# misc
+.DS_Store
+*.log

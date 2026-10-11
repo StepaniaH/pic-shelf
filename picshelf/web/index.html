@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pic Shelf — 图片库</title>
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<header id="topbar">
+  <a class="brand" href="#/home">Pic Shelf</a>
+  <form id="search-form" role="search">
+    <input id="search-input" type="search" autocomplete="off"
+           placeholder="搜索：tag / artist:名 / album:名 / rating:>=8 / fav: / ext:png">
+  </form>
+  <nav id="nav">
+    <a href="#/home">首页</a>
+    <a href="#/albums">专辑</a>
+    <a href="#/artists">艺术家</a>
+    <a href="#/tags">标签</a>
+    <a href="#/favorites">收藏</a>
+    <a href="#/admin" id="nav-admin" hidden>管理</a>
+  </nav>
+  <div id="userbox"></div>
+</header>
+<main id="view" aria-live="polite"></main>
+<div id="overlay-root"></div>
+<div id="toast-root" aria-live="polite"></div>
+<div id="modal-root"></div>
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>
