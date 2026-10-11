@@ -5,7 +5,7 @@
 自托管图片库：导入 → 编码（哈希 / 缩略图）→ 检索 / 评分 / Tag / 艺术家 → 规则化播放。
 三端界面：**Web**（浏览器）/ **TUI**（终端）/ **CLI**（命令行，可将播放队列直接交给 mpv）。桌面端规划中。
 
-![Pic Shelf — 专辑页](docs/screenshots/2026-10-11-album-page-zh.png)
+![Pic Shelf — 库页面](docs/screenshots/2026-10-11-library-zh.png)
 ![Pic Shelf — 查看器（英文界面示例）](docs/screenshots/2026-10-11-viewer-en.png)
 
 > 调研与竞品分析：`docs/research/2026-10-11-open-source-image-viewers.md`

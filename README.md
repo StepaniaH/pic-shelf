@@ -5,7 +5,7 @@
 Self-hosted image library: import → encode (hash / thumbnails) → search / rate / tag / artists → rule-based playback.
 Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line — hand the playback queue straight to mpv). Desktop client planned.
 
-![Pic Shelf — album page](docs/screenshots/2026-10-11-album-page-en.png)
+![Pic Shelf — library](docs/screenshots/2026-10-11-library-en.png)
 ![Pic Shelf — viewer](docs/screenshots/2026-10-11-viewer-en.png)
 
 > Research & competitive analysis: `docs/research/2026-10-11-open-source-image-viewers.md`
