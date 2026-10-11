@@ -5,13 +5,13 @@
 ## 项目概览
 
 自托管图片库：导入 → 编码（哈希/缩略图）→ 检索 / 评分 / Tag / 艺术家 → 规则化播放；**Web + TUI + CLI** 三端。
-当前版本：v0.1 + v0.2 托管导入（CLI + Web 向导）已落地（2026-10-11，58 项测试全绿）。规划路线：**开源 → Docker 部署 / 安装包**。项目定名 **Pic Shelf**（2026-10-11，见 `docs/decisions.md` D11）。
+当前版本：v0.1 + v0.2 托管导入（CLI + Web 向导）+ 中英双语（zh/en）已落地（2026-10-11，62 项测试全绿）。规划路线：**开源 → Docker 部署 / 安装包**。项目定名 **Pic Shelf**（2026-10-11，见 `docs/decisions.md` D11）。
 
 ## 工作流约定
 
-- **main 分支保护**：main 只放经评审的稳定版本（当前仅种子提交）；日常开发在 `dev`，合并需评审确认。
+- **main 分支保护**：main 只放经评审的稳定版本；日常开发在 `dev`，合并需评审确认。
 - **任务驱动**：按 `TASKS.md` 分层推进，一任务一提交（`feat:` / `fix:` / `test:` / `docs:` 前缀）。
-- **不 push**：无 remote；未经维护者批准不添加 remote、不 push、不对外暴露服务。
+- **不擅自 push**：remote 已配（GitHub `StepaniaH/pic-shelf`）；推送 / 合并 main 需维护者明确批准；不对外暴露服务。
 - **真实测试**：完成声明必须附真实运行结果（pytest / curl / CLI 输出）；禁止「应该能跑」式断言。
 
 ## 常用命令
@@ -33,7 +33,7 @@ export UV_CACHE_DIR=$PWD/.uv-cache        # 依赖缓存留在项目内
 - git 跟踪文件中不允许出现个人绝对路径、IP、主机名、口令；素材测试用环境变量 `PICSHELF_TEST_MATERIALS`。
 - **不越界**：不修改本仓库与测试素材目录之外的任何文件；基建变更（Caddy / DNS / 防火墙 / 部署）先提案等批准。
 - 零遥测。
-- UI 中文；数值自解释（不出现未定义缩写）；颜色语义：蓝=导航/可交互、绿=正常、橙=警示与破坏性确认；破坏性操作必须确认。
+- UI 中英双语（zh/en）：新增文案一律写中文原文，并在 `picshelf/i18n.py` 与 `web/js/i18n.js` 目录中补 EN（缺译回退中文）；测试锁 zh（conftest `PICSHELF_LANG=zh`）；数值自解释（不出现未定义缩写）；颜色语义：蓝=导航/可交互、绿=正常、橙=警示与破坏性确认；破坏性操作必须确认。
 - 面向用户的报错必须可操作（给出下一步），不带 stack trace。
 
 ## 结构速查
@@ -50,6 +50,7 @@ export UV_CACHE_DIR=$PWD/.uv-cache        # 依赖缓存留在项目内
 | `picshelf/play.py` | 播放会话队列（顺序/乱序/随机/定量/循环） |
 | `picshelf/ops.py` | 评分 / 标签 / 艺术家关联 / 评论 / 笔记 / 专辑（API 与 CLI 共用） |
 | `picshelf/libsvc.py` | 库管理与查重（sha256 精确 / pHash 相似） |
+| `picshelf/i18n.py` | 双语文案（中文 msgid → EN 目录；Web 侧对应 `web/js/i18n.js`） |
 | `picshelf/api/` | FastAPI 应用（`create_app(cfg)` 工厂） |
 | `picshelf/cli.py` | Click CLI（入口 `main`） |
 | `picshelf/tui.py` | Textual 应用（`run_tui(cfg)`） |
@@ -68,4 +69,4 @@ SQLite（WAL）；schema 变更 = `db.py` 的 `MIGRATIONS` 追加新版本块 + 
 
 ## 待办与决策
 
-见 `TASKS.md`（任务状态）与 `docs/decisions.md`（D1 加密结论；D2 已决策：本机自用 → 开源 → Docker；D10 库模式已批准推进；D11 命名已定案）。
+见 `TASKS.md`（任务状态）与 `docs/decisions.md`（D1 加密结论；D2 已决策：本机自用 → 开源 → Docker；D10 库模式已批准推进；D11 命名已定案；D12 双语 i18n 已落地）。
