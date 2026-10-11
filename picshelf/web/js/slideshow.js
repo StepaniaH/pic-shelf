@@ -1,11 +1,12 @@
 // 幻灯片：设置弹窗 + 全屏播放（服务端队列驱动）。
 import { api, mediaUrl } from "./api.js";
 import { escapeHtml, toast, showModal } from "./app.js";
+import { t } from "./i18n.js";
 
-const ORDER_LABEL = { sequential: "顺序", shuffle: "乱序", random: "随机" };
+const ORDER_LABEL = { sequential: t("顺序"), shuffle: t("乱序"), random: t("随机") };
 
 function describeSource(source) {
-  return source.title || "当前列表";
+  return source.title || t("当前列表");
 }
 
 function sourceSpec(source) {
@@ -24,34 +25,11 @@ export function openSlideshow(source, startIndex = 0) {
     ...JSON.parse(localStorage.getItem("picshelf.slideshow") || "{}"),
   };
   showModal({
-    title: "幻灯片设置",
-    bodyHtml: `
-      <div class="form-row"><label class="muted">来源</label><span>${escapeHtml(describeSource(source))}</span></div>
-      <div class="form-row">
-        <label>间隔 <select id="ss-interval">${[2, 3, 5, 8, 10, 15, 30, 60]
-          .map((v) => `<option value="${v}" ${Number(saved.interval) === v ? "selected" : ""}>${v}</option>`).join("")}
-        </select> 秒</label>
-        <label>顺序 <select id="ss-order">${Object.entries(ORDER_LABEL)
-          .map(([v, l]) => `<option value="${v}" ${saved.order === v ? "selected" : ""}>${l}</option>`).join("")}
-        </select></label>
-      </div>
-      <div class="form-row">
-        <label>数量 <input id="ss-count" type="number" min="0" value="0" style="width:90px"> <span class="muted">0 = 全部</span></label>
-      </div>
-      <div class="form-row checkbox-row">
-        <label><input type="checkbox" id="ss-loop" ${saved.loop ? "checked" : ""}> 循环（轮播）</label>
-        <label><input type="checkbox" id="ss-captions" ${saved.captions ? "checked" : ""}> 显示字幕（文件名/标签）</label>
-      </div>
-      <div class="form-row">
-        <label>尺寸 <select id="ss-size">${[["fit", "适应"], ["fill", "填满"], ["original", "原图"]]
-          .map(([v, l]) => `<option value="${v}" ${saved.size === v ? "selected" : ""}>${l}</option>`).join("")}
-        </select></label>
-      </div>
-      <p class="hint">播放中：空格 暂停/继续 · ←/→ 上一张/下一张 · Esc 退出</p>
-      <div class="modal-actions">
-        <button class="btn primary" id="ss-start">开始播放</button>
-        <button class="btn" data-close>取消</button>
-      </div>`,
+    title: t("幻灯片设置"),
+    bodyHtml: t("\n      <div class=\"form-row\"><label class=\"muted\">来源</label><span>{v0}</span></div>\n      <div class=\"form-row\">\n        <label>间隔 <select id=\"ss-interval\">{v1}\n        </select> 秒</label>\n        <label>顺序 <select id=\"ss-order\">{v2}\n        </select></label>\n      </div>\n      <div class=\"form-row\">\n        <label>数量 <input id=\"ss-count\" type=\"number\" min=\"0\" value=\"0\" style=\"width:90px\"> <span class=\"muted\">0 = 全部</span></label>\n      </div>\n      <div class=\"form-row checkbox-row\">\n        <label><input type=\"checkbox\" id=\"ss-loop\" {v3}> 循环（轮播）</label>\n        <label><input type=\"checkbox\" id=\"ss-captions\" {v4}> 显示字幕（文件名/标签）</label>\n      </div>\n      <div class=\"form-row\">\n        <label>尺寸 <select id=\"ss-size\">{v5}\n        </select></label>\n      </div>\n      <p class=\"hint\">播放中：空格 暂停/继续 · ←/→ 上一张/下一张 · Esc 退出</p>\n      <div class=\"modal-actions\">\n        <button class=\"btn primary\" id=\"ss-start\">开始播放</button>\n        <button class=\"btn\" data-close>取消</button>\n      </div>", {v0: escapeHtml(describeSource(source)), v1: [2, 3, 5, 8, 10, 15, 30, 60]
+          .map((v) => `<option value="${v}" ${Number(saved.interval) === v ? "selected" : ""}>${v}</option>`).join(""), v2: Object.entries(ORDER_LABEL)
+          .map(([v, l]) => `<option value="${v}" ${saved.order === v ? "selected" : ""}>${l}</option>`).join(""), v3: saved.loop ? "checked" : "", v4: saved.captions ? "checked" : "", v5: [["fit", "适应"], ["fill", "填满"], ["original", "原图"]]
+          .map(([v, l]) => `<option value="${v}" ${saved.size === v ? "selected" : ""}>${l}</option>`).join("")}),
     onMount(el, close) {
       el.querySelector("#ss-start").addEventListener("click", () => {
         const opts = {
@@ -64,7 +42,7 @@ export function openSlideshow(source, startIndex = 0) {
         };
         localStorage.setItem("picshelf.slideshow", JSON.stringify(opts));
         close();
-        startSlideshow(source, opts).catch((e) => toast(e.message || "播放失败", "error"));
+        startSlideshow(source, opts).catch((e) => toast(e.message || t("播放失败"), "error"));
       });
     },
   });
@@ -82,22 +60,11 @@ async function startSlideshow(source, opts) {
       loop: opts.loop,
     },
   });
-  if (!session.total) { toast("来源为空，没有可播放的图片", "error"); return; }
+  if (!session.total) { toast(t("来源为空，没有可播放的图片"), "error"); return; }
 
   const backdrop = document.createElement("div");
   backdrop.className = "slideshow-backdrop";
-  backdrop.innerHTML = `
-    <div class="slideshow-stage size-${opts.size}">
-      <img id="ss-img" alt="">
-      <div class="slideshow-controls">
-        <button class="btn small" id="ss-prev">‹ 上一张</button>
-        <button class="btn small" id="ss-pause">⏸ 暂停</button>
-        <button class="btn small" id="ss-next">下一张 ›</button>
-        <button class="btn small" id="ss-settings">设置</button>
-        <button class="btn small" id="ss-exit">退出 (Esc)</button>
-      </div>
-    </div>
-    ${opts.captions ? `<div class="slideshow-caption" id="ss-caption" aria-live="polite"></div>` : ""}`;
+  backdrop.innerHTML = t("\n    <div class=\"slideshow-stage size-{v0}\">\n      <img id=\"ss-img\" alt=\"\">\n      <div class=\"slideshow-controls\">\n        <button class=\"btn small\" id=\"ss-prev\">‹ 上一张</button>\n        <button class=\"btn small\" id=\"ss-pause\">⏸ 暂停</button>\n        <button class=\"btn small\" id=\"ss-next\">下一张 ›</button>\n        <button class=\"btn small\" id=\"ss-settings\">设置</button>\n        <button class=\"btn small\" id=\"ss-exit\">退出 (Esc)</button>\n      </div>\n    </div>\n    {v1}", {v0: opts.size, v1: opts.captions ? `<div class="slideshow-caption" id="ss-caption" aria-live="polite"></div>` : ""});
   document.body.appendChild(backdrop);
 
   let closed = false;
@@ -141,7 +108,7 @@ async function startSlideshow(source, opts) {
     }
     if (r.done && dir > 0) {
       stopTimer();
-      toast("播放完成", "ok");
+      toast(t("播放完成"), "ok");
       return;
     }
     schedule();
@@ -151,7 +118,7 @@ async function startSlideshow(source, opts) {
 
   function setPaused(p) {
     paused = p;
-    backdrop.querySelector("#ss-pause").textContent = paused ? "▶ 继续" : "⏸ 暂停";
+    backdrop.querySelector("#ss-pause").textContent = paused ? t("▶ 继续") : t("⏸ 暂停");
     if (paused) stopTimer(); else schedule();
   }
 

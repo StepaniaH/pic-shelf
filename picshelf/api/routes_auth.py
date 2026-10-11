@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from .. import auth
 from .deps import COOKIE_NAME, Db, User
+from ..i18n import t
 
 
 def public_user(conn, user) -> dict:
@@ -39,7 +40,7 @@ def login(body: LoginBody, response: Response, request: Request, conn: Db):
         or user["disabled"]
         or not auth.verify_password(body.password, user["password_hash"])
     ):
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        raise HTTPException(status_code=401, detail=t("用户名或密码错误"))
     token = auth.sign_token(request.app.state.secret, int(user["id"]))
     response.set_cookie(
         COOKIE_NAME, token, max_age=auth.TOKEN_TTL_DEFAULT,
@@ -62,9 +63,9 @@ def me(conn: Db, user: User):
 @router.post("/password")
 def change_password(body: PasswordBody, conn: Db, user: User):
     if not auth.verify_password(body.old_password, user["password_hash"]):
-        raise HTTPException(status_code=400, detail="原密码不正确")
+        raise HTTPException(status_code=400, detail=t("原密码不正确"))
     if len(body.new_password) < 6:
-        raise HTTPException(status_code=400, detail="新密码至少 6 位")
+        raise HTTPException(status_code=400, detail=t("新密码至少 6 位"))
     conn.execute(
         "UPDATE users SET password_hash=? WHERE id=?",
         (auth.hash_password(body.new_password), user["id"]),

@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from .db import utcnow
+from .i18n import t
 
 TOKEN_TTL_DEFAULT = 30 * 24 * 3600  # 30 天
 
@@ -22,7 +23,7 @@ DEFAULT_MEMBER_CAPS = ("view", "rate", "comment", "note", "tag_edit")
 
 def hash_password(password: str, *, n: int = 2**14, r: int = 8, p: int = 1) -> str:
     if not password:
-        raise ValueError("口令不能为空")
+        raise ValueError(t("口令不能为空"))
     salt = secrets.token_bytes(16)
     dk = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32)
     return f"scrypt${n}${r}${p}${salt.hex()}${dk.hex()}"
@@ -131,12 +132,12 @@ def ensure_default_groups(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO groups(name, description, capabilities, is_system, created_at) "
         "VALUES(?,?,?,1,?) ON CONFLICT(name) DO NOTHING",
-        ("admins", "管理员组", json.dumps(list(ALL_CAPS)), utcnow()),
+        ("admins", t("管理员组"), json.dumps(list(ALL_CAPS)), utcnow()),
     )
     conn.execute(
         "INSERT INTO groups(name, description, capabilities, is_system, created_at) "
         "VALUES(?,?,?,1,?) ON CONFLICT(name) DO NOTHING",
-        ("members", "普通成员组", json.dumps(list(DEFAULT_MEMBER_CAPS)), utcnow()),
+        ("members", t("普通成员组"), json.dumps(list(DEFAULT_MEMBER_CAPS)), utcnow()),
     )
     conn.commit()
 

@@ -9,12 +9,13 @@ import json
 import sqlite3
 
 from .db import utcnow
+from .i18n import t
 
 
 def _get_image(conn: sqlite3.Connection, image_id: int) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
     if row is None:
-        raise ValueError(f"图片 #{image_id} 不存在")
+        raise ValueError(t("图片 #{image_id} 不存在", image_id=image_id))
     return row
 
 
@@ -29,7 +30,7 @@ def set_rating(conn: sqlite3.Connection, image_id: int, user_id: int, value: int
     else:
         value = int(value)
         if not 0 <= value <= 10:
-            raise ValueError("评分范围 0–10")
+            raise ValueError(t("评分范围 0–10"))
         conn.execute(
             "INSERT INTO ratings(image_id, user_id, value, updated_at) VALUES(?,?,?,?) "
             "ON CONFLICT(image_id, user_id) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
@@ -84,7 +85,7 @@ def split_namespace(name: str) -> tuple[str | None, str]:
 def ensure_tag(conn: sqlite3.Connection, name: str, category: str | None = None) -> int:
     name = name.strip()
     if not name:
-        raise ValueError("标签不能为空")
+        raise ValueError(t("标签不能为空"))
     ns, _ = split_namespace(name)
     row = conn.execute("SELECT id FROM tags WHERE name=?", (name,)).fetchone()
     if row:
@@ -148,10 +149,10 @@ def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50) -
 def rename_tag(conn: sqlite3.Connection, tag_id: int, new_name: str) -> dict:
     new_name = new_name.strip()
     if not new_name:
-        raise ValueError("新名称不能为空")
+        raise ValueError(t("新名称不能为空"))
     exists = conn.execute("SELECT id FROM tags WHERE name=? AND id!=?", (new_name, tag_id)).fetchone()
     if exists:
-        raise ValueError(f"标签已存在：{new_name}")
+        raise ValueError(t("标签已存在：{new_name}", new_name=new_name))
     ns, _ = split_namespace(new_name)
     conn.execute("UPDATE tags SET name=?, namespace=? WHERE id=?", (new_name, ns, tag_id))
     conn.commit()
@@ -164,7 +165,7 @@ def create_artist(conn: sqlite3.Connection, name: str, *, aliases: str | None = 
                   links: list[str] | None = None, note: str | None = None) -> dict:
     name = name.strip()
     if not name:
-        raise ValueError("艺术家名不能为空")
+        raise ValueError(t("艺术家名不能为空"))
     row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (name,)).fetchone()
     if row:
         return get_artist(conn, int(row["id"]))
@@ -196,7 +197,7 @@ def update_artist(conn: sqlite3.Connection, artist_id: int, **fields) -> dict:
 def get_artist(conn: sqlite3.Connection, artist_id: int) -> dict:
     row = conn.execute("SELECT * FROM artists WHERE id=?", (artist_id,)).fetchone()
     if row is None:
-        raise ValueError(f"艺术家 #{artist_id} 不存在")
+        raise ValueError(t("艺术家 #{artist_id} 不存在", artist_id=artist_id))
     d = dict(row)
     try:
         d["links"] = json.loads(d.get("links") or "[]")
@@ -245,7 +246,7 @@ def add_comment(conn: sqlite3.Connection, image_id: int, user_id: int, body: str
     _get_image(conn, image_id)
     body = (body or "").strip()
     if not body:
-        raise ValueError("评论内容不能为空")
+        raise ValueError(t("评论内容不能为空"))
     cur = conn.execute(
         "INSERT INTO comments(image_id, user_id, body, created_at) VALUES(?,?,?,?)",
         (image_id, user_id, body, utcnow()),
@@ -266,9 +267,9 @@ def list_comments(conn: sqlite3.Connection, image_id: int) -> list[dict]:
 def delete_comment(conn: sqlite3.Connection, comment_id: int, user_id: int, *, is_admin: bool = False) -> None:
     row = conn.execute("SELECT * FROM comments WHERE id=?", (comment_id,)).fetchone()
     if row is None:
-        raise ValueError(f"评论 #{comment_id} 不存在")
+        raise ValueError(t("评论 #{comment_id} 不存在", comment_id=comment_id))
     if row["user_id"] != user_id and not is_admin:
-        raise PermissionError("只能删除自己的评论")
+        raise PermissionError(t("只能删除自己的评论"))
     conn.execute("UPDATE comments SET deleted=1 WHERE id=?", (comment_id,))
     conn.commit()
 
@@ -278,7 +279,7 @@ def add_note(conn: sqlite3.Connection, image_id: int, user_id: int, body: str,
     _get_image(conn, image_id)
     body = (body or "").strip()
     if not body:
-        raise ValueError("笔记内容不能为空")
+        raise ValueError(t("笔记内容不能为空"))
     cur = conn.execute(
         "INSERT INTO notes(image_id, user_id, body, geometry, created_at) VALUES(?,?,?,?,?)",
         (image_id, user_id, body, geometry, utcnow()),
@@ -299,9 +300,9 @@ def list_notes(conn: sqlite3.Connection, image_id: int) -> list[dict]:
 def delete_note(conn: sqlite3.Connection, note_id: int, user_id: int, *, is_admin: bool = False) -> None:
     row = conn.execute("SELECT * FROM notes WHERE id=?", (note_id,)).fetchone()
     if row is None:
-        raise ValueError(f"笔记 #{note_id} 不存在")
+        raise ValueError(t("笔记 #{note_id} 不存在", note_id=note_id))
     if row["user_id"] != user_id and not is_admin:
-        raise PermissionError("只能删除自己的笔记")
+        raise PermissionError(t("只能删除自己的笔记"))
     conn.execute("UPDATE notes SET deleted=1 WHERE id=?", (note_id,))
     conn.commit()
 
@@ -312,7 +313,7 @@ def create_album(conn: sqlite3.Connection, name: str, library_id: int | None = N
                  category: str | None = None, description: str | None = None) -> dict:
     name = (name or "").strip()
     if not name:
-        raise ValueError("专辑名不能为空")
+        raise ValueError(t("专辑名不能为空"))
     cur = conn.execute(
         "INSERT INTO albums(library_id, name, kind, rel_dir, category, description, created_at) "
         "VALUES(?,?, 'manual', NULL, ?, ?, ?)",
@@ -336,16 +337,16 @@ def update_album(conn: sqlite3.Connection, album_id: int, **fields) -> dict:
         conn.commit()
     row = conn.execute("SELECT * FROM albums WHERE id=?", (album_id,)).fetchone()
     if row is None:
-        raise ValueError(f"专辑 #{album_id} 不存在")
+        raise ValueError(t("专辑 #{album_id} 不存在", album_id=album_id))
     return dict(row)
 
 
 def album_add_images(conn: sqlite3.Connection, album_id: int, image_ids: list[int]) -> int:
     row = conn.execute("SELECT kind FROM albums WHERE id=?", (album_id,)).fetchone()
     if row is None:
-        raise ValueError(f"专辑 #{album_id} 不存在")
+        raise ValueError(t("专辑 #{album_id} 不存在", album_id=album_id))
     if row["kind"] == "folder":
-        raise ValueError("文件夹专辑自动维护，不能手工增删；请创建手工专辑")
+        raise ValueError(t("文件夹专辑自动维护，不能手工增删；请创建手工专辑"))
     n = 0
     for iid in image_ids:
         n += conn.execute(
@@ -360,9 +361,9 @@ def album_add_images(conn: sqlite3.Connection, album_id: int, image_ids: list[in
 def album_remove_images(conn: sqlite3.Connection, album_id: int, image_ids: list[int]) -> int:
     row = conn.execute("SELECT kind FROM albums WHERE id=?", (album_id,)).fetchone()
     if row is None:
-        raise ValueError(f"专辑 #{album_id} 不存在")
+        raise ValueError(t("专辑 #{album_id} 不存在", album_id=album_id))
     if row["kind"] == "folder":
-        raise ValueError("文件夹专辑自动维护，不能手工增删")
+        raise ValueError(t("文件夹专辑自动维护，不能手工增删"))
     n = 0
     for iid in image_ids:
         n += conn.execute(

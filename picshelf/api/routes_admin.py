@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from .. import auth
 from .deps import Db, User, ensure_library_access, require_cap
+from ..i18n import t
 
 router = APIRouter(tags=["admin"])
 
@@ -63,11 +64,11 @@ def list_users(conn: Db, admin: Admin):
 def create_user(body: UserBody, conn: Db, admin: Admin):
     username = body.username.strip()
     if not username:
-        raise HTTPException(status_code=400, detail="用户名不能为空")
+        raise HTTPException(status_code=400, detail=t("用户名不能为空"))
     if len(body.password) < 6:
-        raise HTTPException(status_code=400, detail="密码至少 6 位")
+        raise HTTPException(status_code=400, detail=t("密码至少 6 位"))
     if auth.get_user_by_username(conn, username) is not None:
-        raise HTTPException(status_code=409, detail=f"用户名已存在：{username}")
+        raise HTTPException(status_code=409, detail=t("用户名已存在：{username}", username=username))
     try:
         uid = auth.create_user(
             conn, username, body.password, is_admin=body.is_admin,
@@ -75,7 +76,7 @@ def create_user(body: UserBody, conn: Db, admin: Admin):
             group_names=tuple(body.groups) if body.groups is not None else None,
         )
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=f"用户名已存在：{username}")
+        raise HTTPException(status_code=409, detail=t("用户名已存在：{username}", username=username))
     return _user_dict(conn, conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone())
 
 
@@ -83,12 +84,12 @@ def create_user(body: UserBody, conn: Db, admin: Admin):
 def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        raise HTTPException(status_code=404, detail=t("用户不存在"))
     if user_id == admin["id"]:
         if body.disabled:
-            raise HTTPException(status_code=400, detail="不能禁用自己的账号")
+            raise HTTPException(status_code=400, detail=t("不能禁用自己的账号"))
         if body.is_admin is False:
-            raise HTTPException(status_code=400, detail="不能取消自己的管理员身份")
+            raise HTTPException(status_code=400, detail=t("不能取消自己的管理员身份"))
     sets, params = [], []
     if body.is_admin is not None:
         sets.append("is_admin=?")
@@ -101,7 +102,7 @@ def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
         params.append(body.display_name)
     if body.password is not None:
         if len(body.password) < 6:
-            raise HTTPException(status_code=400, detail="密码至少 6 位")
+            raise HTTPException(status_code=400, detail=t("密码至少 6 位"))
         sets.append("password_hash=?")
         params.append(auth.hash_password(body.password))
     if sets:
@@ -115,7 +116,7 @@ def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
 def set_user_groups(user_id: int, body: GroupsBody, conn: Db, admin: Admin):
     row = conn.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        raise HTTPException(status_code=404, detail=t("用户不存在"))
     conn.execute("DELETE FROM user_groups WHERE user_id=?", (user_id,))
     for gid in body.group_ids:
         conn.execute(
@@ -170,7 +171,7 @@ def list_groups(conn: Db, admin: Admin):
 def create_group(body: GroupBody, conn: Db, admin: Admin):
     name = body.name.strip()
     if not name:
-        raise HTTPException(status_code=400, detail="组名不能为空")
+        raise HTTPException(status_code=400, detail=t("组名不能为空"))
     caps = [c for c in (body.capabilities or ["view"]) if c in auth.ALL_CAPS]
     import json
     from ..db import utcnow
@@ -181,7 +182,7 @@ def create_group(body: GroupBody, conn: Db, admin: Admin):
             (name, body.description, json.dumps(caps), utcnow()),
         )
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=f"组名已存在：{name}")
+        raise HTTPException(status_code=409, detail=t("组名已存在：{name}", name=name))
     conn.commit()
     return _group_dict(conn, conn.execute("SELECT * FROM groups WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -190,14 +191,14 @@ def create_group(body: GroupBody, conn: Db, admin: Admin):
 def patch_group(group_id: int, body: GroupPatch, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="组不存在")
+        raise HTTPException(status_code=404, detail=t("组不存在"))
     sets, params = [], []
     if body.description is not None:
         sets.append("description=?")
         params.append(body.description)
     if body.capabilities is not None:
         if row["is_system"]:
-            raise HTTPException(status_code=400, detail="系统组（admins/members）的能力不可修改")
+            raise HTTPException(status_code=400, detail=t("系统组（admins/members）的能力不可修改"))
         import json
         caps = [c for c in body.capabilities if c in auth.ALL_CAPS]
         sets.append("capabilities=?")
@@ -213,9 +214,9 @@ def patch_group(group_id: int, body: GroupPatch, conn: Db, admin: Admin):
 def delete_group(group_id: int, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="组不存在")
+        raise HTTPException(status_code=404, detail=t("组不存在"))
     if row["is_system"]:
-        raise HTTPException(status_code=400, detail="系统组不可删除")
+        raise HTTPException(status_code=400, detail=t("系统组不可删除"))
     conn.execute("DELETE FROM groups WHERE id=?", (group_id,))
     conn.commit()
     return {"ok": True}
@@ -232,7 +233,7 @@ def _ensure_can_manage_library(conn, user, library_id: int) -> None:
     if user["is_admin"]:
         return
     if not auth.has_cap(conn, user, "manage_library"):
-        raise HTTPException(status_code=403, detail="缺少权限：manage_library")
+        raise HTTPException(status_code=403, detail=t("缺少权限：manage_library"))
     ensure_library_access(conn, user, library_id, minimum="manage")
 
 
@@ -257,7 +258,7 @@ def set_grant(library_id: int, body: GrantBody, conn: Db, user: User):
         )
     else:
         if body.access not in ("view", "edit", "manage"):
-            raise HTTPException(status_code=400, detail="access 必须是 view / edit / manage")
+            raise HTTPException(status_code=400, detail=t("access 必须是 view / edit / manage"))
         conn.execute(
             "INSERT INTO library_grants(group_id, library_id, access) VALUES(?,?,?) "
             "ON CONFLICT(group_id, library_id) DO UPDATE SET access=excluded.access",

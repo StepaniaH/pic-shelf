@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from .. import auth, ops, play, search
 from .deps import Db, User, ensure_library_access, serialize_image
+from ..i18n import t
 
 router = APIRouter(tags=["play"])
 
@@ -38,13 +39,13 @@ class GotoBody(BaseModel):
 
 def _validate_source(conn, user, src: PlaySource, order: str) -> None:
     if order not in ("sequential", "shuffle", "random"):
-        raise HTTPException(status_code=400, detail="order 必须是 sequential / shuffle / random")
+        raise HTTPException(status_code=400, detail=t("order 必须是 sequential / shuffle / random"))
     if src.library_id is not None:
         ensure_library_access(conn, user, src.library_id)
     if src.album_id is not None:
         album = ops.get_album(conn, src.album_id)
         if album is None:
-            raise HTTPException(status_code=404, detail="专辑不存在")
+            raise HTTPException(status_code=404, detail=t("专辑不存在"))
         if album["library_id"] is not None:
             ensure_library_access(conn, user, album["library_id"])
     if src.artist_id is not None:
@@ -57,7 +58,7 @@ def _validate_source(conn, user, src: PlaySource, order: str) -> None:
 def _session_or_404(conn, token: str, user) -> "play.sqlite3.Row":
     session = play.get_session_by_token(conn, token)
     if session is None or (int(session["user_id"]) != int(user["id"]) and not user["is_admin"]):
-        raise HTTPException(status_code=404, detail="播放会话不存在")
+        raise HTTPException(status_code=404, detail=t("播放会话不存在"))
     return session
 
 

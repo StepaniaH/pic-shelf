@@ -6,13 +6,14 @@ import sqlite3
 from . import hashing
 from .auth import grant_default_library
 from .db import utcnow
+from .i18n import t
 
 
 def create_library(conn: sqlite3.Connection, name: str, root_path: str,
                    description: str | None = None) -> int:
     name = (name or "").strip()
     if not name:
-        raise ValueError("库名不能为空")
+        raise ValueError(t("库名不能为空"))
     cur = conn.execute(
         "INSERT INTO libraries(name, root_path, description, created_at) VALUES(?,?,?,?)",
         (name, str(root_path), description, utcnow()),

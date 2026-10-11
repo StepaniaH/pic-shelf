@@ -18,6 +18,7 @@ from typing import Callable
 from . import hashing
 from .config import Config
 from .db import utcnow
+from .i18n import t
 
 SKIP_DIRS = {
     ".git", ".stfolder", ".stversions", "@eaDir", "$RECYCLE.BIN",
@@ -64,10 +65,10 @@ def scan_library(
 ) -> dict:
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
-        raise ValueError(f"库 #{library_id} 不存在")
+        raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
     root = Path(lib["root_path"])
     if not root.is_dir():
-        raise ValueError(f"库目录不存在：{root}")
+        raise ValueError(t("库目录不存在：{root}", root=root))
 
     cur = conn.execute(
         "INSERT INTO scans(library_id, started_at) VALUES(?,?)", (library_id, utcnow())
@@ -174,7 +175,7 @@ def scan_library(
                         (thumb, prev, w, h, iid),
                     )
                 except Exception as exc:
-                    stats["errors"].append(f"{rel}: 缩略图生成失败：{exc}")
+                    stats["errors"].append(t("{rel}: 缩略图生成失败：{exc}", rel=rel, exc=exc))
                 seen_ids.add(iid)
                 folder_ids.setdefault(rel_dir, []).append(iid)
                 stats["added"] += 1

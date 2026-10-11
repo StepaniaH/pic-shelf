@@ -17,6 +17,7 @@ from __future__ import annotations
 import shlex
 import sqlite3
 from dataclasses import dataclass, field
+from .i18n import t
 
 SORTS = {
     "newest": "i.id DESC",
@@ -64,7 +65,7 @@ def parse(query: str) -> ParsedQuery:
         if key == "fav" and not values:
             values = ["true"]
         if not values:
-            out.errors.append(f"忽略空参数：{token}")
+            out.errors.append(t("忽略空参数：{token}", token=token))
             continue
         out.clauses.append({"kind": key, "values": values, "neg": neg})
     return out

@@ -4,6 +4,7 @@ users / groups / stats / tui
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import shutil
@@ -19,6 +20,16 @@ import click
 
 from . import __version__, auth, db as dbm, indexer, libsvc, ops, play, search
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
+from .i18n import set_lang, t
+
+# 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
+_argv = sys.argv[1:]
+for _i, _a in enumerate(_argv):
+    if _a == "--lang" and _i + 1 < len(_argv):
+        os.environ["PICSHELF_LANG"] = _argv[_i + 1]
+    elif _a.startswith("--lang="):
+        os.environ["PICSHELF_LANG"] = _a.split("=", 1)[1]
+set_lang(None)
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -28,7 +39,7 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 def _conn(cfg: Config) -> sqlite3.Connection:
     if not cfg.db_path.exists():
         raise click.ClickException(
-            f"数据目录尚未初始化（找不到 {cfg.db_path}）。先运行：picshelf init --admin <管理员名>"
+            t("数据目录尚未初始化（找不到 {v0}）。先运行：picshelf init --admin <管理员名>", v0=cfg.db_path)
         )
     return dbm.open_db(cfg.db_path)
 
@@ -37,13 +48,13 @@ def _acting_user(conn: sqlite3.Connection, name: str | None = None) -> sqlite3.R
     if name:
         user = auth.get_user_by_username(conn, name)
         if user is None or user["disabled"]:
-            raise click.ClickException(f"用户不存在或已禁用：{name}")
+            raise click.ClickException(t("用户不存在或已禁用：{name}", name=name))
         return user
     row = conn.execute(
         "SELECT * FROM users WHERE is_admin=1 AND disabled=0 ORDER BY id LIMIT 1"
     ).fetchone()
     if row is None:
-        raise click.ClickException("没有管理员用户。先运行：picshelf init --admin <管理员名>")
+        raise click.ClickException(t("没有管理员用户。先运行：picshelf init --admin <管理员名>"))
     return row
 
 
@@ -61,7 +72,7 @@ def _print_image_row(item: dict) -> str:
     rating = "—" if item.get("my_rating", -1) < 0 else str(item["my_rating"])
     fav = "★" if item.get("favorite") else " "
     dims = f"{item.get('width') or '?'}x{item.get('height') or '?'}"
-    return f"#{item['id']:>6}  {fav} 评分:{rating:>3}  {dims:>11}  {item['filename']}"
+    return t("#{v0:>6}  {fav} 评分:{rating:>3}  {dims:>11}  {v1}", v0=item['id'], fav=fav, rating=rating, dims=dims, v1=item['filename'])
 
 
 def _render_terminal(path: Path, width: int, height: int) -> str | None:
@@ -88,7 +99,7 @@ def _read_password(password_stdin: bool, prompt: str, confirm: bool = False) -> 
     if password_stdin:
         line = sys.stdin.readline().rstrip("\n")
         if not line:
-            raise click.ClickException("从 stdin 读取密码失败")
+            raise click.ClickException(t("从 stdin 读取密码失败"))
         return line
     pw = click.prompt(prompt, hide_input=True, confirmation_prompt=confirm)
     return pw
@@ -96,13 +107,58 @@ def _read_password(password_stdin: bool, prompt: str, confirm: bool = False) -> 
 
 # ---------------------------------------------------------------- 顶层
 
-@click.group(context_settings=CONTEXT_SETTINGS)
+class _I18nGroup(click.Group):
+    """Group that re-localizes (sub)command help from their Chinese docstrings."""
+
+    def get_command(self, ctx: click.Context, cmd_name: str):
+        cmd = super().get_command(ctx, cmd_name)
+        if cmd is not None:
+            _localize_cmd(cmd)
+        return cmd
+
+    def format_help(self, ctx: click.Context, formatter) -> None:
+        _localize_cmd(self)
+        super().format_help(ctx, formatter)
+
+
+def _localize_cmd(cmd: click.Command) -> None:
+    cb = getattr(cmd, "callback", None)
+    doc = inspect.cleandoc(cb.__doc__ or "").strip() if cb else ""
+    if doc:
+        cmd.help = t(doc)
+    # 选项 help 同样按当前语言重渲染（原始中文串暂存在 _orig_help）
+    for p in cmd.params:
+        orig = getattr(p, "_orig_help", None)
+        cur = getattr(p, "help", None)
+        if orig is None and cur is not None:
+            setattr(p, "_orig_help", cur)
+            orig = cur
+        if orig:
+            setattr(p, "help", t(orig))
+    if isinstance(cmd, click.Group):
+        for sub in cmd.commands.values():
+            _localize_cmd(sub)
+
+
+def _lang_cb(ctx: click.Context, param: click.Parameter, value: str | None):
+    # eager：解析到 --lang 立即切换，保证 --help 渲染时语言已生效
+    if value:
+        set_lang(value)
+    return value
+
+
+@click.group(cls=_I18nGroup, context_settings=CONTEXT_SETTINGS)
 @click.option("--data", "data_dir", default=None, envvar="PICSHELF_DATA",
               help="数据目录（默认：项目内 ./data）")
+@click.option("--lang", type=click.Choice(["zh", "en"]), default=None,
+              is_eager=True, callback=_lang_cb,
+              help="界面语言：zh / en（默认跟随系统 locale）")
 @click.version_option(__version__, prog_name="picshelf")
 @click.pass_context
-def main(ctx: click.Context, data_dir: str | None):
+def main(ctx: click.Context, data_dir: str | None, lang: str | None):
     """Pic Shelf — 自托管图片库（Web / TUI / CLI）。"""
+    if lang is not None:
+        set_lang(lang)
     ctx.obj = Config.resolve(data_dir)
 
 
@@ -120,14 +176,14 @@ def init(cfg: Config, admin: str | None, password_stdin: bool):
     auth.load_secret(cfg.secret_path)
     if admin:
         if auth.get_user_by_username(conn, admin) is not None:
-            click.echo(f"用户已存在，跳过：{admin}")
+            click.echo(t("用户已存在，跳过：{admin}", admin=admin))
         else:
-            pw = _read_password(password_stdin, f"为管理员 {admin} 设置密码", confirm=True)
+            pw = _read_password(password_stdin, t("为管理员 {admin} 设置密码", admin=admin), confirm=True)
             auth.create_user(conn, admin, pw, is_admin=True)
-            click.echo(f"已创建管理员：{admin}")
-    click.echo(f"数据目录：{cfg.data_dir}")
-    click.echo(f"数据库：  {cfg.db_path}")
-    click.echo("初始化完成。下一步：picshelf library add <库名> <目录> && picshelf scan <库名>")
+            click.echo(t("已创建管理员：{admin}", admin=admin))
+    click.echo(t("数据目录：{v0}", v0=cfg.data_dir))
+    click.echo(t("数据库：  {v0}", v0=cfg.db_path))
+    click.echo(t("初始化完成。下一步：picshelf library add <库名> <目录> && picshelf scan <库名>"))
 
 
 @main.command()
@@ -138,7 +194,7 @@ def init(cfg: Config, admin: str | None, password_stdin: bool):
 def serve(cfg: Config, host: str, port: int, reload: bool):
     """启动 Web 服务（默认仅绑定 127.0.0.1）。"""
     if not cfg.db_path.exists():
-        raise click.ClickException("尚未初始化。先运行：picshelf init --admin <管理员名>")
+        raise click.ClickException(t("尚未初始化。先运行：picshelf init --admin <管理员名>"))
     import uvicorn
 
     from .api import create_app
@@ -172,14 +228,14 @@ def library_add(cfg: Config, name: str, path: str, description: str | None, make
         if make_dir:
             root.mkdir(parents=True, exist_ok=True)
         else:
-            raise click.ClickException(f"目录不存在：{root}（加 --mkdir 可自动创建）")
+            raise click.ClickException(t("目录不存在：{root}（加 --mkdir 可自动创建）", root=root))
     conn = _conn(cfg)
     try:
         lib_id = libsvc.create_library(conn, name, str(root), description)
     except sqlite3.IntegrityError:
-        raise click.ClickException(f"库名已存在：{name}")
-    click.echo(f"已注册库 #{lib_id} {name} → {root}")
-    click.echo(f"下一步：picshelf scan {name}")
+        raise click.ClickException(t("库名已存在：{name}", name=name))
+    click.echo(t("已注册库 #{lib_id} {name} → {root}", lib_id=lib_id, name=name, root=root))
+    click.echo(t("下一步：picshelf scan {name}", name=name))
 
 
 @library.command("list")
@@ -189,12 +245,11 @@ def library_list(cfg: Config):
     conn = _conn(cfg)
     rows = libsvc.list_libraries(conn)
     if not rows:
-        click.echo("尚无库。用 picshelf library add <库名> <目录> 添加。")
+        click.echo(t("尚无库。用 picshelf library add <库名> <目录> 添加。"))
         return
     for r in rows:
         click.echo(
-            f"#{r['id']:>3}  {r['name']:<16} 图片 {r['image_count']:>6} 张  专辑 {r['album_count']:>4}  "
-            f"{r['root_path']}"
+            t("#{v0:>3}  {v1:<16} 图片 {v2:>6} 张  专辑 {v3:>4}  {v4}", v0=r['id'], v1=r['name'], v2=r['image_count'], v3=r['album_count'], v4=r['root_path'])
         )
 
 
@@ -209,20 +264,19 @@ def scan(cfg: Config, library_name: str, full: bool):
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
-        raise click.ClickException(f"找不到库：{library_name}")
+        raise click.ClickException(t("找不到库：{library_name}", library_name=library_name))
     last = {"n": 0}
 
     def progress(stats: dict):
         n = stats.get("processed", 0)
         if n and n - last["n"] >= 100:
             last["n"] = n
-            click.echo(f"  ... 已处理 {n} 个文件", err=True)
+            click.echo(t("  ... 已处理 {n} 个文件", n=n), err=True)
 
-    click.echo(f"扫描库 #{lib['id']} {lib['name']} → {lib['root_path']}")
+    click.echo(t("扫描库 #{v0} {v1} → {v2}", v0=lib['id'], v1=lib['name'], v2=lib['root_path']))
     stats = indexer.scan_library(conn, cfg, lib["id"], full=full, progress=progress)
     click.echo(
-        f"完成：新增 {stats['added']}，更新 {stats['updated']}，移动 {stats['moved']}，"
-        f"未变 {stats['unchanged']}，标记缺失 {stats['missing']}，错误 {len(stats['errors'])}"
+        t("完成：新增 {v0}，更新 {v1}，移动 {v2}，未变 {v3}，标记缺失 {v4}，错误 {v5}", v0=stats['added'], v1=stats['updated'], v2=stats['moved'], v3=stats['unchanged'], v4=stats['missing'], v5=len(stats['errors']))
     )
     for err in stats["errors"][:10]:
         click.echo(f"  ! {err}", err=True)
@@ -280,7 +334,7 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
     if library:
         lib = libsvc.find_library(conn, library)
         if lib is None:
-            raise click.ClickException(f"找不到库：{library}")
+            raise click.ClickException(t("找不到库：{library}", library=library))
         library = lib["id"]
     ew, ep = _base_where(conn, user, {
         "album": album, "artist": artist, "tag": tag,
@@ -293,7 +347,7 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
     if as_json:
         click.echo(json.dumps(res, ensure_ascii=False, indent=2))
         return
-    click.echo(f"共 {res['total']} 张（显示前 {len(res['items'])}）")
+    click.echo(t("共 {v0} 张（显示前 {v1}）", v0=res['total'], v1=len(res['items'])))
     for item in res["items"]:
         click.echo(_print_image_row(item))
 
@@ -309,7 +363,7 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
     user = _acting_user(conn)
     detail = search.get_image(conn, image_id, user["id"], auth.visible_library_ids(conn, user))
     if detail is None:
-        raise click.ClickException(f"图片不存在：#{image_id}")
+        raise click.ClickException(t("图片不存在：#{image_id}", image_id=image_id))
     lib_row = conn.execute("SELECT root_path FROM libraries WHERE id=?", (detail["library_id"],)).fetchone()
     abspath = Path(lib_row["root_path"]) / detail["rel_path"] if lib_row else Path(detail["rel_path"])
     if print_path:
@@ -320,20 +374,20 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
     if as_json:
         click.echo(json.dumps(detail, ensure_ascii=False, indent=2))
         return
-    rating = "未评" if detail["my_rating"] < 0 else str(detail["my_rating"])
+    rating = t("未评") if detail["my_rating"] < 0 else str(detail["my_rating"])
     click.echo(f"#{detail['id']}  {detail['filename']}")
-    click.echo(f"路径:   {abspath}")
-    click.echo(f"尺寸:   {detail['width']}x{detail['height']}  大小: {_fmt_size(detail['size_bytes'])}  格式: {detail['ext']}")
-    click.echo(f"评分:   我的 {rating}   平均 {detail['avg_rating'] or '—'}（{detail['rating_count']} 人）  收藏: {'是' if detail['favorite'] else '否'}")
-    click.echo(f"标签:   {'、'.join(t['name'] for t in detail['tags']) or '（无）'}")
-    click.echo(f"艺术家: {'、'.join(a['name'] for a in detail['artists']) or '（无）'}")
-    click.echo(f"专辑:   {'、'.join(a['name'] for a in detail['albums']) or '（无）'}")
-    click.echo(f"库:     {detail['library']['name']}")
-    click.echo(f"评论 {len(detail['comments'])} 条 / 笔记 {len(detail['notes'])} 条")
+    click.echo(t("路径:   {abspath}", abspath=abspath))
+    click.echo(t("尺寸:   {v0}x{v1}  大小: {v2}  格式: {v3}", v0=detail['width'], v1=detail['height'], v2=_fmt_size(detail['size_bytes']), v3=detail['ext']))
+    click.echo(t("评分:   我的 {rating}   平均 {v0}（{v1} 人）  收藏: {v2}", rating=rating, v0=detail['avg_rating'] or '—', v1=detail['rating_count'], v2=t('是') if detail['favorite'] else t('否')))
+    click.echo(t("标签:   {v0}", v0='、'.join(t['name'] for t in detail['tags']) or t('（无）')))
+    click.echo(t("艺术家: {v0}", v0='、'.join(a['name'] for a in detail['artists']) or t('（无）')))
+    click.echo(t("专辑:   {v0}", v0='、'.join(a['name'] for a in detail['albums']) or t('（无）')))
+    click.echo(t("库:     {v0}", v0=detail['library']['name']))
+    click.echo(t("评论 {v0} 条 / 笔记 {v1} 条", v0=len(detail['comments']), v1=len(detail['notes'])))
     for c in detail["comments"]:
         click.echo(f"  [{c['username']}] {c['body']}")
     for n in detail["notes"]:
-        click.echo(f"  (笔记) [{n['username']}] {n['body']}")
+        click.echo(t("  (笔记) [{v0}] {v1}", v0=n['username'], v1=n['body']))
 
 
 # ---------------------------------------------------------------- 交互
@@ -351,7 +405,7 @@ def rate(cfg: Config, image_id: int, value: int, user_name: str | None):
         summary = ops.set_rating(conn, image_id, user["id"], value)
     except ValueError as exc:
         raise click.ClickException(str(exc))
-    click.echo(f"#{image_id} 我的评分 → {summary['my_rating']}（平均 {summary['avg_rating'] or '—'}）")
+    click.echo(t("#{image_id} 我的评分 → {v0}（平均 {v1}）", image_id=image_id, v0=summary['my_rating'], v1=summary['avg_rating'] or '—'))
 
 
 @main.command()
@@ -364,7 +418,7 @@ def favorite(cfg: Config, image_id: int, off: bool, user_name: str | None):
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     state = ops.set_favorite(conn, image_id, user["id"], False if off else True)
-    click.echo(f"#{image_id} 收藏 → {'是' if state else '否'}")
+    click.echo(t("#{image_id} 收藏 → {v0}", image_id=image_id, v0=t('是') if state else t('否')))
 
 
 @main.group()
@@ -382,7 +436,7 @@ def tag_add(cfg, image_id, names, user_name):
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     added = ops.add_tags(conn, image_id, list(names), user["id"])
-    click.echo(f"#{image_id} 已添加 {len(added)} 个标签：" + "、".join(a["name"] for a in added))
+    click.echo(t("#{image_id} 已添加 {v0} 个标签：", image_id=image_id, v0=len(added)) + "、".join(a["name"] for a in added))
 
 
 @tag.command("rm")
@@ -393,7 +447,7 @@ def tag_rm(cfg, image_id, names):
     """移除标签。"""
     conn = _conn(cfg)
     n = ops.remove_tags(conn, image_id, list(names))
-    click.echo(f"#{image_id} 已移除 {n} 个标签")
+    click.echo(t("#{image_id} 已移除 {n} 个标签", image_id=image_id, n=n))
 
 
 @tag.command("list")
@@ -403,8 +457,8 @@ def tag_rm(cfg, image_id, names):
 def tag_list(cfg, query, limit):
     """列出标签。"""
     conn = _conn(cfg)
-    for t in ops.list_tags(conn, q=query, limit=limit):
-        click.echo(f"{t['count']:>6}  {t['name']}")
+    for tg in ops.list_tags(conn, q=query, limit=limit):
+        click.echo(f"{tg['count']:>6}  {tg['name']}")
 
 
 @main.command()
@@ -417,7 +471,7 @@ def comment(cfg, image_id, body, user_name):
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     c = ops.add_comment(conn, image_id, user["id"], body)
-    click.echo(f"已添加评论 #{c['id']}")
+    click.echo(t("已添加评论 #{v0}", v0=c['id']))
 
 
 @main.command()
@@ -430,7 +484,7 @@ def note(cfg, image_id, body, user_name):
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     n = ops.add_note(conn, image_id, user["id"], body)
-    click.echo(f"已添加笔记 #{n['id']}")
+    click.echo(t("已添加笔记 #{v0}", v0=n['id']))
 
 
 # ---------------------------------------------------------------- 艺术家
@@ -448,7 +502,7 @@ def artist():
 def artist_add(cfg, name, aliases, links):
     conn = _conn(cfg)
     a = ops.create_artist(conn, name, aliases=aliases, links=list(links))
-    click.echo(f"艺术家 #{a['id']} {a['name']}")
+    click.echo(t("艺术家 #{v0} {v1}", v0=a['id'], v1=a['name']))
 
 
 @artist.command("list")
@@ -458,9 +512,9 @@ def artist_list(cfg, query):
     conn = _conn(cfg)
     rows = ops.list_artists(conn, q=query)
     if not rows:
-        click.echo("（无）")
+        click.echo(t("（无）"))
     for a in rows:
-        click.echo(f"#{a['id']:>4}  {a['image_count']:>6} 张  {a['name']}")
+        click.echo(t("#{v0:>4}  {v1:>6} 张  {v2}", v0=a['id'], v1=a['image_count'], v2=a['name']))
 
 
 @artist.command("link")
@@ -471,7 +525,7 @@ def artist_link(cfg, image_id, artist_name):
     conn = _conn(cfg)
     row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (artist_name,)).fetchone()
     if row is None:
-        raise click.ClickException(f"艺术家不存在：{artist_name}（先 artist add）")
+        raise click.ClickException(t("艺术家不存在：{artist_name}（先 artist add）", artist_name=artist_name))
     ops.link_artist(conn, image_id, int(row["id"]), True)
     click.echo(f"#{image_id} ← {artist_name}")
 
@@ -484,9 +538,9 @@ def artist_unlink(cfg, image_id, artist_name):
     conn = _conn(cfg)
     row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (artist_name,)).fetchone()
     if row is None:
-        raise click.ClickException(f"艺术家不存在：{artist_name}")
+        raise click.ClickException(t("艺术家不存在：{artist_name}", artist_name=artist_name))
     ops.link_artist(conn, image_id, int(row["id"]), False)
-    click.echo(f"#{image_id} 已取消关联 {artist_name}")
+    click.echo(t("#{image_id} 已取消关联 {artist_name}", image_id=image_id, artist_name=artist_name))
 
 
 # ---------------------------------------------------------------- 播放
@@ -515,7 +569,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
     if library:
         lib = libsvc.find_library(conn, library)
         if lib is None:
-            raise click.ClickException(f"找不到库：{library}")
+            raise click.ClickException(t("找不到库：{library}", library=library))
         library = lib["id"]
     spec = {
         "source": {
@@ -533,7 +587,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
     session = play.create_session(conn, user["id"], allowed, spec)
     ids = play.queue_items(conn, session["session_id"], limit=10000)
     if not ids:
-        raise click.ClickException("队列为空：没有符合条件的图片")
+        raise click.ClickException(t("队列为空：没有符合条件的图片"))
     paths: list[Path] = []
     for iid in ids:
         row = conn.execute(
@@ -542,7 +596,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         ).fetchone()
         if row:
             paths.append(Path(row["root_path"]) / row["rel_path"])
-    click.echo(f"队列 {len(paths)} 张（顺序：{order}{'，循环' if loop else ''}）")
+    click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1='，循环' if loop else ''))
 
     if player == "list":
         for p in paths:
@@ -560,7 +614,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
                 art = _render_terminal(p, cols, max(10, rows - 6))
                 if art:
                     click.echo(art)
-                click.echo("回车下一张 / b 上一张 / q 退出" + (f"（{interval}s 自动）" if interval else ""))
+                click.echo(t("回车下一张 / b 上一张 / q 退出") + (t("（{interval}s 自动）", interval=interval) if interval else ""))
                 if interval > 0:
                     time.sleep(interval)
                     idx = (idx + 1) % len(paths) if loop else idx + 1
@@ -580,13 +634,13 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
                         else:
                             break
         except (KeyboardInterrupt, EOFError):
-            click.echo("\n已退出播放")
+            click.echo("\n" + t("已退出播放"))
         return
 
     # mpv 模式
     mpv = shutil.which("mpv")
     if not mpv:
-        raise click.ClickException("找不到 mpv（可改用 --player terminal 或 --player list）")
+        raise click.ClickException(t("找不到 mpv（可改用 --player terminal 或 --player list）"))
     playlist_path = cfg.playlists_dir / f"playlist-{int(time.time())}.m3u"
     playlist_path.write_text("\n".join(str(p) for p in paths) + "\n", encoding="utf-8")
     cmd = [
@@ -595,12 +649,12 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         "--force-window=yes",
         "--no-resume-playback",
         "--keep-open=no",
-        "--title=Pic Shelf 播放",
+        t("--title=Pic Shelf 播放"),
         f"--image-display-duration={'inf' if interval == 0 else interval}",
     ]
     if loop:
         cmd.append("--loop-playlist=inf")
-    click.echo("交给 mpv 播放（→ 下一张 / ← 上一张 / q 退出）")
+    click.echo(t("交给 mpv 播放（→ 下一张 / ← 上一张 / q 退出）"))
     subprocess.call(cmd)
 
 
@@ -616,19 +670,19 @@ def dupes(cfg: Config, mode: str, threshold: int):
     if mode == "similar":
         groups = libsvc.similar_dupes(conn, None, threshold=threshold)
         for g in groups:
-            click.echo(f"相似组（{g['count']} 张）：")
+            click.echo(t("相似组（{v0} 张）：", v0=g['count']))
             for e in g["images"]:
-                click.echo(f"  #{e['id']:>6}  距离{e['distance']:>3}  {e['filename']}")
+                click.echo(t("  #{v0:>6}  距离{v1:>3}  {v2}", v0=e['id'], v1=e['distance'], v2=e['filename']))
     else:
         groups = libsvc.exact_dupes(conn, None)
         if not groups:
-            click.echo("没有完全重复的文件。")
+            click.echo(t("没有完全重复的文件。"))
         for g in groups:
             names = conn.execute(
                 f"SELECT filename FROM images WHERE id IN ({','.join('?' * len(g['image_ids']))})",
                 g["image_ids"],
             ).fetchall()
-            click.echo(f"{g['count']} 份相同（可省 {_fmt_size(g['size_bytes'] - g['size_bytes'] // g['count'])}）：")
+            click.echo(t("{v0} 份相同（可省 {v1}）：", v0=g['count'], v1=_fmt_size(g['size_bytes'] - g['size_bytes'] // g['count'])))
             for n in names:
                 click.echo(f"  {n['filename']}")
 
@@ -673,17 +727,17 @@ def export_cmd(cfg: Config, out_path: str, encrypt: bool, passphrase_stdin: bool
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         import base64 as b64
-        passphrase = _read_password(passphrase_stdin, "设置备份口令", confirm=not passphrase_stdin)
+        passphrase = _read_password(passphrase_stdin, t("设置备份口令"), confirm=not passphrase_stdin)
         salt = os.urandom(16)
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=200_000)
         key = b64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
         token = Fernet(key).encrypt(data)
         out = out if out.suffix == ".fernet" else out.with_suffix(out.suffix + ".fernet")
         out.write_bytes(BACKUP_MAGIC + salt + token)
-        click.echo(f"已导出加密备份：{out}（{_fmt_size(out.stat().st_size)}）")
+        click.echo(t("已导出加密备份：{out}（{v0}）", out=out, v0=_fmt_size(out.stat().st_size)))
     else:
         out.write_bytes(data)
-        click.echo(f"已导出备份：{out}（{_fmt_size(out.stat().st_size)}）")
+        click.echo(t("已导出备份：{out}（{v0}）", out=out, v0=_fmt_size(out.stat().st_size)))
 
 
 @main.command("import-backup")
@@ -700,29 +754,29 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
         from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
         import base64 as b64
         salt, token = raw[len(BACKUP_MAGIC):len(BACKUP_MAGIC) + 16], raw[len(BACKUP_MAGIC) + 16:]
-        passphrase = _read_password(passphrase_stdin, "输入备份口令")
+        passphrase = _read_password(passphrase_stdin, t("输入备份口令"))
         kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=200_000)
         key = b64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
         try:
             raw = Fernet(key).decrypt(token)
         except Exception:
-            raise click.ClickException("口令错误或备份文件损坏")
+            raise click.ClickException(t("口令错误或备份文件损坏"))
     import io
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         if "picshelf.db" not in zf.namelist():
-            raise click.ClickException("备份格式不正确（缺少 picshelf.db）")
+            raise click.ClickException(t("备份格式不正确（缺少 picshelf.db）"))
         db_bytes = zf.read("picshelf.db")
     if not db_bytes.startswith(b"SQLite format 3"):
-        raise click.ClickException("数据库文件无效")
+        raise click.ClickException(t("数据库文件无效"))
     cfg.ensure()
     if cfg.db_path.exists() and not force:
-        raise click.ClickException("数据目录已有数据库。如确认覆盖请加 --force（现有库会先自动备份）")
+        raise click.ClickException(t("数据目录已有数据库。如确认覆盖请加 --force（现有库会先自动备份）"))
     if cfg.db_path.exists():
         bak = cfg.db_path.with_name(f"picshelf.db.bak-{int(time.time())}")
         shutil.copy2(cfg.db_path, bak)
-        click.echo(f"现有数据库已备份到：{bak}")
+        click.echo(t("现有数据库已备份到：{bak}", bak=bak))
     cfg.db_path.write_bytes(db_bytes)
-    click.echo(f"已恢复数据库到：{cfg.db_path}")
+    click.echo(t("已恢复数据库到：{v0}", v0=cfg.db_path))
 
 
 # ---------------------------------------------------------------- 托管库导入（v0.2）
@@ -746,7 +800,7 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
-        raise click.ClickException(f"找不到库：{library_name}（先运行 picshelf library add）")
+        raise click.ClickException(t("找不到库：{library_name}（先运行 picshelf library add）", library_name=library_name))
     try:
         plan = importer.plan_import(conn, lib, source_dir, mode=mode, rename=rename)
     except ValueError as exc:
@@ -754,43 +808,42 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
 
     s = plan["stats"]
     new_n = s["hardlink"] + s["copy"] + s["move"]
-    click.echo(f"预演：源 {plan['source']} → 库 #{lib['id']} {lib['name']}（模式：{mode}）")
+    click.echo(t("预演：源 {v0} → 库 #{v1} {v2}（模式：{mode}）", v0=plan['source'], v1=lib['id'], v2=lib['name'], mode=mode))
     click.echo(
-        f"共 {len(plan['items'])} 个文件：新导入 {new_n}，跳过 {s['skip']}（重复/已存在），错误 {s['error']}"
+        t("共 {v0} 个文件：新导入 {new_n}，跳过 {v1}（重复/已存在），错误 {v2}", v0=len(plan['items']), new_n=new_n, v1=s['skip'], v2=s['error'])
     )
-    labels = {"hardlink": "硬链", "copy": "复制", "move": "移动", "skip": "跳过", "error": "错误"}
+    labels = {"hardlink": t("硬链"), "copy": t("复制"), "move": t("移动"), "skip": t("跳过"), "error": t("错误")}
     for item in plan["items"][:20]:
         dst = item["dst"] or "—"
         reason = f"  ← {item['reason']}" if item["reason"] else ""
         click.echo(f"  [{labels.get(item['action'], item['action'])}] {item['src']} → {dst}{reason}")
     if len(plan["items"]) > 20:
-        click.echo(f"  …（共 {len(plan['items'])} 项，只显示前 20）")
+        click.echo(t("  …（共 {v0} 项，只显示前 20）", v0=len(plan['items'])))
 
     if not do_apply:
-        click.echo("这是预演，未改动任何文件。确认无误后加 --apply 执行。")
+        click.echo(t("这是预演，未改动任何文件。确认无误后加 --apply 执行。"))
         return
     if new_n == 0:
-        click.echo("没有需要导入的文件。")
+        click.echo(t("没有需要导入的文件。"))
         return
     if not yes:
         if mode == "move":
-            if not click.confirm(f"确认把 {new_n} 个文件【移动】进库？原位置将不再保留（建议先备份）"):
-                raise click.ClickException("已取消")
+            if not click.confirm(t("确认把 {new_n} 个文件【移动】进库？原位置将不再保留（建议先备份）", new_n=new_n)):
+                raise click.ClickException(t("已取消"))
         else:
-            if not click.confirm(f"确认导入 {new_n} 个文件？"):
-                raise click.ClickException("已取消")
+            if not click.confirm(t("确认导入 {new_n} 个文件？", new_n=new_n)):
+                raise click.ClickException(t("已取消"))
 
     done = importer.execute_import(plan, apply=True)
     click.echo(
-        f"执行完成：硬链 {done['hardlink']}，复制 {done['copy']}，移动 {done['move']}，"
-        f"跳过 {done['skip']}，错误 {done['error']}"
+        t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", v0=done['hardlink'], v1=done['copy'], v2=done['move'], v3=done['skip'], v4=done['error'])
     )
     for err in done["errors"][:10]:
         click.echo(f"  ! {err}", err=True)
     if done["hardlink"] or done["copy"] or done["move"]:
         stats = indexer.scan_library(conn, cfg, lib["id"])
         click.echo(
-            f"已扫描入库：新增 {stats['added']}，更新 {stats['updated']}，未变 {stats['unchanged']}"
+            t("已扫描入库：新增 {v0}，更新 {v1}，未变 {v2}", v0=stats['added'], v1=stats['updated'], v2=stats['unchanged'])
         )
 
 
@@ -809,10 +862,10 @@ def users():
 def users_add(cfg, username, admin, password_stdin):
     conn = _conn(cfg)
     if auth.get_user_by_username(conn, username):
-        raise click.ClickException(f"用户已存在：{username}")
-    pw = _read_password(password_stdin, f"为 {username} 设置密码", confirm=True)
+        raise click.ClickException(t("用户已存在：{username}", username=username))
+    pw = _read_password(password_stdin, t("为 {username} 设置密码", username=username), confirm=True)
     uid = auth.create_user(conn, username, pw, is_admin=admin)
-    click.echo(f"已创建用户 #{uid} {username}{'（管理员）' if admin else ''}")
+    click.echo(t("已创建用户 #{uid} {username}{v0}", uid=uid, username=username, v0='（管理员）' if admin else ''))
 
 
 @users.command("list")
@@ -827,10 +880,10 @@ def users_list(cfg):
     for r in rows:
         flags = []
         if r["is_admin"]:
-            flags.append("管理员")
+            flags.append(t("管理员"))
         if r["disabled"]:
-            flags.append("已禁用")
-        click.echo(f"#{r['id']:>3}  {r['username']:<16} {','.join(flags):<12} 组：{r['groups'] or '—'}")
+            flags.append(t("已禁用"))
+        click.echo(t("#{v0:>3}  {v1:<16} {v2:<12} 组：{v3}", v0=r['id'], v1=r['username'], v2=','.join(flags), v3=r['groups'] or '—'))
 
 
 @users.command("passwd")
@@ -841,11 +894,11 @@ def users_passwd(cfg, username, password_stdin):
     conn = _conn(cfg)
     user = auth.get_user_by_username(conn, username)
     if user is None:
-        raise click.ClickException(f"用户不存在：{username}")
-    pw = _read_password(password_stdin, f"为 {username} 设置新密码", confirm=True)
+        raise click.ClickException(t("用户不存在：{username}", username=username))
+    pw = _read_password(password_stdin, t("为 {username} 设置新密码", username=username), confirm=True)
     conn.execute("UPDATE users SET password_hash=? WHERE id=?", (auth.hash_password(pw), user["id"]))
     conn.commit()
-    click.echo("密码已更新")
+    click.echo(t("密码已更新"))
 
 
 @main.group()
@@ -880,9 +933,9 @@ def groups_add(cfg, name, caps, description):
             (name, description, json.dumps(cap_list), dbm.utcnow()),
         )
     except sqlite3.IntegrityError:
-        raise click.ClickException(f"组已存在：{name}")
+        raise click.ClickException(t("组已存在：{name}", name=name))
     conn.commit()
-    click.echo(f"已创建组 #{cur.lastrowid} {name}（{ '、'.join(cap_list) }）")
+    click.echo(t("已创建组 #{v0} {name}（{v1}）", v0=cur.lastrowid, name=name, v1='、'.join(cap_list)))
 
 
 @groups.command("grant")
@@ -895,16 +948,16 @@ def groups_grant(cfg, group_name, library_name, access):
     g = conn.execute("SELECT id FROM groups WHERE name=?", (group_name,)).fetchone()
     lib = libsvc.find_library(conn, library_name)
     if g is None:
-        raise click.ClickException(f"组不存在：{group_name}")
+        raise click.ClickException(t("组不存在：{group_name}", group_name=group_name))
     if lib is None:
-        raise click.ClickException(f"库不存在：{library_name}")
+        raise click.ClickException(t("库不存在：{library_name}", library_name=library_name))
     conn.execute(
         "INSERT INTO library_grants(group_id, library_id, access) VALUES(?,?,?) "
         "ON CONFLICT(group_id, library_id) DO UPDATE SET access=excluded.access",
         (g["id"], lib["id"], access),
     )
     conn.commit()
-    click.echo(f"组 {group_name} 对库 {lib['name']} 的访问级别 → {access}")
+    click.echo(t("组 {group_name} 对库 {v0} 的访问级别 → {access}", group_name=group_name, v0=lib['name'], access=access))
 
 
 @groups.command("revoke")
@@ -916,10 +969,10 @@ def groups_revoke(cfg, group_name, library_name):
     g = conn.execute("SELECT id FROM groups WHERE name=?", (group_name,)).fetchone()
     lib = libsvc.find_library(conn, library_name)
     if g is None or lib is None:
-        raise click.ClickException("组或库不存在")
+        raise click.ClickException(t("组或库不存在"))
     conn.execute("DELETE FROM library_grants WHERE group_id=? AND library_id=?", (g["id"], lib["id"]))
     conn.commit()
-    click.echo(f"已移除组 {group_name} 对库 {lib['name']} 的授权")
+    click.echo(t("已移除组 {group_name} 对库 {v0} 的授权", group_name=group_name, v0=lib['name']))
 
 
 @main.command()
@@ -929,9 +982,7 @@ def stats(cfg: Config):
     conn = _conn(cfg)
     s = libsvc.global_stats(conn, None)
     click.echo(
-        f"图片 {s['images']} 张（{_fmt_size(s['size_bytes'])}）  库 {s['libraries']}  "
-        f"专辑 {s['albums']}  艺术家 {s['artists']}  标签 {s['tags']}  "
-        f"用户 {s['users']}  评分 {s['ratings']}  收藏 {s['favorites']}"
+        t("图片 {v0} 张（{v1}）  库 {v2}  专辑 {v3}  艺术家 {v4}  标签 {v5}  用户 {v6}  评分 {v7}  收藏 {v8}", v0=s['images'], v1=_fmt_size(s['size_bytes']), v2=s['libraries'], v3=s['albums'], v4=s['artists'], v5=s['tags'], v6=s['users'], v7=s['ratings'], v8=s['favorites'])
     )
 
 
@@ -942,7 +993,7 @@ def stats(cfg: Config):
 def tui(cfg: Config):
     """启动终端界面（TUI）。"""
     if not cfg.db_path.exists():
-        raise click.ClickException("尚未初始化。先运行：picshelf init --admin <管理员名>")
+        raise click.ClickException(t("尚未初始化。先运行：picshelf init --admin <管理员名>"))
     from .tui import run_tui
 
     run_tui(cfg)

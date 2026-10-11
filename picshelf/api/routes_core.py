@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from .. import __version__, auth, db as dbm, indexer, libsvc, ops, search
 from .deps import Db, User, ensure_library_access, image_and_access, require_cap, serialize_image
+from ..i18n import t
 
 router = APIRouter(tags=["core"])
 
@@ -49,14 +50,14 @@ def list_libraries(conn: Db, user: User):
 @router.post("/libraries")
 def create_library(body: LibraryBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "manage_library"):
-        raise HTTPException(status_code=403, detail="缺少权限：manage_library")
+        raise HTTPException(status_code=403, detail=t("缺少权限：manage_library"))
     root = Path(body.root_path).expanduser()
     if not root.is_dir():
-        raise HTTPException(status_code=400, detail=f"目录不存在：{root}")
+        raise HTTPException(status_code=400, detail=t("目录不存在：{root}", root=root))
     try:
         lib_id = libsvc.create_library(conn, body.name, str(root), body.description)
     except sqlite3.IntegrityError:
-        raise HTTPException(status_code=409, detail=f"库名已存在：{body.name}")
+        raise HTTPException(status_code=409, detail=t("库名已存在：{v0}", v0=body.name))
     return libsvc.get_library(conn, lib_id)
 
 
@@ -65,7 +66,7 @@ def get_library(library_id: int, conn: Db, user: User):
     ensure_library_access(conn, user, library_id)
     lib = libsvc.get_library(conn, library_id)
     if lib is None:
-        raise HTTPException(status_code=404, detail="库不存在")
+        raise HTTPException(status_code=404, detail=t("库不存在"))
     last_scan = conn.execute(
         "SELECT * FROM scans WHERE library_id=? ORDER BY id DESC LIMIT 1", (library_id,)
     ).fetchone()
@@ -152,7 +153,7 @@ def list_albums(conn: Db, user: User, library_id: int | None = None, kind: str |
 @router.post("/albums")
 def create_album(body: AlbumBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     ensure_library_access(conn, user, body.library_id, minimum="edit")
     return ops.create_album(
         conn, body.name, library_id=body.library_id,
@@ -164,7 +165,7 @@ def create_album(body: AlbumBody, conn: Db, user: User):
 def get_album(album_id: int, conn: Db, user: User):
     album = ops.get_album(conn, album_id)
     if album is None:
-        raise HTTPException(status_code=404, detail="专辑不存在")
+        raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"])
     return album
@@ -173,10 +174,10 @@ def get_album(album_id: int, conn: Db, user: User):
 @router.patch("/albums/{album_id}")
 def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
     if album is None:
-        raise HTTPException(status_code=404, detail="专辑不存在")
+        raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
     return ops.update_album(conn, album_id, name=body.name, category=body.category,
@@ -188,7 +189,7 @@ def album_images(album_id: int, conn: Db, user: User,
                  sort: str = "path", limit: int = 60, offset: int = 0):
     album = ops.get_album(conn, album_id)
     if album is None:
-        raise HTTPException(status_code=404, detail="专辑不存在")
+        raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"])
     allowed = auth.visible_library_ids(conn, user)
@@ -205,10 +206,10 @@ def album_images(album_id: int, conn: Db, user: User,
 @router.post("/albums/{album_id}/images")
 def album_add(album_id: int, body: IdList, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
     if album is None:
-        raise HTTPException(status_code=404, detail="专辑不存在")
+        raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
     for iid in body.image_ids:
@@ -223,10 +224,10 @@ def album_add(album_id: int, body: IdList, conn: Db, user: User):
 @router.delete("/albums/{album_id}/images/{image_id}")
 def album_remove(album_id: int, image_id: int, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
     if album is None:
-        raise HTTPException(status_code=404, detail="专辑不存在")
+        raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
     try:
@@ -293,7 +294,7 @@ def image_detail(image_id: int, conn: Db, user: User):
     image_and_access(conn, user, image_id)
     detail = search.get_image(conn, image_id, user["id"], auth.visible_library_ids(conn, user))
     if detail is None:
-        raise HTTPException(status_code=404, detail="图片不存在")
+        raise HTTPException(status_code=404, detail=t("图片不存在"))
     detail["comments"] = ops.list_comments(conn, image_id)
     detail["notes"] = ops.list_notes(conn, image_id)
     return serialize_image(detail)
@@ -303,7 +304,7 @@ def image_detail(image_id: int, conn: Db, user: User):
 
 def _serve_file(cfg, path: Path, media_type: str, etag: str, download_name: str | None = None):
     if not path.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在")
+        raise HTTPException(status_code=404, detail=t("文件不存在"))
     headers = {"Cache-Control": "private, max-age=3600", "ETag": f'"{etag}"'}
     kwargs = {}
     if download_name:
@@ -315,7 +316,7 @@ def _serve_file(cfg, path: Path, media_type: str, etag: str, download_name: str 
 @router.get("/media/{kind}/{image_id}")
 def media(kind: str, image_id: int, request: Request, conn: Db, user: User, download: int = 0):
     if kind not in ("thumb", "preview", "original"):
-        raise HTTPException(status_code=404, detail="未知媒体类型")
+        raise HTTPException(status_code=404, detail=t("未知媒体类型"))
     row = image_and_access(conn, user, image_id)
     cfg = request.app.state.cfg
     if kind in ("thumb", "preview"):
@@ -350,7 +351,7 @@ def list_tags(conn: Db, user: User, q: str | None = None, limit: int = 50):
 @router.post("/tags")
 def create_tag(body: TagBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     tag_id = ops.ensure_tag(conn, body.name, body.category)
     conn.commit()
     return {"id": tag_id, "name": body.name.strip()}
@@ -359,7 +360,7 @@ def create_tag(body: TagBody, conn: Db, user: User):
 @router.patch("/tags/{tag_id}")
 def rename_tag(tag_id: int, body: TagPatch, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     try:
         return ops.rename_tag(conn, tag_id, body.name)
     except ValueError as exc:
@@ -390,7 +391,7 @@ def list_artists(conn: Db, user: User, q: str | None = None, limit: int = 100):
 @router.post("/artists")
 def create_artist(body: ArtistBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     try:
         return ops.create_artist(conn, body.name, aliases=body.aliases,
                                  links=body.links, note=body.note)
@@ -409,7 +410,7 @@ def get_artist(artist_id: int, conn: Db, user: User):
 @router.patch("/artists/{artist_id}")
 def patch_artist(artist_id: int, body: ArtistPatch, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail="缺少权限：tag_edit")
+        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     return ops.update_artist(conn, artist_id, name=body.name, aliases=body.aliases,
                              links=body.links, note=body.note)
 

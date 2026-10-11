@@ -2,6 +2,7 @@
 import { api, setAuthFailHandler } from "./api.js";
 import * as views from "./views.js";
 import { renderAdmin } from "./admin.js";
+import { t, getLocale, setLocale } from "./i18n.js";
 
 export const state = { user: null, route: null };
 
@@ -35,11 +36,7 @@ export function showModal({ title, bodyHtml, onMount }) {
   const root = document.querySelector("#modal-root");
   const wrap = document.createElement("div");
   wrap.className = "modal-backdrop";
-  wrap.innerHTML = `
-    <div class="modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
-      <div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="icon-btn" data-close aria-label="关闭">✕</button></div>
-      <div class="modal-body"></div>
-    </div>`;
+  wrap.innerHTML = t("\n    <div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"{v0}\">\n      <div class=\"modal-head\"><h2>{v1}</h2><button class=\"icon-btn\" data-close aria-label=\"关闭\">✕</button></div>\n      <div class=\"modal-body\"></div>\n    </div>", {v0: escapeHtml(title), v1: escapeHtml(title)});
   wrap.querySelector(".modal-body").innerHTML = bodyHtml;
   const close = () => wrap.remove();
   wrap.querySelector("[data-close]").addEventListener("click", close);
@@ -55,7 +52,7 @@ export function uiPrompt(title, { placeholder = "", value = "", type = "text" } 
     const finish = (v) => { if (!settled) { settled = true; modal.close(); resolve(v); } };
     const modal = showModal({
       title,
-      bodyHtml: `<form class="prompt-form"><input type="${type}" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" autocomplete="off"><div class="modal-actions"><button type="submit" class="btn primary">确定</button><button type="button" class="btn" data-cancel>取消</button></div></form>`,
+      bodyHtml: t("<form class=\"prompt-form\"><input type=\"{type}\" value=\"{v0}\" placeholder=\"{v1}\" autocomplete=\"off\"><div class=\"modal-actions\"><button type=\"submit\" class=\"btn primary\">确定</button><button type=\"button\" class=\"btn\" data-cancel>取消</button></div></form>", {type: type, v0: escapeHtml(value), v1: escapeHtml(placeholder)}),
       onMount(el) {
         const input = el.querySelector("input");
         input.focus();
@@ -73,7 +70,7 @@ export function uiConfirm(title, text) {
     const finish = (v) => { if (!settled) { settled = true; modal.close(); resolve(v); } };
     const modal = showModal({
       title,
-      bodyHtml: `<p>${escapeHtml(text)}</p><div class="modal-actions"><button class="btn primary" data-yes>确定</button><button class="btn" data-no>取消</button></div>`,
+      bodyHtml: t("<p>{v0}</p><div class=\"modal-actions\"><button class=\"btn primary\" data-yes>确定</button><button class=\"btn\" data-no>取消</button></div>", {v0: escapeHtml(text)}),
       onMount(el) {
         el.querySelector("[data-yes]").addEventListener("click", () => finish(true));
         el.querySelector("[data-no]").addEventListener("click", () => finish(false));
@@ -100,8 +97,7 @@ function renderUserBox() {
   const adminLink = document.querySelector("#nav-admin");
   if (state.user) {
     adminLink.hidden = !state.user.is_admin;
-    box.innerHTML = `<span class="username">${escapeHtml(state.user.display_name || state.user.username)}</span>
-      <button class="btn small" id="logout-btn">退出</button>`;
+    box.innerHTML = t("<span class=\"username\">{v0}</span>\n      <button class=\"btn small\" id=\"logout-btn\">退出</button>", {v0: escapeHtml(state.user.display_name || state.user.username)});
     box.querySelector("#logout-btn").addEventListener("click", async () => {
       await api("/auth/logout", { method: "POST" });
       state.user = null;
@@ -110,13 +106,28 @@ function renderUserBox() {
     });
   } else {
     adminLink.hidden = true;
-    box.innerHTML = `<a class="btn small" href="#/login">登录</a>`;
+    box.innerHTML = t("<a class=\"btn small\" href=\"#/login\">登录</a>");
   }
 }
 
 // 供其它模块在登录/登出后刷新顶栏
 export function refreshChrome() {
   renderUserBox();
+}
+
+// 静态 UI（index.html 骨架里的字符串）与语言切换
+function applyStaticUI() {
+  document.documentElement.lang = getLocale() === "zh" ? "zh-CN" : "en";
+  document.title = t("Pic Shelf — 图片库");
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-placeholder]")) el.placeholder = t(el.dataset.i18nPlaceholder);
+}
+
+function renderLangBtn() {
+  const btn = document.querySelector("#lang-btn");
+  if (!btn) return;
+  btn.textContent = getLocale() === "zh" ? "EN" : "中文";
+  btn.addEventListener("click", () => { setLocale(getLocale() === "zh" ? "en" : "zh"); location.reload(); });
 }
 
 // ---------------------------------------------------------------- 路由
@@ -154,7 +165,7 @@ async function route() {
   } catch (e) {
     if (e && e.status === 401) return;
     console.error(e);
-    toast(e.message || "出错了", "error");
+    toast(e.message || t("出错了"), "error");
   }
 }
 
@@ -171,4 +182,6 @@ document.querySelector("#search-form").addEventListener("submit", (e) => {
 });
 
 window.addEventListener("hashchange", route);
+applyStaticUI();
+renderLangBtn();
 route();

@@ -1,5 +1,8 @@
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("PICSHELF_LANG", "zh")  # 测试输出断言基于中文
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:

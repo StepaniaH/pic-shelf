@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import hashing
+from .i18n import t
 
 MODES = ("hardlink", "copy", "move")
 _ILLEGAL = set('\x00<>:"\\|?*') | {chr(c) for c in range(32)}
@@ -47,11 +48,11 @@ def plan_import(
     root = Path(library["root_path"]).resolve()
     source_root = Path(source_root).expanduser().resolve()
     if mode not in MODES:
-        raise ValueError(f"未知模式：{mode}（可选 {'/'.join(MODES)}）")
+        raise ValueError(t("未知模式：{mode}（可选 {v0}）", mode=mode, v0='/'.join(MODES)))
     if not source_root.is_dir():
-        raise ValueError(f"源目录不存在：{source_root}")
+        raise ValueError(t("源目录不存在：{source_root}", source_root=source_root))
     if source_root == root or root in source_root.parents or source_root in root.parents:
-        raise ValueError("源目录与目标库目录不能互为父子关系（含相同）")
+        raise ValueError(t("源目录与目标库目录不能互为父子关系（含相同）"))
 
     from .indexer import _iter_image_files
 
@@ -77,12 +78,12 @@ def plan_import(
             sha = hashing.sha256_file(path)
             if sha in have:
                 items.append({"src": str(path), "dst": None, "action": "skip",
-                              "reason": "库内已有相同内容"})
+                              "reason": t("库内已有相同内容")})
                 counts["skip"] += 1
                 continue
             if sha in planned:
                 items.append({"src": str(path), "dst": None, "action": "skip",
-                              "reason": "与本次计划中的另一文件内容相同"})
+                              "reason": t("与本次计划中的另一文件内容相同")})
                 counts["skip"] += 1
                 continue
 
@@ -101,7 +102,7 @@ def plan_import(
                 suffix += 1
             if skipped_dup:
                 items.append({"src": str(path), "dst": None, "action": "skip",
-                              "reason": "目标位置已有相同文件"})
+                              "reason": t("目标位置已有相同文件")})
                 counts["skip"] += 1
                 continue
 
@@ -151,7 +152,7 @@ def execute_import(
         dst = Path(item["dst"]).resolve()
         if root != dst.parent and root not in dst.parents:
             done["error"] += 1
-            done["errors"].append(f"{src}: 目标路径越界，已拒绝")
+            done["errors"].append(t("{src}: 目标路径越界，已拒绝", src=src))
             continue
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)

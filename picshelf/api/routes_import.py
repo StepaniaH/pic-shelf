@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from .. import auth, importer, indexer
 from .deps import Db, User, ensure_library_access
+from ..i18n import t
 
 router = APIRouter(prefix="/import", tags=["import"])
 
@@ -30,7 +31,7 @@ class ExecuteBody(ImportBody):
 def _target_library(conn, user, library_id: int):
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
-        raise HTTPException(status_code=404, detail="库不存在")
+        raise HTTPException(status_code=404, detail=t("库不存在"))
     ensure_library_access(conn, user, library_id, minimum="manage")
     return lib
 
@@ -56,7 +57,7 @@ def plan_import(body: ImportBody, conn: Db, user: User):
 @router.post("/execute")
 def execute_import(body: ExecuteBody, request: Request, conn: Db, user: User):
     if not body.confirm:
-        raise HTTPException(status_code=400, detail="执行需要 confirm=true 明确确认")
+        raise HTTPException(status_code=400, detail=t("执行需要 confirm=true 明确确认"))
     lib = _target_library(conn, user, body.library_id)
     try:
         p = importer.plan_import(conn, lib, body.source_dir, mode=body.mode, rename=body.rename)

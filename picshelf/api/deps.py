@@ -8,6 +8,7 @@ from fastapi import Cookie, Depends, Header, HTTPException, Request
 
 from .. import auth
 from ..db import open_db
+from ..i18n import t
 
 COOKIE_NAME = "picshelf_session"
 RANK = {"view": 1, "edit": 2, "manage": 3}
@@ -36,11 +37,11 @@ def current_user(
     elif picshelf_session:
         token = picshelf_session
     if not token:
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail=t("未登录"))
     uid = auth.verify_token(request.app.state.secret, token)
     user = auth.get_user(conn, uid) if uid is not None else None
     if user is None:
-        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+        raise HTTPException(status_code=401, detail=t("登录已过期，请重新登录"))
     return user
 
 
@@ -50,7 +51,7 @@ User = Annotated[sqlite3.Row, Depends(current_user)]
 def require_cap(cap: str):
     def dep(user: User, conn: Db) -> sqlite3.Row:
         if not auth.has_cap(conn, user, cap):
-            raise HTTPException(status_code=403, detail=f"缺少权限：{cap}")
+            raise HTTPException(status_code=403, detail=t("缺少权限：{cap}", cap=cap))
         return user
 
     return dep
@@ -60,7 +61,7 @@ def ensure_library_access(conn: sqlite3.Connection, user: sqlite3.Row,
                           library_id: int, minimum: str = "view") -> str:
     access = auth.library_access(conn, user, int(library_id))
     if access is None or RANK.get(access, 0) < RANK[minimum]:
-        raise HTTPException(status_code=403, detail="无权访问该库")
+        raise HTTPException(status_code=403, detail=t("无权访问该库"))
     return access
 
 
@@ -70,7 +71,7 @@ def image_and_access(conn: sqlite3.Connection, user: sqlite3.Row,
         "SELECT * FROM images WHERE id=? AND missing=0", (image_id,)
     ).fetchone()
     if row is None:
-        raise HTTPException(status_code=404, detail="图片不存在")
+        raise HTTPException(status_code=404, detail=t("图片不存在"))
     ensure_library_access(conn, user, int(row["library_id"]), minimum)
     return row
 
