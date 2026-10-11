@@ -67,6 +67,13 @@
 - [x] 真实素材沙盒演示（CLI 与 Web 两条链路：预演 → 硬链接执行 → 自动入库 → 数据核对）
 - [ ] 命名模板增强（基于 tag/艺术家的目录模板）
 
+## v0.2+ · 中英双语（i18n）
+- [x] 目录式映射：`picshelf/i18n.py` + `web/js/i18n.js`（中文原文为 msgid，缺译回退中文，零构建零依赖）
+- [x] 全端接入：CLI（`--lang` / 帮助渲染时本地化）/ TUI / Web（顶栏中·EN 切换 + `data-i18n` 骨架）/ API（Accept-Language）
+- [x] 机械转换（AST + 词法）+ 占位符一致性校验 0 不一致；嵌套模板漏译专项清扫（约 55 处）
+- [x] tests/test_i18n.py（解析优先级 / 回退 / CLI / API）；全套 **62 passed**
+- [x] README 英文截图（专辑页 + 查看器，EN 界面）+ `README.zh-CN.md`（zh 截图）
+
 ## 后续（Roadmap）
 - [ ] `[!]` D1 加密：已结论「现阶段不做」（触发条件与零成本补做路径见 decisions D1）
 - [ ] 开源准备：Docker 化 + 安装包；远程访问 = tailnet 直连（Caddy 可选）（见 decisions D2 / B0）
@@ -75,7 +82,7 @@
 - [ ] 图上区域注释（notes.geometry 已预留）；分享链接；SSE 实时刷新；桌面端（Tauri 评估）
 
 ## 验证记录（交付证据摘要）
-- `pytest tests/ -q` → **58 passed**
+- `pytest tests/ -q` → **62 passed**（含 test_i18n 4 项）
 - 真实素材扫描：`新增 70，更新 0，移动 0，缺失 0，错误 0`
 - 托管导入沙盒：CLI 预演→执行→自动扫描（inode 验证）；Web 向导 E2E（预演 2 → 执行 2 → 入库 2）
 - 布局审计：5 宽度 × 7 页面零问题 + 视觉复核（见 T8）

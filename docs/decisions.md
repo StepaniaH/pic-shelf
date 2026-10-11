@@ -91,5 +91,12 @@
   - 备选 `pic-glow`、`pic-glide`（同查干净）。弃用代表：`vitrine`、`tessera`、`imago`、`loupe`、`pictorium`、`pinako`、`bowerbird`、`jackdaw`、`platen`、`zoetrope`（均有活跃同名产品或高热度仓库）；`sanderling`（无冲突但含义不够直白）；`pictorama`（与活跃项目 Picturama 一字之差）。
 - 说明：以上为工程级查重（活跃产品/包名/社区占用），非法律级商标检索。
 
+### D12 · 双语文案（zh/en i18n，2026-10-11）
+- 决策：**以中文原文为 msgid 的目录式映射**（Python：`picshelf/i18n.py`；Web：`web/js/i18n.js`），缺译回退中文；零运行时依赖、零构建。
+- 语言解析：显式 `--lang` > `PICSHELF_LANG` > `LC_ALL/LANG`（zh* → zh）> 默认 `en`；API 按请求 `Accept-Language`；Web 顶栏「中/EN」切换（localStorage 持久化，`Accept-Language` 随请求发送）。
+- 覆盖：CLI（含 `--help` 渲染时本地化）、TUI、Web（`index.html` 静态骨架走 `data-i18n` 惰性渲染 + 动态模板 `t()`）、API 报错文案。
+- 转换工具：AST 级 Python 转换器 + 词法级 JS 转换器一次性完成机械包裹（产物已内化，不随仓库分发）；转换后逐条校验占位符集合一致（0 不一致）。
+- 维护约定：新增文案写中文原文 + 在两侧目录补 EN；测试锁定 zh（conftest 设 `PICSHELF_LANG=zh`）。
+
 ---
 *记录时间：2026-10-11（CST）。验证等级说明：A 节 = 已实测生效；B 节 = 决策记录或书面方案，未改任何系统。*

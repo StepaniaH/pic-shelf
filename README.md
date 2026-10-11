@@ -1,9 +1,12 @@
 # Pic Shelf
 
+**English** | [简体中文](README.zh-CN.md)
+
 Self-hosted image library: import → encode (hash / thumbnails) → search / rate / tag / artists → rule-based playback.
 Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line — hand the playback queue straight to mpv). Desktop client planned.
 
-![Pic Shelf — album page](docs/screenshots/2026-10-11-album-page.png)
+![Pic Shelf — album page](docs/screenshots/2026-10-11-album-page-en.png)
+![Pic Shelf — viewer](docs/screenshots/2026-10-11-viewer-en.png)
 
 > Research & competitive analysis: `docs/research/2026-10-11-open-source-image-viewers.md`
 > Architecture: `docs/architecture.md` ｜ Decisions: `docs/decisions.md` ｜ Tasks: `TASKS.md` ｜ Developer entry: `AGENTS.md`
@@ -26,6 +29,7 @@ Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line 
 | Comments / notes | Per-image comments and text notes (on-image region notes on the roadmap) | ✅ |
 | Multi-user shared libraries | Multiple users, per-library ACL, per-user ratings & favorites | ✅ |
 | Encryption | scrypt passwords, HMAC-signed tokens, encrypted backup export; full-library encryption deliberately out of scope for now (see `docs/decisions.md` D1) | ✅ per D1 |
+| Localization | Fully bilingual **zh / en** across Web + TUI + CLI + API errors; follows the system locale, switchable (Web header toggle; CLI `--lang` / `PICSHELF_LANG`) | ✅ |
 | Local-model tagging | Auto-tagging / CLIP similarity (interface reserved, see Roadmap) | ⏳ planned |
 
 ## Quick start
