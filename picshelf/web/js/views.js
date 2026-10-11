@@ -136,13 +136,13 @@ export async function renderHome(view) {
       <div class="lib-card">
         <h3>${escapeHtml(l.name)}</h3>
         <p class="muted">${escapeHtml(l.root_path)}</p>
-        <p class="muted">图片 ${l.image_count} · 专辑 ${l.album_count}</p>
+        <p class="muted">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</p>
         <div class="form-row">
-          <a class="btn small" href="#/library/${l.id}">浏览</a>
-          <a class="btn small" href="#/albums?library_id=${l.id}">专辑</a>
-          ${state.user.is_admin ? `<button class="btn small" data-scan="${l.id}">扫描更新</button>` : ""}
+          <a class="btn small" href="#/library/${l.id}>${t("浏览")}</a>
+          <a class="btn small" href="#/albums?library_id=${l.id}>${t("专辑")}</a>
+          ${state.user.is_admin ? `<button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>` : ""}
         </div>
-      </div>`).join("") || `<p class="empty">还没有库。管理员可在「管理 → 库」中注册目录。</p>`});
+      </div>`).join("") || `<p class="empty">${t("还没有库。管理员可在「管理 → 库」中注册目录。")}</p>`});
   view.querySelectorAll("[data-scan]").forEach((btn) => btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.textContent = t("扫描中…");
@@ -174,10 +174,10 @@ export async function renderAlbums(view, params) {
         <figure class="card" data-href="#/album/${a.id}" tabindex="0">
           ${a.cover_image_id
             ? `<img loading="lazy" src="${mediaUrl("thumb", a.cover_image_id)}" alt="${escapeHtml(a.name)}">`
-            : `<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:var(--muted)">空专辑</div>`}
+            : `<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:var(--muted)">${t("空专辑")}</div>`}
           <figcaption><span class="fname">${escapeHtml(a.name)}</span>
-            <span class="badge">${a.kind === "manual" ? "手工" : "文件夹"} ${a.image_count}</span></figcaption>
-        </figure>`).join("")}</div>`).join("") || `<p class="empty">还没有专辑。</p>`});
+            <span class="badge">${a.kind === "manual" ? t("手工") : t("文件夹")} ${a.image_count}</span></figcaption>
+        </figure>`).join("")}</div>`).join("") || `<p class="empty">${t("还没有专辑。")}</p>`});
   view.querySelectorAll("[data-href]").forEach((el) => {
     el.addEventListener("click", () => navigate(el.dataset.href));
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate(el.dataset.href); });
@@ -205,7 +205,7 @@ export async function renderArtists(view) {
   const artists = await api("/artists?limit=300");
   view.innerHTML = t("\n    <div class=\"page-head\"><h1>艺术家</h1><span class=\"count\">共 {v0} 位</span></div>\n    <div class=\"chips\">{v1}\n    </div>", {v0: artists.length, v1: artists.map((a) => `
       <span class="chip" data-href="#/artist/${a.id}" tabindex="0">${escapeHtml(a.name)}
-      <span class="n">${a.image_count}</span></span>`).join("") || `<p class="empty">还没有艺术家。可在查看器里给图片关联，或运行 <code>picshelf artist add 名字</code>。</p>`});
+      <span class="n">${a.image_count}</span></span>`).join("") || `<p class="empty">${t("还没有艺术家。可在查看器里给图片关联，或运行 <code>picshelf artist add 名字</code>。")}</p>`});
   view.querySelectorAll("[data-href]").forEach((el) => {
     el.addEventListener("click", () => navigate(el.dataset.href));
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate(el.dataset.href); });
@@ -233,7 +233,7 @@ export async function renderTags(view) {
   const tags = await api("/tags?limit=500");
   view.innerHTML = t("\n    <div class=\"page-head\"><h1>标签</h1><span class=\"count\">共 {v0} 个</span></div>\n    <div class=\"chips\">{v1}\n    </div>", {v0: tags.length, v1: tags.map((t) => `
       <span class="chip" data-tag="${escapeHtml(t.name)}" tabindex="0">${escapeHtml(t.name)}
-      <span class="n">${t.count}</span></span>`).join("") || `<p class="empty">还没有标签。打开图片在其信息面板里添加。</p>`});
+      <span class="n">${t.count}</span></span>`).join("") || `<p class="empty">${t("还没有标签。打开图片在其信息面板里添加。")}</p>`});
   view.querySelectorAll("[data-tag]").forEach((el) => {
     el.addEventListener("click", () => navigate("#/tag/" + encodeURIComponent(el.dataset.tag)));
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate("#/tag/" + encodeURIComponent(el.dataset.tag)); });

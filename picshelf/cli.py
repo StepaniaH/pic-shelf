@@ -596,7 +596,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         ).fetchone()
         if row:
             paths.append(Path(row["root_path"]) / row["rel_path"])
-    click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1='，循环' if loop else ''))
+    click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1=t('，循环') if loop else ''))
 
     if player == "list":
         for p in paths:
@@ -865,7 +865,7 @@ def users_add(cfg, username, admin, password_stdin):
         raise click.ClickException(t("用户已存在：{username}", username=username))
     pw = _read_password(password_stdin, t("为 {username} 设置密码", username=username), confirm=True)
     uid = auth.create_user(conn, username, pw, is_admin=admin)
-    click.echo(t("已创建用户 #{uid} {username}{v0}", uid=uid, username=username, v0='（管理员）' if admin else ''))
+    click.echo(t("已创建用户 #{uid} {username}{v0}", uid=uid, username=username, v0=t('（管理员）') if admin else ''))
 
 
 @users.command("list")

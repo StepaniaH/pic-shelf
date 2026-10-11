@@ -338,5 +338,7 @@ EN: dict[str, str] = {
     "用户管理。": "User management.",
     "用户组管理。": "Group management.",
     "全局统计。": "Global statistics.",
-    "启动终端界面（TUI）。": "Start the terminal UI (TUI)."
+    "启动终端界面（TUI）。": "Start the terminal UI (TUI).",
+    "，循环": ", loop",
+    "（管理员）": "(admin)"
 }

@@ -34,13 +34,13 @@ async function renderUsers(body) {
   body.innerHTML = t("\n    <h2>用户</h2>\n    <div class=\"form-row\">\n      <input id=\"nu-name\" placeholder=\"用户名\" style=\"width:150px\">\n      <input id=\"nu-pass\" type=\"password\" placeholder=\"密码（≥6 位）\" style=\"width:170px\">\n      <label class=\"muted\"><input type=\"checkbox\" id=\"nu-admin\"> 管理员</label>\n      <button class=\"btn primary\" id=\"nu-create\">创建用户</button>\n    </div>\n    <div class=\"table-wrap\">\n    <table class=\"data\"><thead><tr><th>ID</th><th>用户名</th><th>状态</th><th>用户组</th><th>操作</th></tr></thead>\n    <tbody>{v0}\n    </tbody></table>\n    </div>", {v0: users.map((u) => `
       <tr data-uid="${u.id}">
         <td>${u.id}</td><td>${escapeHtml(u.username)}</td>
-        <td>${u.is_admin ? "管理员" : "普通用户"}${u.disabled ? " · 已禁用" : ""}</td>
+        <td>${u.is_admin ? t("管理员") : t("普通用户")}${u.disabled ? t(" · 已禁用") : ""}</td>
         <td>${u.groups.map((g) => escapeHtml(g.name)).join("、") || "—"}</td>
         <td>
-          <button class="btn small" data-act="admin">${u.is_admin ? "取消管理员" : "设为管理员"}</button>
-          <button class="btn small" data-act="disable">${u.disabled ? "启用" : "禁用"}</button>
-          <button class="btn small" data-act="passwd">重置密码</button>
-          <button class="btn small" data-act="groups">用户组</button>
+          <button class="btn small" data-act="admin">${u.is_admin ? t("取消管理员") : t("设为管理员")}</button>
+          <button class="btn small" data-act="disable">${u.disabled ? t("启用") : t("禁用")}</button>
+          <button class="btn small" data-act="passwd">${t("重置密码")}</button>
+          <button class="btn small" data-act="groups">${t("用户组")}</button>
         </td>
       </tr>`).join("")});
 
@@ -109,20 +109,20 @@ async function renderGroups(body) {
   body.innerHTML = t("\n    <h2>用户组</h2>\n    <div class=\"form-row\">\n      <input id=\"ng-name\" placeholder=\"组名\" style=\"width:150px\">\n      <input id=\"ng-desc\" placeholder=\"描述（可选）\" style=\"width:230px\">\n      <button class=\"btn primary\" id=\"ng-create\">创建组</button>\n    </div>\n    {v0}\n    <datalist id=\"user-dl\">{v1}</datalist>", {v0: groups.map((g) => `
       <div class="grant-item" data-gid="${g.id}" style="margin-bottom:12px">
         <div class="form-row"><b>${escapeHtml(g.name)}</b>
-          ${g.is_system ? `<span class="pill">系统组</span>` : ""}
+          ${g.is_system ? `<span class="pill">${t("系统组")}</span>` : ""}
           ${g.description ? `<span class="muted">${escapeHtml(g.description)}</span>` : ""}</div>
         <div class="checkbox-row">
           ${ALL_CAPS.map((c) => `<label><input type="checkbox" data-cap="${c}"
             ${g.capabilities.includes(c) ? "checked" : ""} ${g.is_system ? "disabled" : ""}> ${CAP_LABEL[c]}</label>`).join("")}
         </div>
-        <div class="form-row">成员：${g.members.map((m) => `
-          <span class="pill">${escapeHtml(m.username)}<button class="icon-btn" data-rm-user="${m.id}" title="移出">✕</button></span>`).join("") || `<span class="muted">（无）</span>`}
-          <input class="add-user" list="user-dl" placeholder="加成员" style="width:130px">
-          <button class="btn small" data-add-user>加入</button>
+        <div class="form-row">${t("成员：")}${g.members.map((m) => `
+          <span class="pill">${escapeHtml(m.username)}<button class="icon-btn" data-rm-user="${m.id}" title="${t("移出")}">✕</button></span>`).join("") || `<span class="muted">${t("（无）")}</span>`}
+          <input class="add-user" list="user-dl" placeholder="${t("加成员")}" style="width:130px">
+          <button class="btn small" data-add-user>${t("加入")}</button>
         </div>
         ${g.is_system ? "" : `<div class="form-row">
-          <button class="btn small" data-save-caps>保存能力</button>
-          <button class="btn small danger" data-del-group>删除组</button></div>`}
+          <button class="btn small" data-save-caps>${t("保存能力")}</button>
+          <button class="btn small danger" data-del-group>${t("删除组")}</button></div>`}
       </div>`).join(""), v1: users.map((u) => `<option value="${escapeHtml(u.username)}">`).join("")});
 
   body.querySelector("#ng-create").addEventListener("click", async () => {
@@ -183,11 +183,11 @@ async function renderLibraries(body) {
         <div class="form-row">
           <b>${escapeHtml(l.name)}</b>
           <span class="muted">${escapeHtml(l.root_path)}</span>
-          <span class="pill">${l.image_count} 张 · ${l.album_count} 专辑</span>
-          <button class="btn small" data-scan="${l.id}">扫描更新</button>
+          <span class="pill">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</span>
+          <button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>
         </div>
-        <div class="grant-grid" data-grants="${l.id}">加载授权…</div>
-      </div>`).join("") || `<p class="empty">还没有库。在上方注册图片目录。</p>`});
+        <div class="grant-grid" data-grants="${l.id}">${t("加载授权…")}</div>
+      </div>`).join("") || `<p class="empty">${t("还没有库。在上方注册图片目录。")}</p>`});
 
   body.querySelector("#nl-create").addEventListener("click", async () => {
     const name = body.querySelector("#nl-name").value.trim();
@@ -236,7 +236,7 @@ async function renderLibraries(body) {
 
 async function renderImport(body) {
   const libs = await api("/libraries");
-  body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把外部目录的图片导入到托管的库。默认「硬链接」：原文件不动、库内出现规范化命名、同盘零额外空间（跨盘自动降级为复制）。先「预演」，确认无误后再「执行」。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}（${l.image_count} 张）</option>`).join(""), v1: libs.length ? "" : `<span class="muted">提示：先到「库」标签页注册一个目标库。</span>`});
+  body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把外部目录的图片导入到托管的库。默认「硬链接」：原文件不动、库内出现规范化命名、同盘零额外空间（跨盘自动降级为复制）。先「预演」，确认无误后再「执行」。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}${t("（{n} 张）", {n: l.image_count})}</option>`).join(""), v1: libs.length ? "" : `<span class="muted">${t("提示：先到「库」标签页注册一个目标库。")}</span>`});
 
   let plan = null;
   const out = body.querySelector("#imp-out");
@@ -297,10 +297,10 @@ function renderPlan(plan, out) {
       <td class="src">${escapeHtml(it.src)}</td>
       <td class="dst">${escapeHtml(it.dst || "—")}</td>
       <td>${escapeHtml(it.reason || "")}</td></tr>`).join("");
-  out.innerHTML = t("\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">以上为预演结果，未改动任何文件。确认后点「执行」。</p>", {v0: plan.items_total, v1: s.hardlink + s.copy + s.move, v2: s.skip, v3: s.error, v4: plan.items_truncated ? `（列表只显示前 ${plan.items.length} 项）` : "", rows: rows});
+  out.innerHTML = t("\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">以上为预演结果，未改动任何文件。确认后点「执行」。</p>", {v0: plan.items_total, v1: s.hardlink + s.copy + s.move, v2: s.skip, v3: s.error, v4: plan.items_truncated ? t("（列表只显示前 {n} 项）", {n: plan.items.length}) : "", rows: rows});
 }
 
 function renderDone(r, out) {
   const d = r.done;
-  out.innerHTML = t("<p>执行完成：硬链 <b>{v0}</b>，复制 <b>{v1}</b>，移动 <b>{v2}</b>，跳过 <b>{v3}</b>，错误 <b>{v4}</b>。\n  {v5}</p>\n  {v6}", {v0: d.hardlink, v1: d.copy, v2: d.move, v3: d.skip, v4: d.error, v5: r.scan ? `已扫描入库：新增 <b>${r.scan.added}</b> 张。` : "", v6: d.errors && d.errors.length ? `<details><summary>错误明细（${d.errors.length}）</summary><pre>${escapeHtml(d.errors.join("\n"))}</pre></details>` : ""});
+  out.innerHTML = t("<p>执行完成：硬链 <b>{v0}</b>，复制 <b>{v1}</b>，移动 <b>{v2}</b>，跳过 <b>{v3}</b>，错误 <b>{v4}</b>。\n  {v5}</p>\n  {v6}", {v0: d.hardlink, v1: d.copy, v2: d.move, v3: d.skip, v4: d.error, v5: r.scan ? t("已扫描入库：新增 <b>{v0}</b> 张。", {v0: r.scan.added}) : "", v6: d.errors && d.errors.length ? `<details><summary>${t("错误明细（{v0}）", {v0: d.errors.length})}</summary><pre>${escapeHtml(d.errors.join("\n"))}</pre></details>` : ""});
 }

@@ -203,7 +203,7 @@ def build_where(
 
 _SELECT = """
 SELECT i.id, i.library_id, i.rel_path, i.filename, i.ext, i.size_bytes,
-       i.width, i.height, i.mtime, i.sha256, i.phash, i.thumb_rel, i.preview_rel,
+       i.width, i.height, i.mtime, i.sha256, i.phash, i.thumb_rel, i.preview_rel, i.imported_at,
        COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id AND r.user_id=:uid), -1) AS my_rating,
        (SELECT ROUND(AVG(r.value), 2) FROM ratings r WHERE r.image_id=i.id) AS avg_rating,
        (SELECT COUNT(*) FROM ratings r WHERE r.image_id=i.id) AS rating_count,
