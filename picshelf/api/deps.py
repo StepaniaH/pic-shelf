@@ -6,7 +6,7 @@ from typing import Annotated, Iterator
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request
 
-from .. import auth
+from .. import auth, search
 from ..db import open_db
 from ..i18n import t
 
@@ -76,10 +76,33 @@ def image_and_access(conn: sqlite3.Connection, user: sqlite3.Row,
     return row
 
 
+def ensure_catalog_access(conn: sqlite3.Connection, user: sqlite3.Row,
+                          kind: str, entity_id: int) -> None:
+    """保护全局目录中仅关联到不可见库的条目；未关联条目仍可编辑。"""
+    table, links, column = {
+        "artist": ("artists", "image_artists", "artist_id"),
+        "tag": ("tags", "image_tags", "tag_id"),
+    }[kind]
+    if not conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (entity_id,)).fetchone():
+        raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))
+    allowed = auth.visible_library_ids(conn, user)
+    if allowed is None:
+        return
+    if not conn.execute(f"SELECT 1 FROM {links} WHERE {column}=?", (entity_id,)).fetchone():
+        return
+    visible, params = search.visible_images_sql(allowed)
+    if not conn.execute(
+        f"WITH visible AS ({visible}) SELECT 1 FROM {links} "
+        f"WHERE {column}=? AND image_id IN (SELECT id FROM visible)", [*params, entity_id],
+    ).fetchone():
+        raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))
+
+
 def serialize_image(d: dict, *, base: str = "/api/v1/media") -> dict:
     iid = d.get("id")
     if iid is not None:
-        d.setdefault("thumb_url", f"{base}/thumb/{iid}")
-        d.setdefault("preview_url", f"{base}/preview/{iid}")
-        d.setdefault("original_url", f"{base}/original/{iid}")
+        version = f"?v={d['sha256'][:16]}" if d.get("sha256") else ""
+        d.setdefault("thumb_url", f"{base}/thumb/{iid}{version}")
+        d.setdefault("preview_url", f"{base}/preview/{iid}{version}")
+        d.setdefault("original_url", f"{base}/original/{iid}{version}")
     return d

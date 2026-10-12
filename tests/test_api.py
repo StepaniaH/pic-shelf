@@ -324,3 +324,88 @@ def test_stats(env):
     s = c.get("/api/v1/stats").json()
     assert s["images"] == 4 and s["libraries"] == 1
     assert s["users"] == 1 and s["tags"] == 0
+
+
+def test_catalog_and_stats_follow_library_grants(env):
+    from picshelf import ops
+    c = env["client"]
+    _login(c)
+    conn = dbm.open_db(env["cfg"].db_path)
+    uid = auth.create_user(conn, "reader", "reader-pass-123")
+    visible_id = conn.execute("SELECT id FROM images LIMIT 1").fetchone()[0]
+    hidden_root = env["root"].parent / "private"
+    make_image(hidden_root / "private.png", (10, 20, 30))
+    hidden_lib = libsvc.create_library(conn, "private", str(hidden_root))
+    indexer.scan_library(conn, env["cfg"], hidden_lib)
+    conn.execute("DELETE FROM library_grants WHERE library_id=?", (hidden_lib,))
+    hidden_id = conn.execute("SELECT id FROM images WHERE library_id=?", (hidden_lib,)).fetchone()[0]
+    for iid, name in [(visible_id, "public"), (hidden_id, "private")]:
+        ops.add_tags(conn, iid, [name], uid)
+        artist = ops.create_artist(conn, name)
+        ops.link_artist(conn, iid, artist["id"])
+        ops.set_rating(conn, iid, uid, 8)
+        ops.set_favorite(conn, iid, uid, True)
+    private_artist = artist["id"]
+    public_artist = conn.execute("SELECT id FROM artists WHERE name='public'").fetchone()[0]
+    ops.link_artist(conn, hidden_id, public_artist)
+    album = ops.create_album(conn, "Mixed library album", env["library_id"])
+    ops.album_add_images(conn, album["id"], [visible_id, hidden_id])
+    ops.update_album(conn, album["id"], cover_image_id=hidden_id)
+    private_album = ops.create_album(conn, "Private album", hidden_lib)
+    ops.album_add_images(conn, private_album["id"], [visible_id])
+    conn.close()
+    reader = TestClient(env["app"])
+    _login(reader, "reader", "reader-pass-123")
+    stats = reader.get("/api/v1/stats").json()
+    assert stats["images"] == 4 and stats["libraries"] == 1
+    assert stats["tags"] == stats["artists"] == stats["ratings"] == stats["favorites"] == 1
+    assert [x["name"] for x in reader.get("/api/v1/tags").json()] == ["public"]
+    assert [x["name"] for x in reader.get("/api/v1/artists").json()] == ["public"]
+    assert reader.get(f"/api/v1/artists/{private_artist}").status_code == 404
+    assert reader.get(f"/api/v1/artists/{private_artist}/images").status_code == 404
+    assert reader.patch(f"/api/v1/artists/{private_artist}", json={"note": "changed"}).status_code == 404
+    assert reader.post("/api/v1/artists", json={"name": "private"}).status_code == 404
+    assert reader.post(f"/api/v1/images/{visible_id}/artists", json={"artist_id": private_artist}).status_code == 404
+    assert reader.get(f"/api/v1/artists/{public_artist}").json()["image_count"] == 1
+    assert reader.post("/api/v1/artists", json={"name": "public"}).json()["image_count"] == 1
+    assert reader.patch(f"/api/v1/artists/{public_artist}", json={"note": "updated"}).json()["image_count"] == 1
+    assert reader.post("/api/v1/artists", json={"name": "new artist"}).json()["image_count"] == 0
+    album_detail = reader.get(f"/api/v1/albums/{album['id']}").json()
+    assert album_detail["image_count"] == 1 and album_detail["cover_image_id"] is None
+    listed = next(a for a in reader.get("/api/v1/albums").json() if a["id"] == album["id"])
+    assert listed["image_count"] == 1 and listed["cover_image_id"] is None
+    album_images = reader.get(f"/api/v1/albums/{album['id']}/images").json()
+    assert album_images["total"] == album_images["album"]["image_count"] == 1
+    assert c.get(f"/api/v1/albums/{album['id']}").json()["image_count"] == 2
+    detail = reader.get(f"/api/v1/images/{visible_id}").json()
+    assert private_album["id"] not in {a["id"] for a in detail["albums"]}
+    conn = dbm.open_db(env["cfg"].db_path)
+    conn.execute("DELETE FROM library_grants WHERE library_id=?", (env["library_id"],))
+    conn.commit()
+    conn.close()
+    assert all(v == 0 for v in reader.get("/api/v1/stats").json().values())
+    assert reader.get("/api/v1/tags").json() == []
+
+
+def test_media_rejects_symlink_replaced_after_scan(env):
+    c = env["client"]
+    _login(c)
+    iid = _find_image(c, "red.png")["id"]
+    outside = env["root"].parent / "outside.png"
+    make_image(outside, (10, 20, 30))
+    src = env["root"] / "alpha/red.png"
+    src.unlink()
+    src.symlink_to(outside)
+    assert c.get(f"/api/v1/media/original/{iid}").status_code == 404
+
+
+@pytest.mark.parametrize("endpoint,body", [
+    ("/tags", {"name": "  "}),
+    ("/libraries", {"name": "  "}),
+])
+def test_empty_entity_names_return_client_error(env, endpoint, body):
+    c = env["client"]
+    _login(c)
+    if endpoint == "/libraries":
+        body = {**body, "root_path": str(env["root"])}
+    assert c.post("/api/v1" + endpoint, json=body).status_code == 400

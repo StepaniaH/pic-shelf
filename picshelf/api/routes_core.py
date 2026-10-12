@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .. import __version__, auth, db as dbm, indexer, libsvc, ops, search
-from .deps import Db, User, ensure_library_access, image_and_access, require_cap, serialize_image
+from .deps import Db, User, ensure_catalog_access, ensure_library_access, image_and_access, require_cap, serialize_image
 from ..i18n import t
 
 router = APIRouter(tags=["core"])
@@ -51,13 +51,15 @@ def list_libraries(conn: Db, user: User):
 def create_library(body: LibraryBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "manage_library"):
         raise HTTPException(status_code=403, detail=t("缺少权限：manage_library"))
-    root = Path(body.root_path).expanduser()
+    root = Path(body.root_path).expanduser().resolve()
     if not root.is_dir():
         raise HTTPException(status_code=400, detail=t("目录不存在：{root}", root=root))
     try:
         lib_id = libsvc.create_library(conn, body.name, str(root), body.description)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail=t("库名已存在：{v0}", v0=body.name))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return libsvc.get_library(conn, lib_id)
 
 
@@ -163,7 +165,7 @@ def create_album(body: AlbumBody, conn: Db, user: User):
 
 @router.get("/albums/{album_id}")
 def get_album(album_id: int, conn: Db, user: User):
-    album = ops.get_album(conn, album_id)
+    album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
@@ -180,14 +182,17 @@ def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
-    return ops.update_album(conn, album_id, name=body.name, category=body.category,
-                            description=body.description, cover_image_id=body.cover_image_id)
+    if body.cover_image_id is not None:
+        image_and_access(conn, user, body.cover_image_id)
+    ops.update_album(conn, album_id, name=body.name, category=body.category,
+                     description=body.description, cover_image_id=body.cover_image_id)
+    return ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
 
 
 @router.get("/albums/{album_id}/images")
 def album_images(album_id: int, conn: Db, user: User,
                  sort: str = "path", limit: int = 60, offset: int = 0):
-    album = ops.get_album(conn, album_id)
+    album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
@@ -322,11 +327,16 @@ def media(kind: str, image_id: int, request: Request, conn: Db, user: User, down
     if kind in ("thumb", "preview"):
         rel = row["thumb_rel"] if kind == "thumb" else row["preview_rel"]
         if rel:
-            path = cfg.media_dir / rel
+            path = (cfg.media_dir / rel).resolve()
+            if not path.is_relative_to(cfg.media_dir.resolve()):
+                raise HTTPException(status_code=404, detail=t("文件不存在"))
             return _serve_file(cfg, path, "image/webp", row["sha256"] or str(image_id))
         kind = "original"  # 缩略图缺失时回退原图
     lib = conn.execute("SELECT root_path FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
-    path = Path(lib["root_path"]) / row["rel_path"]
+    root = Path(lib["root_path"]).resolve()
+    path = (root / row["rel_path"]).resolve()
+    if not path.is_relative_to(root):
+        raise HTTPException(status_code=404, detail=t("文件不存在"))
     media_type = mimetypes.guess_type(row["filename"])[0] or "application/octet-stream"
     return _serve_file(cfg, path, media_type, row["sha256"] or str(image_id),
                        download_name=row["filename"] if download else None)
@@ -345,14 +355,17 @@ class TagPatch(BaseModel):
 
 @router.get("/tags")
 def list_tags(conn: Db, user: User, q: str | None = None, limit: int = 50):
-    return ops.list_tags(conn, q=q, limit=limit)
+    return ops.list_tags(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
 @router.post("/tags")
 def create_tag(body: TagBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
-    tag_id = ops.ensure_tag(conn, body.name, body.category)
+    try:
+        tag_id = ops.ensure_tag(conn, body.name, body.category)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     conn.commit()
     return {"id": tag_id, "name": body.name.strip()}
 
@@ -361,6 +374,7 @@ def create_tag(body: TagBody, conn: Db, user: User):
 def rename_tag(tag_id: int, body: TagPatch, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
+    ensure_catalog_access(conn, user, "tag", tag_id)
     try:
         return ops.rename_tag(conn, tag_id, body.name)
     except ValueError as exc:
@@ -385,16 +399,20 @@ class ArtistPatch(BaseModel):
 
 @router.get("/artists")
 def list_artists(conn: Db, user: User, q: str | None = None, limit: int = 100):
-    return ops.list_artists(conn, q=q, limit=limit)
+    return ops.list_artists(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
 @router.post("/artists")
 def create_artist(body: ArtistBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
+    existing = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (body.name.strip(),)).fetchone()
+    if existing:
+        ensure_catalog_access(conn, user, "artist", existing["id"])
     try:
-        return ops.create_artist(conn, body.name, aliases=body.aliases,
-                                 links=body.links, note=body.note)
+        artist = ops.create_artist(conn, body.name, aliases=body.aliases,
+                                   links=body.links, note=body.note)
+        return ops.get_artist(conn, artist["id"], auth.visible_library_ids(conn, user), include_unlinked=True)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -402,7 +420,7 @@ def create_artist(body: ArtistBody, conn: Db, user: User):
 @router.get("/artists/{artist_id}")
 def get_artist(artist_id: int, conn: Db, user: User):
     try:
-        return ops.get_artist(conn, artist_id)
+        return ops.get_artist(conn, artist_id, auth.visible_library_ids(conn, user))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
@@ -411,15 +429,22 @@ def get_artist(artist_id: int, conn: Db, user: User):
 def patch_artist(artist_id: int, body: ArtistPatch, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
-    return ops.update_artist(conn, artist_id, name=body.name, aliases=body.aliases,
-                             links=body.links, note=body.note)
+    ensure_catalog_access(conn, user, "artist", artist_id)
+    try:
+        ops.update_artist(conn, artist_id, name=body.name, aliases=body.aliases,
+                          links=body.links, note=body.note)
+        return ops.get_artist(conn, artist_id, auth.visible_library_ids(conn, user), include_unlinked=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=409, detail=t("名称已存在，请使用其他名称"))
 
 
 @router.get("/artists/{artist_id}/images")
 def artist_images(artist_id: int, conn: Db, user: User,
                   sort: str = "newest", limit: int = 60, offset: int = 0):
     try:
-        ops.get_artist(conn, artist_id)
+        ops.get_artist(conn, artist_id, auth.visible_library_ids(conn, user))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     allowed = auth.visible_library_ids(conn, user)
@@ -437,6 +462,11 @@ def artist_images(artist_id: int, conn: Db, user: User,
 @router.get("/dupes")
 def dupes(conn: Db, user: User, mode: str = "exact", threshold: int = 8):
     allowed = auth.visible_library_ids(conn, user)
+    if mode not in ("exact", "similar"):
+        raise HTTPException(status_code=400, detail=t("查重模式必须是 exact 或 similar"))
     if mode == "similar":
-        return libsvc.similar_dupes(conn, allowed, threshold=threshold)
+        try:
+            return libsvc.similar_dupes(conn, allowed, threshold=threshold)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     return libsvc.exact_dupes(conn, allowed)

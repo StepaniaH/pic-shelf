@@ -16,19 +16,31 @@ from __future__ import annotations
 
 import shlex
 import sqlite3
+import math
 from dataclasses import dataclass, field
 from .i18n import t
 
 SORTS = {
     "newest": "i.id DESC",
     "oldest": "i.id ASC",
-    "path": "i.rel_path ASC",
+    "path": "i.rel_path ASC, i.id ASC",
     "rating": "my_rating DESC, i.id DESC",
     "avg": "avg_rating DESC, i.id DESC",
     "random": "RANDOM()",
 }
 
 _KEYWORDS = ("tag", "artist", "album", "rating", "avg", "fav", "ext", "file")
+
+
+def visible_images_sql(allowed_library_ids: list[int] | None) -> tuple[str, list]:
+    """目录统计与关联实体共用的可见图片范围；None 表示管理员。"""
+    sql = "SELECT * FROM images WHERE missing=0"
+    if allowed_library_ids is None:
+        return sql, []
+    if not allowed_library_ids:
+        return sql + " AND 0=1", []
+    marks = ",".join("?" for _ in allowed_library_ids)
+    return sql + f" AND library_id IN ({marks})", list(allowed_library_ids)
 
 
 @dataclass
@@ -42,6 +54,8 @@ def parse(query: str) -> ParsedQuery:
     try:
         tokens = shlex.split(query or "")
     except ValueError:
+        out.errors.append(t("引号未闭合，请用成对的引号包裹含空格的名称"))
+        out.clauses.append({"kind": "invalid", "values": [], "neg": False})
         tokens = (query or "").split()
     for token in tokens:
         tok = token.strip()
@@ -53,7 +67,7 @@ def parse(query: str) -> ParsedQuery:
         key, val = None, tok
         low = tok.lower()
         for k in _KEYWORDS:
-            if low == k or low == k + ":":
+            if low == k + ":" or (k == "fav" and low == k):
                 key, val = k, ""
                 break
             if low.startswith(k + ":"):
@@ -67,6 +81,13 @@ def parse(query: str) -> ParsedQuery:
         if not values:
             out.errors.append(t("忽略空参数：{token}", token=token))
             continue
+        if key in ("rating", "avg"):
+            valid = [v for v in values if _parse_op(v) is not None]
+            if len(valid) != len(values):
+                out.errors.append(t("评分条件无效：{token}。请使用 rating:>=8 或 avg:>=8。", token=token))
+            values = valid
+            if not values:
+                key, neg = "invalid", False
         out.clauses.append({"kind": key, "values": values, "neg": neg})
     return out
 
@@ -80,11 +101,13 @@ def _parse_op(v: str) -> tuple[str, float] | None:
         if v.startswith(op):
             body = v[len(op):]
             try:
-                return op, float(body)
+                number = float(body)
+                return (op, number) if math.isfinite(number) else None
             except ValueError:
                 return None
     try:
-        return "=", float(v)
+        number = float(v)
+        return ("=", number) if math.isfinite(number) else None
     except ValueError:
         return None
 
@@ -116,7 +139,9 @@ def build_where(
         kind, values, neg = c["kind"], c["values"], c["neg"]
         piece: str | None = None
 
-        if kind in ("tag", "term"):
+        if kind == "invalid":
+            piece = "0=1"
+        elif kind in ("tag", "term"):
             subs = []
             for v in values:
                 tag_expr = (
@@ -134,11 +159,11 @@ def build_where(
         elif kind == "artist":
             subs = []
             for v in values:
-                pat = nparam(f"%{v.lower()}%")
+                pat = nparam(f"%{_like(v.lower())}%")
                 subs.append(
                     "EXISTS(SELECT 1 FROM image_artists ia JOIN artists a ON a.id=ia.artist_id "
-                    f"WHERE ia.image_id=i.id AND (lower(a.name) LIKE {pat} "
-                    f"OR lower(COALESCE(a.aliases,'')) LIKE {pat}))"
+                    f"WHERE ia.image_id=i.id AND (lower(a.name) LIKE {pat} ESCAPE '\\' "
+                    f"OR lower(COALESCE(a.aliases,'')) LIKE {pat} ESCAPE '\\'))"
                 )
             piece = "(" + " OR ".join(subs) + ")"
 
@@ -155,7 +180,7 @@ def build_where(
                 else:
                     subs.append(
                         "EXISTS(SELECT 1 FROM album_images ai JOIN albums al ON al.id=ai.album_id "
-                        f"WHERE ai.image_id=i.id AND lower(al.name) LIKE {nparam('%' + v.lower() + '%')})"
+                        f"WHERE ai.image_id=i.id AND lower(al.name) LIKE {nparam('%' + _like(v.lower()) + '%')} ESCAPE '\\')"
                     )
             piece = "(" + " OR ".join(subs) + ")"
 
@@ -281,12 +306,18 @@ def get_image(
             (image_id,),
         )
     ]
+    album_scope = ""
+    album_params = [image_id]
+    if allowed_library_ids is not None:
+        marks = ",".join("?" for _ in allowed_library_ids)
+        album_scope = f" AND (al.library_id IS NULL OR al.library_id IN ({marks}))"
+        album_params.extend(allowed_library_ids)
     item["albums"] = [
         dict(r)
         for r in conn.execute(
             "SELECT al.id, al.name, al.kind FROM albums al "
-            "JOIN album_images ai ON ai.album_id=al.id WHERE ai.image_id=? ORDER BY al.name",
-            (image_id,),
+            "JOIN album_images ai ON ai.album_id=al.id WHERE ai.image_id=?" + album_scope + " ORDER BY al.name",
+            album_params,
         )
     ]
     item["library"] = dict(

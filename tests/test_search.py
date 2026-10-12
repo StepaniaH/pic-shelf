@@ -105,3 +105,17 @@ def test_sort_orders(conn, cfg, library, alice):
     assert res["items"][0]["filename"] == "red.png"  # 9 分居首
     res = search.search_images(conn, alice["id"], allowed, sort="path")
     assert res["items"][0]["filename"] == "blue.png"
+
+
+def test_invalid_filters_do_not_expand_to_every_image(conn, cfg, library, alice):
+    _setup(conn, cfg, library, alice)
+    for query in ['rating:nope', 'avg:nan', '-rating:inf', '"unfinished']:
+        result, names = _find(conn, alice, query)
+        assert result["errors"] and names == []
+
+
+def test_album_and_artist_substrings_escape_wildcards(conn, cfg, library, alice):
+    _setup(conn, cfg, library, alice)
+    assert _find(conn, alice, "artist:%")[1] == []
+    assert _find(conn, alice, "album:_")[1] == []
+    assert search.parse("artist").clauses[0]["kind"] == "term"

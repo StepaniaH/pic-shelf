@@ -10,6 +10,7 @@ import sqlite3
 
 from .db import utcnow
 from .i18n import t
+from .search import visible_images_sql
 
 
 def _get_image(conn: sqlite3.Connection, image_id: int) -> sqlite3.Row:
@@ -132,16 +133,22 @@ def remove_tags(conn: sqlite3.Connection, image_id: int, names: list[str]) -> in
     return n
 
 
-def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50) -> list[dict]:
+def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50,
+              allowed_library_ids: list[int] | None = None) -> list[dict]:
+    visible, params = visible_images_sql(allowed_library_ids)
     sql = (
-        "SELECT t.id, t.name, t.namespace, COUNT(it.image_id) AS count "
+        f"WITH visible AS ({visible}) "
+        "SELECT t.id, t.name, t.namespace, COUNT(i.id) AS count "
         "FROM tags t LEFT JOIN image_tags it ON it.tag_id=t.id "
+        "LEFT JOIN visible i ON i.id=it.image_id "
     )
-    params: list = []
     if q:
         sql += "WHERE t.name LIKE ? "
         params.append(f"%{q}%")
-    sql += "GROUP BY t.id ORDER BY count DESC, t.name LIMIT ?"
+    sql += "GROUP BY t.id "
+    if allowed_library_ids is not None:
+        sql += "HAVING COUNT(i.id)>0 "
+    sql += "ORDER BY count DESC, t.name LIMIT ?"
     params.append(max(1, min(limit, 500)))
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -178,6 +185,10 @@ def create_artist(conn: sqlite3.Connection, name: str, *, aliases: str | None = 
 
 
 def update_artist(conn: sqlite3.Connection, artist_id: int, **fields) -> dict:
+    if fields.get("name") is not None:
+        fields["name"] = fields["name"].strip()
+        if not fields["name"]:
+            raise ValueError(t("艺术家名不能为空"))
     allowed = {"name", "aliases", "links", "note"}
     sets, params = [], []
     for k, v in fields.items():
@@ -194,7 +205,8 @@ def update_artist(conn: sqlite3.Connection, artist_id: int, **fields) -> dict:
     return get_artist(conn, artist_id)
 
 
-def get_artist(conn: sqlite3.Connection, artist_id: int) -> dict:
+def get_artist(conn: sqlite3.Connection, artist_id: int,
+               allowed_library_ids: list[int] | None = None, *, include_unlinked: bool = False) -> dict:
     row = conn.execute("SELECT * FROM artists WHERE id=?", (artist_id,)).fetchone()
     if row is None:
         raise ValueError(t("艺术家 #{artist_id} 不存在", artist_id=artist_id))
@@ -203,24 +215,36 @@ def get_artist(conn: sqlite3.Connection, artist_id: int) -> dict:
         d["links"] = json.loads(d.get("links") or "[]")
     except Exception:
         d["links"] = []
+    visible, params = visible_images_sql(allowed_library_ids)
     d["image_count"] = int(
         conn.execute(
-            "SELECT COUNT(*) AS n FROM image_artists WHERE artist_id=?", (artist_id,)
+            f"WITH visible AS ({visible}) SELECT COUNT(*) AS n FROM image_artists "
+            "WHERE artist_id=? AND image_id IN (SELECT id FROM visible)", [*params, artist_id]
         ).fetchone()["n"]
     )
+    if allowed_library_ids is not None and not d["image_count"]:
+        linked = conn.execute("SELECT 1 FROM image_artists WHERE artist_id=? LIMIT 1", (artist_id,)).fetchone()
+        if not include_unlinked or linked:
+            raise ValueError(t("艺术家 #{artist_id} 不存在", artist_id=artist_id))
     return d
 
 
-def list_artists(conn: sqlite3.Connection, q: str | None = None, limit: int = 100) -> list[dict]:
+def list_artists(conn: sqlite3.Connection, q: str | None = None, limit: int = 100,
+                 allowed_library_ids: list[int] | None = None) -> list[dict]:
+    visible, params = visible_images_sql(allowed_library_ids)
     sql = (
-        "SELECT a.id, a.name, a.aliases, COUNT(ia.image_id) AS image_count "
+        f"WITH visible AS ({visible}) "
+        "SELECT a.id, a.name, a.aliases, COUNT(i.id) AS image_count "
         "FROM artists a LEFT JOIN image_artists ia ON ia.artist_id=a.id "
+        "LEFT JOIN visible i ON i.id=ia.image_id "
     )
-    params: list = []
     if q:
         sql += "WHERE a.name LIKE ? OR COALESCE(a.aliases,'') LIKE ? "
         params += [f"%{q}%", f"%{q}%"]
-    sql += "GROUP BY a.id ORDER BY image_count DESC, a.name LIMIT ?"
+    sql += "GROUP BY a.id "
+    if allowed_library_ids is not None:
+        sql += "HAVING COUNT(i.id)>0 "
+    sql += "ORDER BY image_count DESC, a.name LIMIT ?"
     params.append(max(1, min(limit, 500)))
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -374,16 +398,23 @@ def album_remove_images(conn: sqlite3.Connection, album_id: int, image_ids: list
     return n
 
 
-def get_album(conn: sqlite3.Connection, album_id: int) -> dict | None:
+def get_album(conn: sqlite3.Connection, album_id: int,
+              allowed_library_ids: list[int] | None = None) -> dict | None:
     row = conn.execute("SELECT * FROM albums WHERE id=?", (album_id,)).fetchone()
     if row is None:
         return None
     d = dict(row)
+    visible, params = visible_images_sql(allowed_library_ids)
     d["image_count"] = int(
         conn.execute(
-            "SELECT COUNT(*) AS n FROM album_images WHERE album_id=?", (album_id,)
+            f"WITH visible AS ({visible}) SELECT COUNT(*) AS n FROM album_images ai "
+            "JOIN visible i ON i.id=ai.image_id WHERE ai.album_id=?", [*params, album_id]
         ).fetchone()["n"]
     )
+    if d["cover_image_id"] is not None and not conn.execute(
+        f"WITH visible AS ({visible}) SELECT 1 FROM visible WHERE id=?", [*params, d["cover_image_id"]],
+    ).fetchone():
+        d["cover_image_id"] = None
     if d.get("library_id"):
         lib = conn.execute(
             "SELECT name FROM libraries WHERE id=?", (d["library_id"],)
@@ -397,12 +428,15 @@ def get_album(conn: sqlite3.Connection, album_id: int) -> dict | None:
 def list_albums(conn: sqlite3.Connection, *, library_id: int | None = None,
                 allowed_library_ids: list[int] | None = None,
                 kind: str | None = None) -> list[dict]:
+    visible, params = visible_images_sql(allowed_library_ids)
     sql = (
-        "SELECT al.*, (SELECT COUNT(*) FROM album_images ai WHERE ai.album_id=al.id) AS image_count, "
+        f"WITH visible AS ({visible}) "
+        "SELECT al.*, (SELECT COUNT(*) FROM album_images ai JOIN visible i ON i.id=ai.image_id "
+        "WHERE ai.album_id=al.id) AS image_count, "
+        "al.cover_image_id IN (SELECT id FROM visible) AS cover_visible, "
         "(SELECT name FROM libraries l WHERE l.id=al.library_id) AS library_name "
         "FROM albums al WHERE 1=1"
     )
-    params: list = []
     if library_id is not None:
         sql += " AND al.library_id=?"
         params.append(library_id)
@@ -416,4 +450,8 @@ def list_albums(conn: sqlite3.Connection, *, library_id: int | None = None,
         sql += " AND al.kind=?"
         params.append(kind)
     sql += " ORDER BY al.library_id, al.kind DESC, al.name"
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    albums = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    for album in albums:
+        if not album.pop("cover_visible"):
+            album["cover_image_id"] = None
+    return albums

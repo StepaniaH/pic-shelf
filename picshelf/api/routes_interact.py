@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .. import auth, ops
-from .deps import Db, User, image_and_access, require_cap
+from .deps import Db, User, ensure_catalog_access, image_and_access, require_cap
 
 router = APIRouter(tags=["interact"])
 
@@ -71,6 +71,7 @@ class LinkArtistBody(BaseModel):
 @router.post("/images/{image_id}/artists")
 def link_artist(image_id: int, body: LinkArtistBody, conn: Db, user: TagEditor):
     image_and_access(conn, user, image_id)
+    ensure_catalog_access(conn, user, "artist", body.artist_id)
     try:
         ops.link_artist(conn, image_id, body.artist_id, body.on)
     except ValueError as exc:

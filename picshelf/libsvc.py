@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import hashing
+from . import search
 from .auth import grant_default_library
 from .db import utcnow
 from .i18n import t
@@ -57,33 +57,30 @@ def list_libraries(conn: sqlite3.Connection, allowed: list[int] | None = None) -
 
 
 def global_stats(conn: sqlite3.Connection, allowed: list[int] | None = None) -> dict:
-    where = ""
-    params: list = []
-    if allowed is not None:
-        if not allowed:
-            return {"images": 0, "libraries": 0, "albums": 0, "artists": 0,
-                    "tags": 0, "users": 0, "favorites": 0, "ratings": 0, "size_bytes": 0}
-        marks = ",".join("?" * len(allowed))
-        where = f" AND library_id IN ({marks})"
-        params = list(allowed)
+    visible, params = search.visible_images_sql(allowed)
+    prefix = f"WITH visible AS ({visible}) "
 
-    def one(sql: str, extra: list | None = None) -> int:
-        row = conn.execute(sql, (extra or []) + params).fetchone()
+    def one(sql: str) -> int:
+        row = conn.execute(prefix + sql, params).fetchone()
         return int(row[0] or 0)
 
+    library_filter = ""
+    if allowed is not None:
+        ids = ",".join(str(int(x)) for x in allowed)
+        library_filter = f" AND id IN ({ids})" if ids else " AND 0=1"
+
     return {
-        "images": one("SELECT COUNT(*) FROM images WHERE missing=0" + where),
-        "size_bytes": one("SELECT COALESCE(SUM(size_bytes),0) FROM images WHERE missing=0" + where),
-        "libraries": one("SELECT COUNT(*) FROM libraries WHERE 1=1" + (
-            "" if allowed is None else
-            (" AND id IN (" + ",".join(str(int(x)) for x in allowed) + ")")
-        )),
-        "albums": one("SELECT COUNT(*) FROM albums WHERE library_id IS NOT NULL" + where),
-        "artists": one("SELECT COUNT(*) FROM artists"),
-        "tags": one("SELECT COUNT(*) FROM tags"),
-        "users": one("SELECT COUNT(*) FROM users WHERE disabled=0"),
-        "favorites": one("SELECT COUNT(*) FROM favorites"),
-        "ratings": one("SELECT COUNT(*) FROM ratings"),
+        "images": one("SELECT COUNT(*) FROM visible"),
+        "size_bytes": one("SELECT SUM(size_bytes) FROM visible"),
+        "libraries": one("SELECT COUNT(*) FROM libraries WHERE 1=1" + library_filter),
+        "albums": one("SELECT COUNT(*) FROM albums WHERE library_id IN (SELECT id FROM libraries WHERE 1=1" + library_filter + ")"),
+        "artists": one("SELECT COUNT(*) FROM artists") if allowed is None else one(
+            "SELECT COUNT(DISTINCT artist_id) FROM image_artists WHERE image_id IN (SELECT id FROM visible)"),
+        "tags": one("SELECT COUNT(*) FROM tags") if allowed is None else one(
+            "SELECT COUNT(DISTINCT tag_id) FROM image_tags WHERE image_id IN (SELECT id FROM visible)"),
+        "users": one("SELECT COUNT(*) FROM users WHERE disabled=0") if allowed is None else 0,
+        "favorites": one("SELECT COUNT(*) FROM favorites WHERE image_id IN (SELECT id FROM visible)"),
+        "ratings": one("SELECT COUNT(*) FROM ratings WHERE image_id IN (SELECT id FROM visible)"),
     }
 
 
@@ -110,7 +107,12 @@ def exact_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None) -> l
 
 def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
                   threshold: int = 8) -> list[dict]:
-    """pHash 汉明距离 ≤ threshold 视为相似。O(n²)，适合中等库。"""
+    """按首个代表图分组；每个成员与代表图的距离不超过 threshold。
+
+    每个哈希只解析一次，重复哈希直接命中已选组。最坏仍为 O(n²)。
+    """
+    if not 0 <= threshold <= 64:
+        raise ValueError(t("相似距离必须在 0–64 之间"))
     sql = "SELECT id, phash, filename FROM images WHERE missing=0 AND phash IS NOT NULL"
     params: list = []
     if allowed is not None:
@@ -119,25 +121,29 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
         marks = ",".join("?" * len(allowed))
         sql += f" AND library_id IN ({marks})"
         params += allowed
-    rows = conn.execute(sql, params).fetchall()
+    rows = conn.execute(sql + " ORDER BY id", params).fetchall()
     groups: list[list[dict]] = []
+    representatives: list[int] = []
     placed: dict[int, int] = {}
     for r in rows:
-        ph = r["phash"]
-        target = None
-        for gi, group in enumerate(groups):
-            if hashing.hamming(group[0]["phash"], ph) <= threshold:
-                target = gi
-                break
+        ph = int(r["phash"], 16)
+        target = placed.get(ph)
+        if target is None:
+            for gi, representative in enumerate(representatives):
+                if (representative ^ ph).bit_count() <= threshold:
+                    target = gi
+                    break
         entry = {"id": int(r["id"]), "phash": ph, "filename": r["filename"]}
         if target is None:
+            target = len(groups)
+            representatives.append(ph)
             groups.append([entry])
         else:
             groups[target].append(entry)
-            placed[int(r["id"])] = target
+        placed[ph] = target
     return [
         {"count": len(g), "images": [{"id": e["id"], "filename": e["filename"],
-                                      "distance": hashing.hamming(g[0]["phash"], e["phash"])}
+                                      "distance": (g[0]["phash"] ^ e["phash"]).bit_count()}
                                      for e in g]}
         for g in groups if len(g) > 1
     ]
