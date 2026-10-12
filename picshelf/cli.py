@@ -779,7 +779,7 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
     click.echo(t("已恢复数据库到：{v0}", v0=cfg.db_path))
 
 
-# ---------------------------------------------------------------- 托管库导入（v0.2）
+# ---------------------------------------------------------------- 托管库导入
 
 @main.command("import")
 @click.argument("source_dir", type=click.Path(exists=True, file_okay=False))

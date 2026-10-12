@@ -232,7 +232,7 @@ async function renderLibraries(body) {
   });
 }
 
-// ---------------------------------------------------------------- 托管导入（v0.2）
+// ---------------------------------------------------------------- 托管导入
 
 async function renderImport(body) {
   const libs = await api("/libraries");

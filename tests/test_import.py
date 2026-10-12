@@ -1,4 +1,4 @@
-"""托管库导入器测试（v0.2）。"""
+"""托管库导入器测试。"""
 import errno
 import json
 import os
