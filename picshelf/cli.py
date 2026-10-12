@@ -41,7 +41,11 @@ def _conn(cfg: Config) -> sqlite3.Connection:
         raise click.ClickException(
             t("数据目录尚未初始化（找不到 {v0}）。先运行：picshelf init --admin <管理员名>", v0=cfg.db_path)
         )
-    return dbm.open_db(cfg.db_path)
+    conn = dbm.open_db(cfg.db_path)
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None:
+        ctx.call_on_close(conn.close)
+    return conn
 
 
 def _acting_user(conn: sqlite3.Connection, name: str | None = None) -> sqlite3.Row:
@@ -120,6 +124,14 @@ class _I18nGroup(click.Group):
         _localize_cmd(self)
         super().format_help(ctx, formatter)
 
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise click.ClickException(t("操作未完成：{error}。请检查参数后重试。", error=exc)) from exc
+        except OSError as exc:
+            raise click.ClickException(t("文件操作失败：{error}。请检查路径与读写权限。", error=exc)) from exc
+
 
 def _localize_cmd(cmd: click.Command) -> None:
     cb = getattr(cmd, "callback", None)
@@ -172,6 +184,7 @@ def init(cfg: Config, admin: str | None, password_stdin: bool):
     """初始化数据目录：建库、生成密钥、创建默认组与管理员。"""
     cfg.ensure()
     conn = dbm.open_db(cfg.db_path)
+    click.get_current_context().call_on_close(conn.close)
     auth.ensure_default_groups(conn)
     auth.load_secret(cfg.secret_path)
     if admin:
@@ -201,7 +214,7 @@ def serve(cfg: Config, host: str, port: int, reload: bool):
 
     if reload:
         os.environ["PICSHELF_DATA"] = str(cfg.data_dir)
-        uvicorn.run("picshelf.api:create_app_dev", host=host, port=port, reload=True)
+        uvicorn.run("picshelf.api:create_app_dev", host=host, port=port, reload=True, factory=True)
         return
     app = create_app(cfg)
     click.echo(f"Pic Shelf Web → http://{host}:{port}")
@@ -316,17 +329,18 @@ def _base_where(conn, user, opts) -> tuple[list[str], dict]:
 @main.command("ls")
 @click.option("--query", "-q", default="", help="检索表达式")
 @click.option("--library", default=None, help="库名或 ID")
-@click.option("--album", default=None, help="专辑 ID")
-@click.option("--artist", default=None, help="艺术家 ID")
+@click.option("--album", default=None, type=click.IntRange(min=1), help="专辑 ID")
+@click.option("--artist", default=None, type=click.IntRange(min=1), help="艺术家 ID")
 @click.option("--tag", default=None, help="标签全名")
-@click.option("--min-rating", default=None, type=int, help="我的评分下限")
+@click.option("--min-rating", default=None, type=click.IntRange(0, 10), help="我的评分下限")
 @click.option("--favorites", is_flag=True, help="仅收藏")
 @click.option("--sort", default="newest", type=click.Choice(list(search.SORTS)))
-@click.option("-n", "--limit", default=50, show_default=True)
+@click.option("-n", "--limit", default=50, type=click.IntRange(0, 10000), show_default=True)
+@click.option("--offset", default=0, type=click.IntRange(min=0), show_default=True, help="跳过的结果数量")
 @click.option("--user", "user_name", default=None, help="以哪个用户视角（默认首个管理员）")
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
-def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort, limit, user_name, as_json):
+def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort, limit, offset, user_name, as_json):
     """列表 / 检索图片。"""
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
@@ -341,15 +355,24 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
         "favorites": favorites, "min_rating": min_rating, "library": library,
     })
     res = search.search_images(
-        conn, user["id"], allowed, query=query, sort=sort, limit=limit,
+        conn, user["id"], allowed, query=query, sort=sort, limit=limit, offset=offset,
         extra_where=ew or None, extra_params=ep or None,
     )
     if as_json:
         click.echo(json.dumps(res, ensure_ascii=False, indent=2))
         return
-    click.echo(t("共 {v0} 张（显示前 {v1}）", v0=res['total'], v1=len(res['items'])))
+    for error in res["errors"]:
+        click.echo(error, err=True)
+    if offset and res["items"]:
+        click.echo(t("共 {total} 张（显示 {start}–{end}）", total=res["total"],
+                     start=offset + 1, end=offset + len(res["items"])))
+    else:
+        click.echo(t("共 {v0} 张（显示前 {v1}）", v0=res['total'], v1=len(res['items'])))
     for item in res["items"]:
         click.echo(_print_image_row(item))
+
+
+main.add_command(ls_cmd, "search")
 
 
 @main.command()
@@ -378,7 +401,7 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
     click.echo(f"#{detail['id']}  {detail['filename']}")
     click.echo(t("路径:   {abspath}", abspath=abspath))
     click.echo(t("尺寸:   {v0}x{v1}  大小: {v2}  格式: {v3}", v0=detail['width'], v1=detail['height'], v2=_fmt_size(detail['size_bytes']), v3=detail['ext']))
-    click.echo(t("评分:   我的 {rating}   平均 {v0}（{v1} 人）  收藏: {v2}", rating=rating, v0=detail['avg_rating'] or '—', v1=detail['rating_count'], v2=t('是') if detail['favorite'] else t('否')))
+    click.echo(t("评分:   我的 {rating}   平均 {v0}（{v1} 人）  收藏: {v2}", rating=rating, v0=detail['avg_rating'] if detail['avg_rating'] is not None else '—', v1=detail['rating_count'], v2=t('是') if detail['favorite'] else t('否')))
     click.echo(t("标签:   {v0}", v0='、'.join(t['name'] for t in detail['tags']) or t('（无）')))
     click.echo(t("艺术家: {v0}", v0='、'.join(a['name'] for a in detail['artists']) or t('（无）')))
     click.echo(t("专辑:   {v0}", v0='、'.join(a['name'] for a in detail['albums']) or t('（无）')))
@@ -405,7 +428,7 @@ def rate(cfg: Config, image_id: int, value: int, user_name: str | None):
         summary = ops.set_rating(conn, image_id, user["id"], value)
     except ValueError as exc:
         raise click.ClickException(str(exc))
-    click.echo(t("#{image_id} 我的评分 → {v0}（平均 {v1}）", image_id=image_id, v0=summary['my_rating'], v1=summary['avg_rating'] or '—'))
+    click.echo(t("#{image_id} 我的评分 → {v0}（平均 {v1}）", image_id=image_id, v0=summary['my_rating'], v1=summary['avg_rating'] if summary['avg_rating'] is not None else '—'))
 
 
 @main.command()
@@ -547,12 +570,12 @@ def artist_unlink(cfg, image_id, artist_name):
 
 @main.command()
 @click.option("--library", default=None, help="库名或 ID")
-@click.option("--album", default=None, help="专辑 ID")
-@click.option("--artist", default=None, help="艺术家 ID")
+@click.option("--album", default=None, type=click.IntRange(min=1), help="专辑 ID")
+@click.option("--artist", default=None, type=click.IntRange(min=1), help="艺术家 ID")
 @click.option("--tag", default=None, help="标签全名")
 @click.option("--query", "-q", default="", help="检索表达式")
 @click.option("--favorites", is_flag=True)
-@click.option("--min-rating", default=None, type=int)
+@click.option("--min-rating", default=None, type=click.IntRange(0, 10))
 @click.option("--order", default="sequential", type=click.Choice(["sequential", "shuffle", "random"]))
 @click.option("--interval", default=8, show_default=True, type=int, help="每张停留秒数（0=手动翻页）")
 @click.option("--count", default=0, show_default=True, type=int, help="播放数量上限（0=全部）")
@@ -662,7 +685,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
 
 @main.command()
 @click.option("--mode", default="exact", type=click.Choice(["exact", "similar"]), show_default=True)
-@click.option("--threshold", default=8, show_default=True, help="similar 模式的 pHash 距离阈值")
+@click.option("--threshold", default=8, type=click.IntRange(0, 64), show_default=True, help="similar 模式的 pHash 距离阈值")
 @click.pass_obj
 def dupes(cfg: Config, mode: str, threshold: int):
     """重复检测（exact=sha256 相同；similar=pHash 相似）。"""
@@ -762,20 +785,47 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
         except Exception:
             raise click.ClickException(t("口令错误或备份文件损坏"))
     import io
-    with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-        if "picshelf.db" not in zf.namelist():
-            raise click.ClickException(t("备份格式不正确（缺少 picshelf.db）"))
-        db_bytes = zf.read("picshelf.db")
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+            if "picshelf.db" not in zf.namelist():
+                raise click.ClickException(t("备份格式不正确（缺少 picshelf.db）"))
+            db_bytes = zf.read("picshelf.db")
+    except zipfile.BadZipFile as exc:
+        raise click.ClickException(t("备份文件损坏，请选择有效的 Pic Shelf 备份")) from exc
     if not db_bytes.startswith(b"SQLite format 3"):
         raise click.ClickException(t("数据库文件无效"))
     cfg.ensure()
     if cfg.db_path.exists() and not force:
         raise click.ClickException(t("数据目录已有数据库。如确认覆盖请加 --force（现有库会先自动备份）"))
-    if cfg.db_path.exists():
-        bak = cfg.db_path.with_name(f"picshelf.db.bak-{int(time.time())}")
-        shutil.copy2(cfg.db_path, bak)
-        click.echo(t("现有数据库已备份到：{bak}", bak=bak))
-    cfg.db_path.write_bytes(db_bytes)
+    # 先验证快照，再由 SQLite 自己恢复；直接覆盖主文件会混入旧 WAL。
+    with tempfile.TemporaryDirectory(dir=cfg.data_dir) as tmp:
+        snap = Path(tmp) / "restore.db"
+        snap.write_bytes(db_bytes)
+        source = sqlite3.connect(str(snap))
+        target = None
+        try:
+            if source.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("integrity_check failed")
+            source.execute("SELECT id FROM images LIMIT 1")
+            source.execute("SELECT id FROM users LIMIT 1")
+            if cfg.db_path.exists():
+                target = sqlite3.connect(str(cfg.db_path))
+                bak = cfg.db_path.with_name(f"picshelf.db.bak-{time.time_ns()}")
+                snapshot = sqlite3.connect(str(bak))
+                try:
+                    target.backup(snapshot)
+                finally:
+                    snapshot.close()
+                click.echo(t("现有数据库已备份到：{bak}", bak=bak))
+            else:
+                target = sqlite3.connect(str(cfg.db_path))
+            source.backup(target)
+        except sqlite3.DatabaseError as exc:
+            raise click.ClickException(t("无法恢复数据库，请检查备份完整性并停止正在写入的服务后重试")) from exc
+        finally:
+            source.close()
+            if target is not None:
+                target.close()
     click.echo(t("已恢复数据库到：{v0}", v0=cfg.db_path))
 
 

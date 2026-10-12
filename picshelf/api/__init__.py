@@ -14,6 +14,11 @@ from . import routes_admin, routes_auth, routes_core, routes_import, routes_inte
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
+def create_app_dev() -> FastAPI:
+    """Uvicorn reload worker 的无参数工厂。"""
+    return create_app(Config.resolve())
+
+
 def create_app(cfg: Config) -> FastAPI:
     cfg.ensure()
     app = FastAPI(
@@ -28,7 +33,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.middleware("http")
     async def _lang_from_header(request, call_next):
-        # 按请求的 Accept-Language 切换 API 文案语言（单机小规模服务，全局即可）
+        # ContextVar 按请求隔离，线程池会继承当前请求的语言。
         header = request.headers.get("accept-language", "")
         first = header.split(",")[0].strip().lower()
         if first.startswith("zh"):

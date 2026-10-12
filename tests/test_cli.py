@@ -152,3 +152,46 @@ def test_cli_library_missing_dir(workdir):
     result = runner.invoke(main, ["--data", data, "library", "add", "x", "/nonexistent-dir-xyz"])
     assert result.exit_code != 0
     assert "目录不存在" in result.output
+
+
+def test_cli_pagination_and_invalid_ids(workdir):
+    _init(workdir)
+    data = str(workdir["data"])
+    first = json.loads(run_ok(["--data", data, "ls", "--sort", "path", "--limit", "2", "--json"]))
+    second = json.loads(run_ok(["--data", data, "ls", "--sort", "path", "--limit", "2", "--offset", "2", "--json"]))
+    assert first["total"] == second["total"] == 4
+    assert {x["id"] for x in first["items"]}.isdisjoint(x["id"] for x in second["items"])
+    page = run_ok(["--data", data, "ls", "--limit", "2", "--offset", "2"])
+    assert "显示 3–4" in page
+    bad = CliRunner().invoke(main, ["--data", data, "ls", "--album", "invalid"])
+    assert bad.exit_code == 2 and "--album" in bad.output
+
+
+def test_reload_uses_importable_factory(workdir, monkeypatch):
+    import uvicorn
+    from picshelf.api import create_app_dev
+    _init(workdir)
+    called = {}
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: called.update(target=args[0], **kwargs))
+    monkeypatch.setenv("PICSHELF_DATA", str(workdir["data"]))
+    run_ok(["--data", str(workdir["data"]), "serve", "--reload"])
+    assert called["target"] == "picshelf.api:create_app_dev" and called["factory"]
+    assert create_app_dev().state.cfg.data_dir == workdir["data"]
+
+
+def test_restore_includes_wal_in_safety_backup(workdir):
+    _init(workdir)
+    data = str(workdir["data"])
+    backup = workdir["tmp"] / "before.zip"
+    run_ok(["--data", data, "export", str(backup)])
+    live = dbm.open_db(workdir["data"] / "picshelf.db")
+    live.execute("UPDATE libraries SET description='committed in WAL'")
+    live.commit()
+    assert (workdir["data"] / "picshelf.db-wal").stat().st_size > 0
+    run_ok(["--data", data, "import-backup", str(backup), "--force"])
+    assert live.execute("SELECT description FROM libraries").fetchone()[0] is None
+    safety_path = next(workdir["data"].glob("picshelf.db.bak-*"))
+    safety = dbm.open_db(safety_path)
+    assert safety.execute("SELECT description FROM libraries").fetchone()[0] == "committed in WAL"
+    safety.close()
+    live.close()
