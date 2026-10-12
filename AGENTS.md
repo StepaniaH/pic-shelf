@@ -10,8 +10,9 @@
 ## 工作流约定
 
 - **main 分支保护**：main 只放经评审的稳定版本；日常开发在 `dev`，合并需评审确认。
-- **任务驱动**：按 `TASKS.md` 分层推进，一任务一提交（`feat:` / `fix:` / `test:` / `docs:` 前缀）。
-- **不擅自 push**：remote 已配（GitHub `StepaniaH/pic-shelf`）；推送 / 合并 main 需维护者明确批准；不对外暴露服务。
+- **任务驱动**：按 `TASKS.md` 分层推进，一任务一提交。
+- **English commits**：提交信息一律使用英文（Conventional Commits 前缀：`feat:` / `fix:` / `test:` / `docs:` …），面向国际协作。
+- **分支与推送（2026-10-11 定）**：远端**只保留 `main`**（不推 `dev` 分支）；日常开发在本地 `dev`，合并（fast-forward）在本地完成后只推 `main`；推送与合并需维护者明确批准；不对外暴露服务。
 - **真实测试**：完成声明必须附真实运行结果（pytest / curl / CLI 输出）；禁止「应该能跑」式断言。
 
 ## 常用命令
