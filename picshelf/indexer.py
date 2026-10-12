@@ -26,11 +26,11 @@ SKIP_DIRS = {
 }
 
 
-def _iter_image_files(root: Path):
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [
+def _iter_image_files(root: Path, onerror=None):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=onerror):
+        dirnames[:] = sorted(
             d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS
-        ]
+        )
         for fn in sorted(filenames):
             ext = os.path.splitext(fn)[1].lower()
             if ext in hashing.IMAGE_EXTS:
@@ -66,7 +66,7 @@ def scan_library(
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
         raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
-    root = Path(lib["root_path"])
+    root = Path(lib["root_path"]).resolve()
     if not root.is_dir():
         raise ValueError(t("库目录不存在：{root}", root=root))
 
@@ -86,32 +86,49 @@ def scan_library(
         for r in conn.execute("SELECT * FROM images WHERE library_id=?", (library_id,))
     }
 
+    def keep_existing(row, rel_dir):
+        seen_ids.add(int(row["id"]))
+        folder_ids.setdefault(rel_dir, []).append(int(row["id"]))
+
+    def walk_error(exc):
+        # 无法遍历的子树不等于文件消失，保留其索引与关联。
+        failed = Path(exc.filename or root)
+        stats["errors"].append(str(exc))
+        for rel, row in existing.items():
+            if (root / rel).is_relative_to(failed):
+                parent = Path(rel).parent.as_posix()
+                keep_existing(row, "" if parent == "." else parent)
+
     # ---------- 阶段 1：walk ----------
     count = 0
-    for path in _iter_image_files(root):
+    for path in _iter_image_files(root, onerror=walk_error):
         count += 1
         rel = path.relative_to(root).as_posix()
         rel_dir = Path(rel).parent.as_posix()
         if rel_dir == ".":
             rel_dir = ""
+        row = existing.get(rel)
+        if row is not None:
+            keep_existing(row, rel_dir)
         try:
+            if not path.resolve().is_relative_to(root):
+                raise ValueError(t("图片位于库目录之外，请检查符号链接"))
             st = path.stat()
-        except OSError as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             stats["errors"].append(f"{rel}: {exc}")
             continue
 
-        row = existing.get(rel)
         try:
             if (
                 row is not None
                 and not full
                 and row["size_bytes"] == st.st_size
                 and abs((row["mtime"] or 0) - st.st_mtime) < 1e-6
+                and row["thumb_rel"] and (cfg.media_dir / row["thumb_rel"]).is_file()
+                and row["preview_rel"] and (cfg.media_dir / row["preview_rel"]).is_file()
             ):
                 if row["missing"]:
                     conn.execute("UPDATE images SET missing=0 WHERE id=?", (row["id"],))
-                seen_ids.add(int(row["id"]))
-                folder_ids.setdefault(rel_dir, []).append(int(row["id"]))
                 stats["unchanged"] += 1
             elif row is not None:
                 sha = hashing.sha256_file(path)
@@ -124,8 +141,6 @@ def scan_library(
                     "thumb_rel=?, preview_rel=?, width=?, height=?, missing=0 WHERE id=?",
                     (st.st_size, st.st_mtime, sha, ph, thumb, prev, w, h, row["id"]),
                 )
-                seen_ids.add(int(row["id"]))
-                folder_ids.setdefault(rel_dir, []).append(int(row["id"]))
                 stats["updated"] += 1
             else:
                 pending_new.append((rel, rel_dir, path, st))
@@ -190,6 +205,9 @@ def scan_library(
             stats["missing"] += 1
 
     # ---------- 专辑物化 ----------
+    # 空文件夹也要清理旧成员与封面；不删除专辑本身或手工专辑。
+    for album in conn.execute("SELECT rel_dir FROM albums WHERE library_id=? AND kind='folder'", (library_id,)):
+        folder_ids.setdefault(album["rel_dir"], [])
     for rel_dir, ids in folder_ids.items():
         album_id = _ensure_album(conn, library_id, rel_dir, lib["name"])
         members = {
@@ -213,17 +231,16 @@ def scan_library(
         row = conn.execute(
             "SELECT cover_image_id FROM albums WHERE id=?", (album_id,)
         ).fetchone()
-        if row and not row["cover_image_id"]:
+        if row and row["cover_image_id"] not in idset:
             first = conn.execute(
                 "SELECT i.id FROM images i JOIN album_images ai ON ai.image_id=i.id "
-                "WHERE ai.album_id=? ORDER BY i.rel_path LIMIT 1",
+                "WHERE ai.album_id=? AND i.missing=0 ORDER BY i.rel_path LIMIT 1",
                 (album_id,),
             ).fetchone()
-            if first:
-                conn.execute(
-                    "UPDATE albums SET cover_image_id=? WHERE id=?",
-                    (first["id"], album_id),
-                )
+            conn.execute(
+                "UPDATE albums SET cover_image_id=? WHERE id=?",
+                (first["id"] if first else None, album_id),
+            )
 
     conn.execute(
         "UPDATE scans SET finished_at=?, status='done', added=?, updated=?, moved=?, "

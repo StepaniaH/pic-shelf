@@ -113,6 +113,93 @@ def test_source_inside_library_rejected(env):
         importer.plan_import(env["conn"], env["lib"], env["libroot"], mode="hardlink")
 
 
+@pytest.mark.parametrize("mode", importer.MODES)
+def test_normalized_names_are_reserved_within_plan(env, mode):
+    source = env["tmp"] / "collisions"
+    make_image(source / "a?.png", (10, 20, 30))
+    make_image(source / "a*.png", (30, 20, 10))
+    plan = importer.plan_import(env["conn"], env["lib"], source, mode=mode)
+    targets = [item["dst"] for item in plan["items"]]
+    assert len(set(targets)) == 2
+    expected = {Path(item["dst"]): Path(item["src"]).read_bytes() for item in plan["items"]}
+    done = importer.execute_import(plan, apply=True)
+    assert done[mode] == 2 and done["error"] == 0
+    assert all(path.read_bytes() == content for path, content in expected.items())
+
+
+@pytest.mark.parametrize("mode", importer.MODES)
+def test_destination_created_after_plan_is_never_overwritten(env, mode):
+    plan = importer.plan_import(env["conn"], env["lib"], env["src"], mode=mode)
+    first = next(item for item in plan["items"] if item["dst"])
+    dst = Path(first["dst"])
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_bytes(b"keep this file")
+    done = importer.execute_import(plan, apply=True)
+    assert done["error"] == 1
+    assert dst.read_bytes() == b"keep this file"
+    assert Path(first["src"]).exists()
+
+
+def test_changed_source_requires_new_plan(env):
+    plan = importer.plan_import(env["conn"], env["lib"], env["src"], mode="move")
+    first = next(item for item in plan["items"] if item["dst"])
+    make_image(Path(first["src"]), (50, 60, 70))
+    done = importer.execute_import(plan, apply=True)
+    assert done["error"] == 1
+    assert Path(first["src"]).exists()
+    assert not Path(first["dst"]).exists()
+
+
+def test_copy_flush_failure_removes_incomplete_destination(env, monkeypatch):
+    plan = importer.plan_import(env["conn"], env["lib"], env["src"], mode="copy")
+    original_open = Path.open
+
+    class FailingWriter:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self.stream.__enter__()
+
+        def __exit__(self, *args):
+            self.stream.__exit__(*args)
+            raise OSError("Simulated flush failure")
+
+    def open_file(path, mode="r", *args, **kwargs):
+        stream = original_open(path, mode, *args, **kwargs)
+        return FailingWriter(stream) if mode == "xb" else stream
+
+    monkeypatch.setattr(Path, "open", open_file)
+    result = importer.execute_import(plan, apply=True)
+    assert result["error"] == 2 and result["copy"] == 0
+    for item in plan["items"]:
+        if item["dst"]:
+            assert not Path(item["dst"]).exists()
+            assert Path(item["src"]).exists()
+
+
+def test_destination_symlink_loop_does_not_abort_batch(env):
+    plan = importer.plan_import(env["conn"], env["lib"], env["src"], mode="copy")
+    dst = Path(next(item["dst"] for item in plan["items"] if item["dst"]))
+    dst.symlink_to(dst.name)
+    result = importer.execute_import(plan, apply=True)
+    assert result["error"] == 1 and result["copy"] == 1
+    assert dst.is_symlink()
+
+
+def test_move_on_filesystem_without_hardlinks(env, monkeypatch):
+    plan = importer.plan_import(env["conn"], env["lib"], env["src"], mode="move")
+
+    def unsupported(*args):
+        raise OSError(errno.EOPNOTSUPP, "Hardlinks unsupported")
+
+    monkeypatch.setattr(importer.os, "link", unsupported)
+    result = importer.execute_import(plan, apply=True)
+    assert result["move"] == 2 and result["error"] == 0
+    assert not (env["src"] / "a.png").exists()
+    assert (env["libroot"] / "a.png").is_file()
+
+
 def test_cli_import_flow(env):
     runner = CliRunner()
     data = str(env["cfg"].data_dir)

@@ -69,12 +69,20 @@ def plan_import(
         dst_dev = source_root.stat().st_dev
 
     planned: set[str] = set()
+    reserved: set[Path] = set()
     items: list[dict] = []
     counts = {"hardlink": 0, "copy": 0, "move": 0, "skip": 0, "error": 0}
 
-    for path in _iter_image_files(source_root):
+    def walk_error(exc):
+        items.append({"src": str(exc.filename or source_root), "dst": None,
+                      "action": "error", "reason": str(exc)})
+        counts["error"] += 1
+
+    for path in _iter_image_files(source_root, onerror=walk_error):
         try:
             rel = path.relative_to(source_root)
+            if not path.resolve().is_relative_to(source_root):
+                raise ValueError(t("源文件位于源目录之外，请检查符号链接"))
             sha = hashing.sha256_file(path)
             if sha in have:
                 items.append({"src": str(path), "dst": None, "action": "skip",
@@ -93,13 +101,17 @@ def plan_import(
             rel_dst = rel.parent / target_name
             dst = root / rel_dst
             skipped_dup = False
-            while dst.exists():
-                if dst.is_file() and hashing.sha256_file(dst) == sha:
+            while dst in reserved or dst.exists() or dst.is_symlink():
+                if (dst not in reserved and dst.is_file()
+                        and dst.resolve().is_relative_to(root)
+                        and hashing.sha256_file(dst) == sha):
                     skipped_dup = True
                     break
                 rel_dst = rel.parent / f"{stem}-{suffix}{ext}"
                 dst = root / rel_dst
                 suffix += 1
+            if not dst.resolve().is_relative_to(root):
+                raise ValueError(t("目标路径位于库目录之外，请检查符号链接"))
             if skipped_dup:
                 items.append({"src": str(path), "dst": None, "action": "skip",
                               "reason": t("目标位置已有相同文件")})
@@ -109,9 +121,11 @@ def plan_import(
             action = mode
             if mode == "hardlink" and path.stat().st_dev != dst_dev:
                 action = "copy"  # 跨盘硬链接不可用，自动降级
-            items.append({"src": str(path), "dst": str(dst), "action": action, "reason": ""})
+            items.append({"src": str(path), "dst": str(dst), "action": action,
+                          "sha256": sha, "reason": ""})
             counts[action] += 1
             planned.add(sha)
+            reserved.add(dst)
         except Exception as exc:  # 单文件失败不中断计划
             items.append({"src": str(path), "dst": None, "action": "error", "reason": str(exc)})
             counts["error"] += 1
@@ -126,6 +140,20 @@ def plan_import(
     }
 
 
+def _copy_exclusive(src: Path, dst: Path) -> None:
+    """创建独立副本；计划生成后出现的文件也绝不覆盖。"""
+    # xb 的存在性检查与创建由文件系统原子完成。
+    target = dst.open("xb")
+    try:
+        with target:
+            with src.open("rb") as source:
+                shutil.copyfileobj(source, target)
+        shutil.copystat(src, dst)
+    except BaseException:
+        dst.unlink(missing_ok=True)
+        raise
+
+
 def execute_import(
     plan: dict,
     *,
@@ -133,7 +161,7 @@ def execute_import(
     progress: Callable[[int, dict], None] | None = None,
 ) -> dict:
     """执行导入计划。apply=False 时只做统计（等价再次预演）。"""
-    root = Path(plan["root"])
+    root = Path(plan["root"]).resolve()
     done = {"hardlink": 0, "copy": 0, "move": 0, "skip": 0, "error": 0, "errors": []}
     n = 0
     for item in plan["items"]:
@@ -144,17 +172,24 @@ def execute_import(
             if action == "error":
                 done["errors"].append(f"{item['src']}: {item['reason']}")
             continue
+        if action not in MODES:
+            done["error"] += 1
+            done["errors"].append(t("未知导入操作，请重新预演"))
+            continue
         if not apply:
             done[action] += 1
             continue
 
         src = Path(item["src"])
-        dst = Path(item["dst"]).resolve()
-        if root != dst.parent and root not in dst.parents:
-            done["error"] += 1
-            done["errors"].append(t("{src}: 目标路径越界，已拒绝", src=src))
-            continue
+        dst = Path(item["dst"])
         try:
+            resolved_dst = dst.resolve()
+            if not resolved_dst.is_relative_to(root) or resolved_dst == root:
+                raise ValueError(t("{src}: 目标路径越界，已拒绝", src=src))
+            if not src.resolve().is_relative_to(Path(plan["source"]).resolve()):
+                raise ValueError(t("源文件位于源目录之外，请检查符号链接"))
+            if item.get("sha256") and hashing.sha256_file(src) != item["sha256"]:
+                raise ValueError(t("源文件在预演后发生变化，请重新预演"))
             dst.parent.mkdir(parents=True, exist_ok=True)
             if action == "hardlink":
                 try:
@@ -162,15 +197,22 @@ def execute_import(
                     done["hardlink"] += 1
                 except OSError as exc:
                     if exc.errno == errno.EXDEV:
-                        shutil.copy2(src, dst)
+                        _copy_exclusive(src, dst)
                         done["copy"] += 1
                     else:
                         raise
             elif action == "copy":
-                shutil.copy2(src, dst)
+                _copy_exclusive(src, dst)
                 done["copy"] += 1
             else:  # move
-                shutil.move(str(src), str(dst))
+                # 同盘通过独占硬链接保留 inode；跨盘先完整复制再移除源文件。
+                try:
+                    os.link(src, dst)
+                except OSError as exc:
+                    if exc.errno not in (errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP, errno.EMLINK):
+                        raise
+                    _copy_exclusive(src, dst)
+                src.unlink()
                 done["move"] += 1
         except Exception as exc:
             done["error"] += 1

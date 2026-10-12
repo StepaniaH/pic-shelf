@@ -70,3 +70,36 @@ def test_phash_corrupt_returns_none(tmp_path: Path):
     bad = tmp_path / "bad.png"
     bad.write_bytes(b"not an image")
     assert hashing.phash_file(bad) is None
+
+
+def test_hash_and_derivatives_share_exif_orientation(tmp_path):
+    image = _smooth(42).resize((160, 100))
+    exif = Image.Exif()
+    exif[274] = 6
+    source = tmp_path / "oriented.png"
+    image.save(source, exif=exif)
+    expected = tmp_path / "rotated.png"
+    image.transpose(Image.Transpose.ROTATE_270).save(expected)
+    assert hashing.phash_file(source) == hashing.phash_file(expected)
+    result = hashing.make_derivatives(source, tmp_path / "thumbs", tmp_path / "previews", 1)
+    assert result[2:] == (100, 160)
+
+
+def test_failed_thumbnail_write_preserves_previous_file(tmp_path, monkeypatch):
+    import pytest
+    source = tmp_path / "source.png"
+    _smooth(7).save(source)
+    thumbs, previews = tmp_path / "thumbs", tmp_path / "previews"
+    rel, _, _, _ = hashing.make_derivatives(source, thumbs, previews, 1)
+    path = tmp_path / rel
+    previous = path.read_bytes()
+
+    def interrupted_save(self, output, *args, **kwargs):
+        output.write(b"partial image")
+        raise OSError("interrupted write")
+
+    monkeypatch.setattr(Image.Image, "save", interrupted_save)
+    with pytest.raises(OSError):
+        hashing.make_derivatives(source, thumbs, previews, 1)
+    assert path.read_bytes() == previous
+    assert list(thumbs.rglob(".thumb-*")) == []

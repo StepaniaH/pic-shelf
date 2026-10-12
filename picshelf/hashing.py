@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -37,12 +39,10 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def _open_image(path: Path) -> Image.Image:
-    img = Image.open(path)
-    img.load()
-    if getattr(img, "n_frames", 1) > 1:  # 动图：编码只取第一帧
+    # 将像素与文件句柄分离，动图/多页文件也在离开时关闭。
+    with Image.open(path) as img:
         img.seek(0)
-        img = img.copy()
-    return img
+        return ImageOps.exif_transpose(img)
 
 
 def phash_file(path: Path) -> str | None:
@@ -58,13 +58,24 @@ def phash_file(path: Path) -> str | None:
 
 def hamming(a: str, b: str) -> int:
     """两个 16 进制 pHash 的汉明距离。"""
-    return bin(int(a, 16) ^ int(b, 16)).count("1")
+    return (int(a, 16) ^ int(b, 16)).bit_count()
 
 
 def _shard_dir(base: Path, image_id: int) -> Path:
     d = base / f"{image_id % 256:02x}"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _save_webp(img: Image.Image, path: Path, quality: int) -> None:
+    """同目录原子替换，读取者不会拿到半张图片。"""
+    fd, name = tempfile.mkstemp(prefix=".thumb-", suffix=".webp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            img.save(output, "WEBP", quality=quality, method=4)
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def make_derivatives(
@@ -79,7 +90,6 @@ def make_derivatives(
     无法解码时抛异常，由调用方记录为扫描错误。
     """
     with _open_image(src) as img:
-        img = ImageOps.exif_transpose(img) or img
         width, height = img.size
         if img.mode in ("P", "LA") or (img.mode == "RGBA"):
             # 保留透明通道（PNG 抠图类）；其余统一 RGB
@@ -90,12 +100,12 @@ def make_derivatives(
         thumb = base.copy()
         thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.Resampling.LANCZOS)
         tpath = _shard_dir(thumbs_dir, image_id) / f"{image_id}.webp"
-        thumb.save(tpath, "WEBP", quality=82, method=4)
+        _save_webp(thumb, tpath, quality=82)
 
         preview = base.copy()
         preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX), Image.LANCZOS)
         ppath = _shard_dir(previews_dir, image_id) / f"{image_id}.webp"
-        preview.save(ppath, "WEBP", quality=85, method=4)
+        _save_webp(preview, ppath, quality=85)
 
     thumb_rel = str(tpath.relative_to(thumbs_dir.parent))
     preview_rel = str(ppath.relative_to(previews_dir.parent))

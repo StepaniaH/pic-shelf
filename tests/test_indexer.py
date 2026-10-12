@@ -102,3 +102,70 @@ def test_corrupt_file_recorded_as_error(conn, cfg, library):
     assert any("broken.png" in e for e in stats["errors"])
     scan = conn.execute("SELECT status FROM scans ORDER BY id DESC LIMIT 1").fetchone()
     assert scan["status"] == "done"
+
+
+def test_decode_failure_does_not_hide_or_reassign_existing_image(conn, cfg, library, monkeypatch):
+    import shutil
+    from picshelf import hashing
+    indexer.scan_library(conn, cfg, library["id"])
+    row = conn.execute("SELECT * FROM images WHERE filename='red.png'").fetchone()
+    shutil.copyfile(library["root"] / row["rel_path"], library["root"] / "copy.png")
+    original = hashing.make_derivatives
+
+    def fail_red(src, *args):
+        if src.name == "red.png":
+            raise OSError("temporary decoder failure")
+        return original(src, *args)
+
+    monkeypatch.setattr(hashing, "make_derivatives", fail_red)
+    stats = indexer.scan_library(conn, cfg, library["id"], full=True)
+    assert stats["missing"] == 0 and stats["moved"] == 0 and stats["added"] == 1
+    assert stats["errors"]
+    after = conn.execute("SELECT * FROM images WHERE id=?", (row["id"],)).fetchone()
+    assert after["rel_path"] == row["rel_path"] and after["missing"] == 0
+
+
+def test_move_out_of_last_folder_repairs_membership_and_cover(conn, cfg, library):
+    indexer.scan_library(conn, cfg, library["id"])
+    old = conn.execute("SELECT * FROM albums WHERE name='nested'").fetchone()
+    src = library["root"] / "beta/nested/yellow.png"
+    src.rename(library["root"] / "alpha/yellow.png")
+    stats = indexer.scan_library(conn, cfg, library["id"])
+    assert stats["moved"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM album_images WHERE album_id=?", (old["id"],)).fetchone()[0] == 0
+    assert conn.execute("SELECT cover_image_id FROM albums WHERE id=?", (old["id"],)).fetchone()[0] is None
+
+
+def test_incremental_scan_repairs_missing_derivatives(conn, cfg, library):
+    indexer.scan_library(conn, cfg, library["id"])
+    row = conn.execute("SELECT * FROM images LIMIT 1").fetchone()
+    (cfg.media_dir / row["thumb_rel"]).unlink()
+    stats = indexer.scan_library(conn, cfg, library["id"])
+    assert stats["updated"] == 1
+    assert (cfg.media_dir / row["thumb_rel"]).is_file()
+
+
+def test_unreadable_subtree_keeps_index(conn, cfg, library, monkeypatch):
+    indexer.scan_library(conn, cfg, library["id"])
+    walk = indexer.os.walk
+    blocked = library["root"] / "beta"
+
+    def walk_with_error(root, **kwargs):
+        for directory, directories, files in walk(root, **kwargs):
+            if directory == str(root):
+                directories.remove("beta")
+                kwargs["onerror"](PermissionError(13, "Permission denied", str(blocked)))
+            yield directory, directories, files
+
+    monkeypatch.setattr(indexer.os, "walk", walk_with_error)
+    result = indexer.scan_library(conn, cfg, library["id"])
+    assert result["errors"] and result["missing"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM images WHERE missing=0").fetchone()[0] == 4
+
+
+def test_scanning_does_not_follow_external_file_links(conn, cfg, library, tmp_path):
+    from tests.conftest import make_image
+    external = make_image(tmp_path / "outside.png")
+    (library["root"] / "outside.png").symlink_to(external)
+    result = indexer.scan_library(conn, cfg, library["id"])
+    assert result["added"] == 4 and result["errors"]
