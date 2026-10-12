@@ -5,16 +5,20 @@
 ## 快速开始
 
 ```bash
-git clone git@github.com:StepaniaH/pic-shelf.git
+git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
 
-# 1) 构建并启动（默认绑定 127.0.0.1:39431）
-docker compose up -d --build
+# 1) 构建镜像并准备数据目录（写权限见下方 UID/GID 说明）
+docker compose build
+mkdir -p data
 
-# 2) 首次初始化（创建数据库、密钥与管理员）
-docker compose exec picshelf picshelf init --admin admin
+# 2) 首次初始化；此时尚未启动 Web 服务
+docker compose run --rm picshelf picshelf init --admin admin
 
-# 3) 打开 http://127.0.0.1:39431 登录
+# 3) 启动服务（默认仅本机可访问）
+docker compose up -d
+
+# 4) 打开浏览器登录
 ```
 
 ## 目录与卷
@@ -61,13 +65,13 @@ docker compose up -d --build        # 重新构建并滚动替换；数据库迁
 
 ## 备份与恢复
 
-- **应用级**：`docker compose exec picshelf picshelf export backup.zip [--encrypt --passphrase-stdin]`（数据库快照，可选含缩略图）；恢复用 `picshelf import-backup`。
-- **卷级**：直接快照 `./data` 目录（含全部派生物与密钥）。
+- **应用级**：`docker compose exec picshelf picshelf export /data/exports/backup.zip [--encrypt --passphrase-stdin]`（数据库一致性快照，可选含缩略图；原图不在备份中，需另外备份图片库目录）；恢复用 `picshelf import-backup`。恢复前停止服务写入；`--force` 会先用 SQLite 备份接口保留现有数据，包含已提交的 WAL 内容。恢复数据库后运行 `scan <库名> --full` 重建派生图片。
+- **卷级**：停止服务后快照 `./data` 目录（含全部派生物与密钥），并另外备份原图目录。运行中的 SQLite 不能只复制主数据库文件。
 
 ## 常见问题
 
 - **页面报错 / 无法登录**：确认已执行第 2 步 `init`（创建了管理员与密钥）。
-- **扫描大库较慢**：首扫逐张解码生成缩略图（约 3 张/秒·单线程），大库建议后台执行；之后都是秒级增量重扫。
+- **扫描大库较慢**：首扫逐张解码生成缩略图，耗时取决于图片尺寸、格式、磁盘和 CPU；增量扫描跳过内容未变化且派生图片齐全的文件。
 - **端口被占用**：改 compose 左侧端口，如 `127.0.0.1:39441:39431`。
 - **CLI / TUI 怎么用**：CLI 全部命令通过 `docker compose exec picshelf picshelf <命令>` 执行；TUI 需要真实终端，直接用宿主 venv 运行更合适。
 
@@ -75,9 +79,10 @@ docker compose up -d --build        # 重新构建并滚动替换；数据库迁
 
 ```bash
 docker build -t pic-shelf:local .
+mkdir -p data  # 按上方 UID/GID 说明准备写权限
+docker run --rm -it -v "$PWD/data:/data" pic-shelf:local picshelf init --admin admin
 docker run -d --name picshelf --restart unless-stopped \
   -p 127.0.0.1:39431:39431 \
   -v "$PWD/data:/data" \
   pic-shelf:local
-docker exec picshelf picshelf init --admin admin
 ```

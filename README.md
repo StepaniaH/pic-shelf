@@ -8,11 +8,9 @@ Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line 
 ![Pic Shelf — library](docs/screenshots/2026-10-11-library-en.png)
 ![Pic Shelf — viewer](docs/screenshots/2026-10-11-viewer-en.png)
 
-> Research & competitive analysis: `docs/research/2026-10-11-open-source-image-viewers.md`
-> Architecture: `docs/architecture.md` ｜ Decisions: `docs/decisions.md` ｜ Tasks: `TASKS.md` ｜ Developer entry: `AGENTS.md`
-> Naming: **Pic Shelf** (collision-check record in `docs/decisions.md` D11)
+[Usage](docs/usage.md) · [Architecture](docs/architecture.md) · [Deployment](docs/deployment.md) · [Contributing](CONTRIBUTING.md)
 
-## Features (status)
+## Features
 
 | Capability | Description | Status |
 |---|---|---|
@@ -36,7 +34,7 @@ Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line 
 ## Quick start
 
 ```bash
-git clone git@github.com:StepaniaH/pic-shelf.git
+git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
 
 # 1) Environment (skip when .venv already exists)
@@ -64,13 +62,15 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 .venv/bin/picshelf play --album 1 --order shuffle --interval 8 --count 50 --loop --player mpv
 ```
 
-Data lives in `./data/` inside the project by default (database, thumbnails, secret key, playlists); override with `--data DIR` or `PICSHELF_DATA`.
+For a source checkout, data lives in `./data/` inside the project by default (database, thumbnails, secret key, playlists); override with `--data DIR` or `PICSHELF_DATA`. For a wheel installation, set an explicit writable data directory. All commands that operate on the same library must use the same data directory.
 
 ## Docker
 
 ```bash
-docker compose up -d --build                               # build + start (binds 127.0.0.1:39431)
-docker compose exec picshelf picshelf init --admin admin   # first run: initialize
+docker compose build
+mkdir -p data                       # ensure the container user can write here
+docker compose run --rm picshelf picshelf init --admin admin
+docker compose up -d                # binds to loopback by default
 ```
 
 Mount your image directories in `docker-compose.yml` (read-only is fine for index mode) and register them via `docker compose exec picshelf picshelf library add ...`. Full guide (volumes, networking, permissions, upgrades, backups): `docs/deployment.md`.
@@ -104,7 +104,7 @@ docs/            # research / architecture / decisions / screenshots
 
 ## Security
 
-- The server binds to `127.0.0.1` by default and is not exposed; for remote access read `docs/decisions.md` D2/B0 first (network-exposure changes require maintainer confirmation).
+- The server binds to `127.0.0.1` by default and is not exposed; for remote access read `docs/decisions.md` D2/B0 first (use private-network access and configure TLS as needed).
 - Passwords: salted scrypt hashes; session tokens: HMAC-signed with expiry.
 - `picshelf export --encrypt` produces an encrypted backup (passphrase-derived key).
 - Privacy: index mode never moves any file; managed import (`import`) writes only to the chosen target library directory and only when explicitly executed (hardlink by default, originals preserved); no telemetry is collected.

@@ -8,9 +8,8 @@
 ![Pic Shelf — 库页面](docs/screenshots/2026-10-11-library-zh.png)
 ![Pic Shelf — 查看器（英文界面示例）](docs/screenshots/2026-10-11-viewer-en.png)
 
-> 调研与竞品分析：`docs/research/2026-10-11-open-source-image-viewers.md`
-> 架构：`docs/architecture.md` ｜ 决策：`docs/decisions.md` ｜ 任务：`TASKS.md` ｜ 开发者入口：`AGENTS.md`
-> 命名：**Pic Shelf**（查重记录见 `docs/decisions.md` D11）
+
+[使用说明](docs/usage.md) · [架构](docs/architecture.md) · [部署](docs/deployment.md) · [参与开发](CONTRIBUTING.md)
 
 ## 功能一览
 
@@ -36,7 +35,7 @@
 ## 快速开始
 
 ```bash
-git clone git@github.com:StepaniaH/pic-shelf.git
+git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
 
 # 1) 环境（已有 .venv 可跳过）
@@ -71,8 +70,10 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 ## Docker 部署
 
 ```bash
-docker compose up -d --build                               # 构建并启动（默认仅绑定 127.0.0.1:39431）
-docker compose exec picshelf picshelf init --admin admin   # 首次初始化
+docker compose build
+mkdir -p data                        # 确保容器用户有写权限
+docker compose run --rm picshelf picshelf init --admin admin
+docker compose up -d                 # 默认仅本机可访问
 ```
 
 在 `docker-compose.yml` 里挂载你的图片目录（索引模式只读即可），再用 `docker compose exec picshelf picshelf library add ...` 注册。完整指南（卷 / 网络 / 权限 / 升级 / 备份）：`docs/deployment.md`。

@@ -1,65 +1,79 @@
-# Pic Shelf 架构说明
+# Pic Shelf 架构
 
-## 技术栈与选型理由
+Pic Shelf 是单进程、单机存储的自托管图片库。Python 服务层为 Web、CLI、TUI 提供共同的数据操作；原图保存在注册的库目录中，SQLite 和派生图片保存在数据目录中。
 
-| 层 | 选型 | 理由 |
-|---|---|---|
-| 后端 | Python 3.11 + FastAPI + Uvicorn | 与开发者既有项目技术栈一致；自动 API 文档（`/docs`）；单进程即可服务 |
-| 存储 | SQLite（WAL 模式） | 单文件、零运维、事务安全；个人/家庭规模（≤10 万图）足够；预留 Postgres 迁移路径 |
-| 编码 | Pillow + imagehash | SHA-256 精确检索/去重；pHash 相似检索；WebP 缩略图（400px）与预览图（1600px） |
-| CLI | Click | 组合命令清晰，测试友好（CliRunner） |
-| TUI | Textual | 现代 TUI 框架；异步、可测（run_test） |
-| Web | 原生 JS（零构建） | 无 node 工具链依赖，MVP 更快落地；后期桌面端可直接复用（Tauri/Electron 载同一前端） |
-| 加密（MVP） | scrypt 口令哈希 + HMAC 令牌 + Fernet 加密备份 | 无额外服务依赖；全库静态加密另行决策（见 decisions.md D1） |
+## 模块与边界
 
-## 模块与数据流
+| 模块 | 职责 |
+| --- | --- |
+| `config.py` | 数据目录与运行路径；显式参数优先于环境变量 |
+| `db.py` | 每个调用方的 SQLite 连接、事务配置与版本化迁移 |
+| `auth.py` | 口令校验、签名令牌、组能力与库授权 |
+| `hashing.py` | SHA-256、64 位 pHash、EXIF 方向归一化与 WebP 派生图 |
+| `importer.py` | 导入预演、去重、目标命名、独占创建与源变化检查 |
+| `indexer.py` | 增量扫描、移动检测、缺失标记与文件夹专辑维护 |
+| `search.py` | 搜索语法、参数化 SQL、可见图片范围与分页 |
+| `ops.py` | 评分、收藏、标签、艺术家、评论、笔记、专辑操作 |
+| `libsvc.py` | 库注册、可见范围统计与重复检测 |
+| `play.py` | 物化播放队列与游标 |
+| `api/` | HTTP 参数、认证、权限、错误响应与静态文件服务 |
+| `cli.py` / `tui.py` | 本地管理入口；不经 HTTP 调用服务层 |
+| `web/js/` | 原生 ES modules；路由、视图、查看器、幻灯片与共享焦点管理 |
 
+服务函数不隐式认证用户。HTTP 调用方检查能力与库授权，并把可见库 ID 传入查询。CLI/TUI 视为拥有数据目录权限的本地管理工具。Web 没有构建步骤，不加载远程字体、脚本或统计服务。
+
+## 数据流
+
+```text
+外部目录 → 导入预演 → 确认 → hardlink / copy / move → 库目录
+库目录 → 扫描 → SHA-256 / pHash / 派生图 → 图片索引 + 文件夹专辑
+搜索条件 + 用户可见库 → 参数化 SQL → 分页结果
+搜索条件 + 用户可见库 → 物化播放队列 → Web / TUI / mpv
 ```
-import 流:  目录 → indexer.walk → hashing(sha256/phash/thumb) → images 表 + album(文件夹组)
-查询流:     search.parse(语法) → SQL(带 ACL 过滤) → /api/v1/images
-播放流:     过滤条件 → play.build_session(顺序/乱序/定量/循环) → play_items 队列
-            → Web 幻灯片计时器 / CLI 交给 mpv / TUI 定时连播
-认证流:     登录(scrypt 校验) → HMAC 令牌(HttpOnly Cookie 或 Bearer) → 每请求解析 → 能力检查
-```
 
-## 数据库表（schema v1）
+扫描分两阶段处理新路径：先记录已见图片，再将新路径的 SHA-256 与本轮未见记录匹配。匹配时更新原记录路径，保留图片 ID 及用户元数据。尚未恢复的文件只标为缺失。读取或解码失败不代表文件不存在，遍历失败的子树保留原有索引。
 
-| 表 | 说明 |
-|---|---|
-| `users` / `groups` / `user_groups` | 用户、组、成员关系；组携带能力集合(`capabilities` JSON) |
-| `libraries` / `library_grants` | 库注册（根目录）与"组→库"访问级别（view/edit/manage） |
-| `albums` / `album_images` | 文件夹专辑（自动物化）与手工专辑；封面；category（漫画/系列等分类的载体） |
-| `images` | 相对路径、尺寸、mtime、SHA-256、pHash、缩略图路径、missing 软删除标记 |
-| `artists` / `image_artists` | 艺术家实体（别名/链接/备注）与图片关联 |
-| `tags` / `image_tags` | 命名空间标签（`作者:xxx`、`系列:xxx`）与图片关联 |
-| `ratings` / `favorites` | 每用户 0–10 评分、收藏 |
-| `comments` / `notes` | 评论与文本笔记（`geometry` 列预留给图上区域注释） |
-| `play_sessions` / `play_items` | 播放会话（过滤条件 spec、顺序模式、游标）与物化队列 |
-| `scans` | 扫描历史（增量统计、错误列表） |
-| `meta` | schema_version 等 |
+文件夹专辑由扫描器维护，包括清空已移走全部图片的文件夹及修复封面。扫描器不改变手工专辑。增量判定使用文件大小、修改时间和派生图存在性；内容被原地改写而属性不变时需全量扫描。
 
-## 权限模型
+导入计划同时预留目标路径，避免规范化后的同名文件相互覆盖。执行时核对源哈希，并以独占方式创建目标文件。硬链接共享源文件的内容；独立副本必须使用 copy。导入与扫描都是逐文件报告错误，不能视为整个目录的一次原子事务。
 
-- 能力（capability）：`view` `rate` `comment` `note` `tag_edit` `manage_library` `admin`。
-- 用户的有效能力 = 所属各组的并集；`is_admin` 用户等于拥有全部能力。
-- 库级访问：`library_grants`（组 × 库 → view/edit/manage），`manage` 含 `edit` 含 `view`。
-- 媒体文件端点也强制 `view` 校验（缩略图/预览/原图一致）。
-- 默认种子：组 `admins`（全能力）、`members`（view/rate/comment/note/tag_edit）；新库创建时自动给 admins=manage、members=view。
+派生图按图片 ID 分片，最大边分别为 400 和 1600 像素。先写同目录临时文件，再原子替换，避免 HTTP 读取半成品。pHash 和派生图使用相同的 EXIF 方向；动画、多页图片使用第一帧。
 
-## 安全模型
+## 数据库（schema v1）
 
-- 口令：scrypt（N=2^14, r=8, p=1）+ 16B 随机盐，标准格式字符串存储。
-- 令牌：`base64url(uid.exp.nonce).HMAC-SHA256`；密钥 `data/secret.key`（0600），首次 init 生成。
-- Cookie：`HttpOnly; SameSite=Lax`（配合同源前端与 `<img>` 加载）；CLI/脚本用 Bearer。
-- 默认绑定 `127.0.0.1`；对外暴露需显式改 `--host` 并经过网络层决策（decisions.md）。
-- 备份：`picshelf export`（zip）；`--encrypt` 时用口令派生密钥 Fernet 加密。
+SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
 
-## 已知边界与扩展路径
+| 表组 | 内容 |
+| --- | --- |
+| `users`, `groups`, `user_groups` | 账号、组与能力 |
+| `libraries`, `library_grants` | 库目录及组的 view/edit/manage 授权 |
+| `images` | 相对路径、尺寸、文件属性、哈希、派生图路径、缺失状态 |
+| `albums`, `album_images` | 文件夹/手工专辑、成员与封面 |
+| `tags`, `image_tags` | 标签和图片关联 |
+| `artists`, `image_artists` | 艺术家资料和图片关联 |
+| `ratings`, `favorites` | 每用户评分与收藏 |
+| `comments`, `notes` | 评论、文本笔记及软删除；geometry 为后续区域笔记预留 |
+| `play_sessions`, `play_items` | 队列条件、游标与物化的图片顺序 |
+| `scans`, `meta` | 扫描记录与 schema 版本 |
 
-| 场景 | 现状 | 扩展路径 |
-|---|---|---|
-| >10 万张图 | SQLite 足够（索引齐全） | 迁移 Postgres（SQL 基本标准；`db.py` 是唯一入口） |
-| 相似检索规模化 | pHash 全量比对（库内 ≤1 万舒适） | CLIP 嵌入 + 向量索引（R12 一并做） |
-| 全库静态加密 | 仅备份加密 | LUKS/gocryptfs 挂载层 or 应用层 per-file envelope（决策 D1） |
-| 实时多人协作 | 无推送（客户端轮询） | SSE/WebSocket 通知（P2） |
-| 缩略图缓存失效 | 按 image id 覆盖写 | 内容寻址（path=sha256）自动免疫（P2） |
+迁移只追加到 `MIGRATIONS`，不重写已发布版本。备份和恢复使用 SQLite backup API，避免丢失或混入 WAL 中的已提交数据；恢复前仍应停止业务写入。原图与数据库需要分别备份。
+
+## 权限与接口
+
+组能力为 view、rate、comment、note、tag_edit、manage_library、admin。库授权为 view、edit、manage，后者包含前者。全局管理员可访问所有库；新库默认授予 admins 管理权限、members 查看权限。
+
+图片查询、媒体、统计和关联实体查询都按可见库过滤。派生图和原图也检查路径仍位于对应根目录内，防止扫描后替换符号链接造成越界读取。全局用户数量只对管理员返回。
+
+认证使用 scrypt 口令哈希与带过期时间的 HMAC 令牌。Cookie 为 HttpOnly、SameSite=Lax；脚本使用 Bearer 认证。默认只绑定本机，HTTP 本身不提供 TLS。当前模型面向私有网络的可信使用，不具备公网服务所需的登录限流等完整防护。
+
+接口路径和命令示例见 [使用说明](usage.md)，部署与卷配置见 [部署指南](deployment.md)。交互式 API 文档位于 `/api/docs`。
+
+## 性能与边界
+
+- 搜索单页最多 10,000 张；正常 Web 页为 120 张，TUI 页为 500 张。路径排序附带 ID 排序，避免同名路径分页不稳定。
+- 播放队列最多 10,000 张。shuffle/random 均为一次不重复的随机排列，循环重复该队列。
+- 精确查重使用 SHA-256 分组。相似查重对首个代表图比较汉明距离，不做传递聚类；预解析整数哈希并缓存重复值，最坏复杂度仍为平方级。
+- 图片解码与扫描为同步工作，大图或慢存储会延长请求时间。当前没有后台任务队列、分布式扫描锁或进度推送；同一库应串行扫描/导入。
+- 大库性能取决于查询、图片大小和硬件，尚无固定容量承诺。全文索引、向量索引、视频/归档导入应按实际需求单独评估。
+- 默认数据路径在源码检出中锚定到项目；安装 wheel 时应显式设置可写的 `--data` 或 `PICSHELF_DATA`。
+- 中英双语使用中文消息 ID 和英文目录；API 语言通过 ContextVar 按请求隔离。新增交互文本应同时维护相应目录。

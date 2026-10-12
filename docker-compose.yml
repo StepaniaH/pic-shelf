@@ -1,7 +1,8 @@
 # Pic Shelf — Docker Compose
 #
-# Quick start:  docker compose up -d --build
-# First run:    docker compose exec picshelf picshelf init --admin admin
+# First run:    docker compose build
+#               docker compose run --rm picshelf picshelf init --admin admin
+# Start:        docker compose up -d
 # Docs:         docs/deployment.md (volumes / networking / permissions / backups)
 #
 # Notes:
