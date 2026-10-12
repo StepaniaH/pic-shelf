@@ -1,0 +1,212 @@
+"""Browser regressions. Run with PICSHELF_BROWSER_TESTS=1 and the browser extra."""
+import os
+import re
+import secrets
+import socket
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+from picshelf import auth, db as dbm, indexer, libsvc, ops
+from picshelf.api import create_app
+from picshelf.config import Config
+from tests.conftest import make_image
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("PICSHELF_BROWSER_TESTS") != "1", reason="opt-in browser suite",
+)
+
+
+@dataclass
+class WebServer:
+    url: str
+    password: str = field(repr=False)
+
+
+@pytest.fixture(scope="module")
+def web_server(tmp_path_factory):
+    import uvicorn
+    root = tmp_path_factory.mktemp("web")
+    cfg = Config(root / "data").ensure()
+    conn = dbm.open_db(cfg.db_path)
+    auth.ensure_default_groups(conn)
+    password = secrets.token_urlsafe(24)
+    uid = auth.create_user(conn, "browser-test", password, is_admin=True)
+    library = root / "images"
+    for n in range(125):
+        make_image(library / f"image-{n:03}.png", (n * 2, 90, 130), size=(160, 100))
+    library_id = libsvc.create_library(conn, "Gallery", str(library))
+    indexer.scan_library(conn, cfg, library_id)
+    iid = conn.execute("SELECT id FROM images ORDER BY id DESC LIMIT 1").fetchone()[0]
+    ops.add_tags(conn, iid, ["色彩:蓝色"], uid)
+    ops.add_comment(conn, iid, uid, "A sample comment")
+    conn.close()
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    server = uvicorn.Server(uvicorn.Config(create_app(cfg), log_level="error"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(.02)
+    assert server.started
+    yield WebServer(f"http://127.0.0.1:{sock.getsockname()[1]}", password)
+    server.should_exit = True
+    thread.join(timeout=10)
+    sock.close()
+
+
+@pytest.fixture(scope="module")
+def browser():
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as playwright:
+        options = {"headless": True}
+        if os.environ.get("PICSHELF_TEST_BROWSER"):
+            options["executable_path"] = os.environ["PICSHELF_TEST_BROWSER"]
+        browser = playwright.chromium.launch(**options)
+        yield browser
+        browser.close()
+
+
+@pytest.fixture()
+def page(browser):
+    page = browser.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    yield page
+    page.close()
+    assert errors == []
+
+
+def sign_in(page, web_server, language="en"):
+    page.add_init_script(f"localStorage.setItem('picshelf.lang', '{language}')")
+    page.goto(web_server.url)
+    page.wait_for_load_state("networkidle")
+    page.locator("#login-username").fill("browser-test")
+    page.locator("#login-password").fill(web_server.password)
+    page.locator("#login-form button").click()
+    page.locator(".lib-card").wait_for()
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("width", [390, 1280])
+def test_gallery_viewer_and_nested_dialogs(page, web_server, language, width):
+    from playwright.sync_api import expect
+    page.set_viewport_size({"width": width, "height": 900})
+    sign_in(page, web_server, language)
+    assert page.locator("#nav").is_visible()
+    page.locator('.lib-card a[href="#/library/1"]').click()
+    expect(page.locator("#grid .card")).to_have_count(120)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if destination := os.environ.get("PICSHELF_TEST_SCREENSHOTS"):
+        output = Path(destination)
+        output.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output / f"gallery-{language}-{width}.png"))
+    page.locator("#more-btn").click()
+    expect(page.locator("#grid .card")).to_have_count(125)
+    page.locator("#grid .card").first.click()
+    if width < 900:
+        page.locator("#v-panel").click()
+    expect(page.locator("[data-untag]")).to_have_count(1)
+    page.locator("#tag-input").fill("色彩")
+    expect(page.locator('#tag-dl option[value="色彩:蓝色"]')).to_have_count(1)
+    page.locator("#tag-input").fill("Browser test")
+    page.locator("#tag-add").click()
+    expect(page.locator('[data-untag="Browser test"]')).to_be_visible()
+    page.locator('[data-untag="Browser test"]').click()
+    expect(page.locator('[data-untag="Browser test"]')).to_have_count(0)
+    if destination:
+        page.screenshot(path=str(output / f"viewer-{language}-{width}.png"))
+    # Zero is a rating, distinct from clearing a rating.
+    page.locator('[data-rate="0"]').click()
+    expect(page.locator('[data-rate="0"]')).to_have_class("rate-btn on")
+    page.locator('[data-rate="clear"]').click()
+    expect(page.locator(".rate-btn.on")).to_have_count(0)
+    page.locator("#v-zoom").click()
+    page.locator("#v-zoom").click()
+    expect(page.locator(".viewer-stage img")).to_have_attribute("src", re.compile("/media/original/"))
+    page.locator("[data-del-comment]").click()
+    expect(page.locator(".modal-backdrop")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.locator(".modal-backdrop")).to_have_count(0)
+    expect(page.locator(".viewer-backdrop")).to_be_visible()
+    expect(page.locator("[data-del-comment]")).to_have_count(1)
+    page.locator("#v-slideshow").click()
+    page.locator(".modal-body [data-close]").click()
+    expect(page.locator(".modal-backdrop")).to_have_count(0)
+    page.locator("#v-slideshow").click()
+    page.locator("#ss-size").select_option("original")
+    page.locator("#ss-start").click()
+    expect(page.locator("#ss-img")).to_have_attribute("src", re.compile("/media/original/"))
+    page.keyboard.press("Escape")
+    expect(page.locator(".slideshow-backdrop")).to_have_count(0)
+    expect(page.locator(".viewer-backdrop")).to_be_visible()
+    page.keyboard.press("Escape")
+    expect(page.locator(".viewer-backdrop")).to_have_count(0)
+    expect(page.locator("#grid .card").first).to_be_focused()
+
+
+def test_modal_close_settles_prompt_and_restores_focus(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.evaluate("""async () => {
+      const { uiPrompt } = await import('/js/app.js');
+      window.promptResult = 'pending';
+      uiPrompt('Name').then(value => window.promptResult = value);
+    }""")
+    expect(page.locator(".prompt-form input")).to_be_focused()
+    page.locator(".modal-head [data-close]").click()
+    page.wait_for_function("window.promptResult === null")
+
+
+def test_unsafe_artist_link_is_not_rendered(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.route("**/api/v1/artists/999", lambda route: route.fulfill(json={
+        "id": 999, "name": "Link test", "links": ["javascript:alert(1)", "https://example.org"],
+    }))
+    page.goto(web_server.url + "/#/artist/999")
+    expect(page.locator('a[href="https://example.org"]')).to_be_visible()
+    expect(page.locator('a[href^="javascript:"]')).to_have_count(0)
+
+
+def test_viewer_ignores_late_response_for_previous_image(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.locator('.lib-card a[href="#/library/1"]').click()
+    expect(page.locator("#grid .card")).to_have_count(120)
+    expected = page.locator("#grid .card .fname").nth(1).text_content()
+    first_id = page.locator("#grid .card").first.get_attribute("data-id")
+    page.evaluate("""id => {
+      const original = window.fetch;
+      window.fetch = async (...args) => {
+        const response = await original(...args);
+        if (String(args[0]).endsWith('/images/' + id)) {
+          await new Promise(resolve => setTimeout(resolve, 400));
+          window.slowResponseFinished = true;
+        }
+        return response;
+      };
+    }""", first_id)
+    page.locator("#grid .card").first.click()
+    page.keyboard.press("ArrowRight")
+    page.wait_for_function("window.slowResponseFinished === true")
+    expect(page.locator(".viewer-stage img")).to_have_attribute("alt", expected)
+    expect(page.locator(".viewer-panel .kv")).to_contain_text(expected)
+    expect(page.locator("[data-untag]")).to_have_count(0)
+
+
+def test_concurrent_load_more_does_not_duplicate_images(page, web_server):
+    sign_in(page, web_server)
+    result = page.evaluate("""async () => {
+      const { Source } = await import('/js/views.js');
+      const source = new Source('Test', {}, { sort: 'path' });
+      await source.load();
+      await Promise.all([source.loadMore(), source.loadMore(), source.loadMore()]);
+      return { total: source.total, loaded: source.items.length,
+        unique: new Set(source.items.map(item => item.id)).size };
+    }""")
+    assert result == {"total": 125, "loaded": 125, "unique": 125}

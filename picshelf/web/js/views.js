@@ -31,19 +31,31 @@ export class Source {
     this.items = [];
     this.total = 0;
     this.onChange = null;
+    this.revision = 0;
+    this.pending = null;
+    this.errors = [];
   }
   async load(reset = true) {
-    if (reset) this.items = [];
+    const revision = reset ? ++this.revision : this.revision;
+    const offset = reset ? 0 : this.items.length;
+    if (reset) this.pending = null;
     const res = await api("/images?" + imagesQuery({
-      q: this.q, sort: this.sort, limit: 120, offset: this.items.length, ...this.filters,
+      q: this.q, sort: this.sort, limit: 120, offset, ...this.filters,
     }));
+    if (revision !== this.revision) return res;
     this.total = res.total;
+    this.errors = res.errors || [];
+    if (reset) this.items = [];
     this.items.push(...res.items);
     return res;
   }
   async loadMore() {
     if (this.items.length >= this.total) return false;
-    await this.load(false);
+    if (!this.pending) {
+      const pending = this.load(false).finally(() => { if (this.pending === pending) this.pending = null; });
+      this.pending = pending;
+    }
+    await this.pending;
     return true;
   }
   get loadedAll() { return this.items.length >= this.total; }
@@ -54,8 +66,8 @@ export class Source {
 function cardHtml(item) {
   const rating = item.my_rating >= 0 ? `<span class="badge rated">${item.my_rating}</span>` : "";
   const fav = item.favorite ? `<span class="badge fav">★</span>` : "";
-  return `<figure class="card" data-id="${item.id}" tabindex="0">
-    <img src="${mediaUrl("thumb", item.id)}" alt="${escapeHtml(item.filename)}" decoding="async">
+  return `<figure class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="${escapeHtml(item.filename)}">
+    <img src="${mediaUrl("thumb", item.id, item.sha256)}" alt="" loading="lazy" decoding="async">
     <figcaption><span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
     <span class="badges">${rating}${fav}</span></figcaption></figure>`;
 }
@@ -66,28 +78,44 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
 
   const grid = view.querySelector("#grid");
   const moreBtn = view.querySelector("#more-btn");
+  const warnings = document.createElement("p");
+  warnings.className = "error";
+  warnings.setAttribute("role", "status");
+  grid.before(warnings);
   const paint = () => {
     grid.innerHTML = source.items.map(cardHtml).join("") || `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
     view.querySelector("#count").textContent = t("共 {v0} 张", {v0: source.total});
     moreBtn.hidden = source.loadedAll;
+    warnings.textContent = source.errors.join(" ");
+    warnings.hidden = !source.errors.length;
+    view.querySelector("#slideshow-btn").disabled = source.total === 0;
   };
   paint();
 
-  moreBtn.addEventListener("click", async () => { await source.loadMore(); paint(); });
+  moreBtn.addEventListener("click", async () => {
+    moreBtn.disabled = true;
+    try { await source.loadMore(); paint(); }
+    catch (error) { toast(error.message, "error"); }
+    finally { moreBtn.disabled = false; }
+  });
   view.querySelector("#sort-select").addEventListener("change", async (e) => {
     source.sort = e.target.value;
-    await source.load(true);
-    paint();
+    e.target.disabled = true;
+    try { await source.load(true); paint(); }
+    catch (error) { toast(error.message, "error"); }
+    finally { e.target.disabled = false; }
   });
   view.querySelector("#slideshow-btn").addEventListener("click", () => openSlideshow(source));
   grid.addEventListener("click", (e) => {
     const card = e.target.closest(".card");
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
+    card.focus();
     if (idx >= 0) openViewer(source, idx);
   });
   grid.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
     const card = e.target.closest(".card");
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
@@ -102,6 +130,9 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
 
 export function renderLogin(view) {
   view.innerHTML = t("\n    <div class=\"login-wrap\">\n      <h1>登录 Pic Shelf</h1>\n      <form id=\"login-form\">\n        <input type=\"text\" id=\"login-username\" placeholder=\"用户名\" autocomplete=\"username\" autofocus>\n        <input type=\"password\" id=\"login-password\" placeholder=\"密码\" autocomplete=\"current-password\">\n        <button class=\"btn primary\" type=\"submit\" style=\"width:100%\">登录</button>\n      </form>\n      <p class=\"hint\">没有账号？现有用户可在「管理 → 用户」中创建，或在服务器上运行 <code>picshelf users add 名字</code>。</p>\n    </div>");
+  view.querySelector("#login-username").setAttribute("aria-label", t("用户名"));
+  view.querySelector("#login-password").setAttribute("aria-label", t("密码"));
+  view.querySelectorAll("input").forEach(input => input.required = true);
   view.querySelector("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try {
@@ -129,7 +160,7 @@ export async function renderHome(view) {
     [t("图片"), stats.images, fmtSize(stats.size_bytes)],
     [t("库"), stats.libraries, ""], [t("专辑"), stats.albums, ""],
     [t("艺术家"), stats.artists, ""], [t("标签"), stats.tags, ""],
-    [t("用户"), stats.users, ""],
+    ...(state.user.is_admin ? [[t("用户"), stats.users, ""]] : []),
   ];
   view.innerHTML = t("\n    <div class=\"page-head\"><h1>首页</h1></div>\n    <div class=\"tiles\">{v0}\n    </div>\n    <h2>库</h2>\n    <div class=\"lib-cards\">{v1}\n    </div>", {v0: tiles.map(([t, n, sub]) =>
       `<div class="tile"><b>${n}</b><span>${t}${sub ? " · " + sub : ""}</span></div>`).join(""), v1: libs.map((l) => `
@@ -138,8 +169,8 @@ export async function renderHome(view) {
         <p class="muted">${escapeHtml(l.root_path)}</p>
         <p class="muted">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</p>
         <div class="form-row">
-          <a class="btn small" href="#/library/${l.id}>${t("浏览")}</a>
-          <a class="btn small" href="#/albums?library_id=${l.id}>${t("专辑")}</a>
+          <a class="btn small primary" href="#/library/${l.id}">${t("浏览")}</a>
+          <a class="btn small" href="#/albums?library_id=${l.id}">${t("专辑")}</a>
           ${state.user.is_admin ? `<button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>` : ""}
         </div>
       </div>`).join("") || `<p class="empty">${t("还没有库。管理员可在「管理 → 库」中注册目录。")}</p>`});
@@ -220,7 +251,7 @@ export async function renderArtist(view, artistId) {
     { filters: { artist_id: artistId } },
   );
   await source.load(true);
-  const links = (artist.links || []).map((u) =>
+  const links = (artist.links || []).filter(u => /^https?:\/\//i.test(u)).map((u) =>
     `<a class="pill" href="${escapeHtml(u)}" target="_blank" rel="noopener">${escapeHtml(u.replace(/^https?:\/\//, ""))}</a>`).join(" ");
   const extra = [artist.aliases ? t("<span class=\"pill\">别名：{v0}</span>", {v0: escapeHtml(artist.aliases)}) : "", links,
     t("<a class=\"btn small\" href=\"#/artists\">← 全部艺术家</a>")].join(" ");

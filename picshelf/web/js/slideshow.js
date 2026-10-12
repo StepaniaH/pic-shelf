@@ -2,6 +2,7 @@
 import { api, mediaUrl } from "./api.js";
 import { escapeHtml, toast, showModal } from "./app.js";
 import { t } from "./i18n.js";
+import { activateDialog, isTopDialog } from "./dialog.js";
 
 const ORDER_LABEL = { sequential: t("顺序"), shuffle: t("乱序"), random: t("随机") };
 
@@ -20,9 +21,12 @@ function sourceSpec(source) {
 }
 
 export function openSlideshow(source, startIndex = 0) {
+  let preferences = {};
+  try { preferences = JSON.parse(localStorage.getItem("picshelf.slideshow") || "{}"); }
+  catch { /* Invalid saved preferences fall back to defaults. */ }
   const saved = {
     interval: 5, order: "sequential", size: "fit", captions: true, loop: true,
-    ...JSON.parse(localStorage.getItem("picshelf.slideshow") || "{}"),
+    ...preferences,
   };
   showModal({
     title: t("幻灯片设置"),
@@ -60,18 +64,25 @@ async function startSlideshow(source, opts) {
       loop: opts.loop,
     },
   });
-  if (!session.total) { toast(t("来源为空，没有可播放的图片"), "error"); return; }
+  if (!session.total) {
+    await api(`/play/sessions/${session.token}`, { method: "DELETE" });
+    toast(t("来源为空，没有可播放的图片"), "error");
+    return;
+  }
 
   const backdrop = document.createElement("div");
   backdrop.className = "slideshow-backdrop";
   backdrop.innerHTML = t("\n    <div class=\"slideshow-stage size-{v0}\">\n      <img id=\"ss-img\" alt=\"\">\n      <div class=\"slideshow-controls\">\n        <button class=\"btn small\" id=\"ss-prev\">‹ 上一张</button>\n        <button class=\"btn small\" id=\"ss-pause\">⏸ 暂停</button>\n        <button class=\"btn small\" id=\"ss-next\">下一张 ›</button>\n        <button class=\"btn small\" id=\"ss-settings\">设置</button>\n        <button class=\"btn small\" id=\"ss-exit\">退出 (Esc)</button>\n      </div>\n    </div>\n    {v1}", {v0: opts.size, v1: opts.captions ? `<div class="slideshow-caption" id="ss-caption" aria-live="polite"></div>` : ""});
   document.body.appendChild(backdrop);
+  backdrop.setAttribute("aria-label", t("幻灯片"));
+  const releaseFocus = activateDialog(backdrop, close);
 
   let closed = false;
   let paused = false;
   let timer = null;
   let position = 0;
   let lastImage = null;
+  let busy = false;
   const imgEl = backdrop.querySelector("#ss-img");
 
   function renderCaption() {
@@ -85,33 +96,36 @@ async function startSlideshow(source, opts) {
 
   function schedule() {
     clearTimeout(timer);
-    if (closed || paused) return;
+    if (closed || paused || document.hidden) return;
     timer = setTimeout(() => step(1).catch(() => {}), opts.interval * 1000);
   }
 
   async function step(dir = 1) {
-    if (closed) return;
-    const ep = dir > 0 ? "next" : "prev";
-    const r = await api(`/play/sessions/${session.token}/${ep}`, { method: "POST", body: {} });
-    if (closed) return;
-    if (r.image) {
-      lastImage = r.image;
-      position = r.position;
-      const preload = new Image();
-      preload.src = mediaUrl("preview", r.image.id);
-      imgEl.src = mediaUrl("preview", r.image.id);
-      imgEl.alt = r.image.filename;
-      imgEl.classList.remove("fade-in");
-      void imgEl.offsetWidth;
-      imgEl.classList.add("fade-in");
-      renderCaption();
+    if (closed || busy) return;
+    busy = true;
+    stopTimer();
+    try {
+      const ep = dir > 0 ? "next" : "prev";
+      const r = await api(`/play/sessions/${session.token}/${ep}`, { method: "POST", body: {} });
+      if (closed) return;
+      if (r.image) {
+        lastImage = r.image;
+        position = r.position;
+        imgEl.src = mediaUrl(opts.size === "original" ? "original" : "preview", r.image.id, r.image.sha256);
+        imgEl.alt = r.image.filename;
+        renderCaption();
+      }
+      if (r.done && dir > 0) {
+        setPaused(true);
+        toast(t("播放完成"), "ok");
+        return;
+      }
+      schedule();
+    } catch (error) {
+      if (!closed) { setPaused(true); toast(error.message || t("播放失败"), "error"); }
+    } finally {
+      busy = false;
     }
-    if (r.done && dir > 0) {
-      stopTimer();
-      toast(t("播放完成"), "ok");
-      return;
-    }
-    schedule();
   }
 
   function stopTimer() { clearTimeout(timer); timer = null; }
@@ -127,11 +141,14 @@ async function startSlideshow(source, opts) {
     closed = true;
     stopTimer();
     document.removeEventListener("keydown", onKey);
+    document.removeEventListener("visibilitychange", onVisibility);
     backdrop.remove();
+    releaseFocus();
     try { await api(`/play/sessions/${session.token}`, { method: "DELETE" }); } catch { /* ignore */ }
   }
 
   function onKey(e) {
+    if (!isTopDialog(backdrop) || e.ctrlKey || e.metaKey || e.altKey) return;
     switch (e.key) {
       case "Escape": close(); break;
       case " ": e.preventDefault(); setPaused(!paused); break;
@@ -140,6 +157,7 @@ async function startSlideshow(source, opts) {
       default: break;
     }
   }
+  function onVisibility() { if (document.hidden) stopTimer(); else schedule(); }
 
   backdrop.querySelector("#ss-next").addEventListener("click", () => step(1).catch(() => {}));
   backdrop.querySelector("#ss-prev").addEventListener("click", () => step(-1).catch(() => {}));
@@ -150,6 +168,7 @@ async function startSlideshow(source, opts) {
     openSlideshow(source);
   });
   document.addEventListener("keydown", onKey);
+  document.addEventListener("visibilitychange", onVisibility);
 
   await step(1); // 取第一张（cursor -1 → 0）
 }

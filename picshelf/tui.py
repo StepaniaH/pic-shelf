@@ -9,7 +9,9 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sqlite3
+import math
 from pathlib import Path
+from rich.text import Text
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -63,15 +65,19 @@ class PromptScreen(ModalScreen[str | None]):
 
 class PicShelfTUI(App):
     TITLE = "Pic Shelf"
+    PAGE_SIZE = 500
 
     CSS = """
     #body { height: 1fr; }
-    #left { width: 32; border-right: solid $panel; }
+    #left { width: 28; border-right: solid $panel; padding: 0 1; }
     #right { width: 1fr; }
     #image-table { height: 1fr; }
-    #detail { height: 16; border-top: solid $panel; padding: 0 1; }
+    #detail-scroll { height: 13; max-height: 45%; border-top: solid $panel; }
+    #detail { height: auto; padding: 1 2; }
+    #list-status { height: auto; min-height: 1; color: $text-muted; padding: 0 1; }
     #search-input { dock: top; }
-    #prompt-box { width: 60; height: auto; padding: 1 2; background: $surface; border: thick $primary; margin: 4 8; }
+    PromptScreen { align: center middle; }
+    #prompt-box { width: 60; max-width: 95%; height: auto; padding: 1 2; background: $surface; border: solid $primary; }
     """
 
     BINDINGS = [
@@ -88,6 +94,9 @@ class PicShelfTUI(App):
         Binding("space", "pause_slideshow", t("暂停/继续")),
         Binding("g", "refresh", t("刷新")),
         Binding("slash", "focus_search", t("搜索")),
+        Binding("b", "toggle_navigation", t("导航")),
+        Binding("left_square_bracket", "previous_page", t("上一页")),
+        Binding("right_square_bracket", "next_page", t("下一页")),
     ]
 
     def __init__(self, cfg: Config):
@@ -100,6 +109,9 @@ class PicShelfTUI(App):
         self.current_title = t("全部图片")
         self.slideshow_timer = None
         self.show_preview = False
+        self.page_offset = 0
+        self.total = 0
+        self.slideshow_paused = False
 
     def _acting_user(self):
         row = self.conn.execute(
@@ -118,6 +130,7 @@ class PicShelfTUI(App):
             with Vertical(id="left"):
                 yield Tree(t("浏览"), id="nav-tree")
             with Vertical(id="right"):
+                yield Static(id="list-status", markup=False)
                 yield DataTable(id="image-table")
                 with VerticalScroll(id="detail-scroll"):
                     yield Static(t("选中图片后显示详情"), id="detail")
@@ -132,25 +145,27 @@ class PicShelfTUI(App):
         table.add_columns("ID", t("文件名"), t("尺寸"), t("评分"), t("收藏"))
         table.focus()  # 默认焦点在列表，字母快捷键才不会被搜索框吃掉
         self.load_images({"kind": "all"})
+        self.query_one("#left").display = self.size.width >= 100
 
     def _build_tree(self, tree: Tree) -> None:
         conn = self.conn
+        tree.root.add_leaf(t("全部图片"), data={"kind": "all"})
         for lib in conn.execute("SELECT * FROM libraries ORDER BY name"):
             if self.allowed is not None and lib["id"] not in self.allowed:
                 continue
-            lib_node = tree.root.add(t("库：{v0}", v0=lib['name']), data={"kind": "library", "id": lib["id"]}, expand=False)
+            lib_node = tree.root.add(Text(t("库：{v0}", v0=lib['name'])), data={"kind": "library", "id": lib["id"]}, expand=False)
             for album in conn.execute(
                 "SELECT * FROM albums WHERE library_id=? ORDER BY kind DESC, name", (lib["id"],)
             ):
                 lib_node.add_leaf(
-                    f"{'★ ' if album['kind'] == 'manual' else ''}{album['name']}",
+                    Text(f"{'★ ' if album['kind'] == 'manual' else ''}{album['name']}"),
                     data={"kind": "album", "id": album["id"]},
                 )
         artists = conn.execute("SELECT * FROM artists ORDER BY name").fetchall()
         if artists:
             art_node = tree.root.add(t("艺术家"), expand=False)
             for a in artists:
-                art_node.add_leaf(a["name"], data={"kind": "artist", "id": a["id"]})
+                art_node.add_leaf(Text(a["name"]), data={"kind": "artist", "id": a["id"]})
         tags = conn.execute(
             "SELECT t.id, t.name, COUNT(it.image_id) n FROM tags t LEFT JOIN image_tags it ON it.tag_id=t.id "
             "GROUP BY t.id ORDER BY n DESC, t.name LIMIT 100"
@@ -158,7 +173,7 @@ class PicShelfTUI(App):
         if tags:
             tag_node = tree.root.add(t("标签"), expand=False)
             for tg in tags:
-                tag_node.add_leaf(f"{tg['name']} ({tg['n']})", data={"kind": "tag", "name": tg["name"]})
+                tag_node.add_leaf(Text(f"{tg['name']} ({tg['n']})"), data={"kind": "tag", "name": tg["name"]})
         tree.root.add_leaf(t("★ 我的收藏"), data={"kind": "favorites"})
         tree.root.add_leaf(t("高分（≥8）"), data={"kind": "highrating"})
 
@@ -191,14 +206,22 @@ class PicShelfTUI(App):
             )
         return ew, ep
 
-    def load_images(self, sel: dict, query: str | None = None) -> None:
+    def load_images(self, sel: dict, query: str | None = None, *, offset: int | None = None) -> None:
+        if offset is not None:
+            self.page_offset = max(0, offset)
+        elif sel != getattr(self, "_current_sel", None) or query is not None:
+            self.page_offset = 0
         self._current_sel = sel
         q = query if query is not None else self.query_one("#search-input", Input).value or ""
         ew, ep = self._filter_clauses(sel)
         res = search.search_images(
             self.conn, self.user["id"], self.allowed,
-            query=q, sort="path", limit=500, extra_where=ew or None, extra_params=ep or None,
+            query=q, sort="path", limit=self.PAGE_SIZE, offset=self.page_offset,
+            extra_where=ew or None, extra_params=ep or None,
         )
+        self.total = res["total"]
+        if not res["items"] and self.page_offset and self.total:
+            return self.load_images(sel, offset=max(0, ((self.total - 1) // self.PAGE_SIZE) * self.PAGE_SIZE))
         self.current_items = res["items"]
         self.current_title = {
             "all": t("全部图片"), "library": t("库"), "album": t("专辑"), "artist": t("艺术家"),
@@ -209,13 +232,20 @@ class PicShelfTUI(App):
         for item in self.current_items:
             table.add_row(
                 str(item["id"]),
-                item["filename"][:40],
+                Text(item["filename"]),
                 f"{item.get('width') or '?'}x{item.get('height') or '?'}",
                 "—" if item["my_rating"] < 0 else str(item["my_rating"]),
                 "★" if item["favorite"] else "",
                 key=str(item["id"]),
             )
         self.sub_title = t("{v0} — {v1} 张", v0=self.current_title, v1=len(self.current_items))
+        self.query_one("#list-status", Static).update(t(
+            "第 {start}–{end} 张 / 共 {total} 张 · [ / ] 翻页 · b 导航",
+            start=self.page_offset + 1 if self.current_items else 0,
+            end=self.page_offset + len(self.current_items), total=self.total,
+        ))
+        for error in res["errors"]:
+            self.notify(error, severity="warning")
         self._update_detail()
 
     # ------------------------------------------------------------ 事件
@@ -264,7 +294,7 @@ class PicShelfTUI(App):
         rating = t("未评") if d["my_rating"] < 0 else str(d["my_rating"])
         lines = [
             f"#{d['id']} {d['filename']}  {d['width']}x{d['height']}  {d['ext']}",
-            t("评分：我的 {rating} / 平均 {v0}   收藏：{v1}", rating=rating, v0=d['avg_rating'] or '—', v1='★' if d['favorite'] else '—'),
+            t("评分：我的 {rating} / 平均 {v0}   收藏：{v1}", rating=rating, v0=d['avg_rating'] if d['avg_rating'] is not None else '—', v1='★' if d['favorite'] else '—'),
             t("标签：{tags}", tags=tags),
             t("艺术家：{artists}       专辑：{albums}", artists=artists, albums=albums),
         ]
@@ -273,7 +303,7 @@ class PicShelfTUI(App):
             art = _render_preview(path) if path else None
             if art:
                 lines.append(art)
-        detail.update("\n".join(lines))
+        detail.update(Text.from_ansi("\n".join(lines)))
 
     # ------------------------------------------------------------ 动作
 
@@ -287,11 +317,30 @@ class PicShelfTUI(App):
         self.exit()
 
     def action_refresh(self) -> None:
+        selected = self._selected_id()
+        tree = self.query_one("#nav-tree", Tree)
+        tree.clear()
+        self._build_tree(tree)
         self.load_images(getattr(self, "_current_sel", {"kind": "all"}))
+        if selected is not None:
+            self._select_row(selected)
         self.notify(t("已刷新"), timeout=2)
 
     def action_focus_search(self) -> None:
         self.query_one("#search-input", Input).focus()
+
+    def action_toggle_navigation(self) -> None:
+        left = self.query_one("#left")
+        left.display = not left.display
+        self.query_one("#nav-tree" if left.display else "#image-table").focus()
+
+    def action_next_page(self) -> None:
+        if self.page_offset + self.PAGE_SIZE < self.total:
+            self.load_images(self._current_sel, offset=self.page_offset + self.PAGE_SIZE)
+
+    def action_previous_page(self) -> None:
+        if self.page_offset:
+            self.load_images(self._current_sel, offset=self.page_offset - self.PAGE_SIZE)
 
     def action_toggle_preview(self) -> None:
         self.show_preview = not self.show_preview
@@ -383,16 +432,22 @@ class PicShelfTUI(App):
         self._ask(t("幻灯片间隔（秒，回车默认 5）"), self._start_slideshow)
 
     def _start_slideshow(self, value: str | None) -> None:
+        if value is None:
+            return
         interval = 5.0
         try:
             if value:
-                interval = max(1.0, float(value))
+                interval = float(value)
+                if not math.isfinite(interval) or interval < 1:
+                    raise ValueError
         except ValueError:
-            pass
+            self.notify(t("请输入至少 1 秒的有效间隔"), severity="warning")
+            return
         if not self.current_items:
             self.notify(t("当前列表为空"), severity="warning")
             return
         self.slideshow_timer = self.set_interval(interval, self._slideshow_next)
+        self.slideshow_paused = False
         self.notify(t("幻灯片开始（{interval:g}s 一张，空格暂停，q 退出）", interval=interval), timeout=3)
 
     def _slideshow_next(self) -> None:
@@ -400,14 +455,22 @@ class PicShelfTUI(App):
         n = len(self.current_items)
         if n == 0:
             return
-        idx = (table.cursor_row + 1) % n  # 循环轮播
+        if table.cursor_row + 1 >= n and self.total > n:
+            offset = self.page_offset + self.PAGE_SIZE
+            self.load_images(self._current_sel, offset=offset if offset < self.total else 0)
+            table.move_cursor(row=0)
+            return
+        idx = (table.cursor_row + 1) % n
         table.move_cursor(row=idx)
 
     def action_pause_slideshow(self) -> None:
         if self.slideshow_timer is not None:
-            self.slideshow_timer.stop()
-            self.slideshow_timer = None
-            self.notify(t("幻灯片已暂停"), timeout=2)
+            self.slideshow_paused = not self.slideshow_paused
+            if self.slideshow_paused:
+                self.slideshow_timer.pause()
+            else:
+                self.slideshow_timer.resume()
+            self.notify(t("幻灯片已暂停") if self.slideshow_paused else t("幻灯片已继续"), timeout=2)
 
     def on_unmount(self) -> None:
         try:

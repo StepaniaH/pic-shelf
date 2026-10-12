@@ -1,5 +1,6 @@
 /* Pic Shelf 深色主题 — 颜色语义：蓝=导航/可交互；绿=正常/成功；橙=警示与破坏性确认 */
 :root {
+  color-scheme: dark;
   --bg: #0f1115;
   --panel: #171a21;
   --panel-2: #1e2330;
@@ -19,6 +20,12 @@ body {
   background: var(--bg); color: var(--fg);
   font: 15px/1.5 "Noto Sans SC", "Source Han Sans SC", system-ui, "Segoe UI", sans-serif;
 }
+[hidden] { display: none !important; }
+button, input, select, textarea { font: inherit; }
+button, a { -webkit-tap-highlight-color: transparent; }
+body.dialog-open { overflow: hidden; }
+.skip-link { position: fixed; top: -60px; left: 16px; z-index: 200; padding: 10px 16px; background: var(--panel); }
+.skip-link:focus { top: 10px; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
@@ -40,6 +47,8 @@ a:hover { text-decoration: underline; }
 #nav { display: flex; gap: 12px; flex: 0 0 auto; }
 #nav a { color: var(--muted); }
 #nav a:hover { color: var(--fg); }
+#nav a { padding: 5px 2px; border-bottom: 2px solid transparent; }
+#nav a[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); }
 #userbox { display: flex; align-items: center; gap: 8px; margin-left: auto; flex: 0 0 auto; }
 .username { color: var(--muted); }
 
@@ -54,12 +63,16 @@ main { padding: 20px 22px 60px; max-width: 1500px; margin: 0 auto; }
   background: var(--panel-2); color: var(--fg); cursor: pointer;
 }
 .btn:hover { border-color: var(--accent); }
+.btn:disabled { cursor: default; opacity: .5; }
+.btn:active:not(:disabled) { background: var(--accent-soft); }
+.btn { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; }
+.btn:hover { text-decoration: none; }
 .btn.primary { background: var(--accent-soft); border-color: var(--accent); }
 .btn.small { padding: 4px 9px; font-size: 13px; }
 .btn.danger { border-color: var(--warn); color: var(--warn); }
 .icon-btn { border: none; background: none; color: var(--muted); cursor: pointer; font-size: 16px; }
 .icon-btn:hover { color: var(--fg); }
-select, input[type="text"], input[type="password"], input[type="number"], input[type="search"], textarea {
+select, input:not([type]), input[type="text"], input[type="password"], input[type="number"], input[type="search"], textarea {
   padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
   background: var(--bg); color: var(--fg);
 }
@@ -77,8 +90,12 @@ select, input[type="text"], input[type="password"], input[type="number"], input[
   border-radius: var(--radius); overflow: hidden; cursor: pointer;
   position: relative; transition: transform .12s ease, border-color .12s ease;
 }
-.card:hover { transform: translateY(-2px); border-color: var(--accent); }
-.card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; background: #000; }
+.card { transition: border-color .15s ease; }
+.card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #0b0d12; }
+@media (hover: hover) and (pointer: fine) {
+  .card:hover { border-color: var(--accent); }
+}
+.card:focus-visible { outline-offset: 3px; }
 .card figcaption {
   padding: 7px 9px; font-size: 12.5px; color: var(--muted);
   display: flex; gap: 6px; align-items: center; justify-content: space-between;
@@ -100,6 +117,8 @@ select, input[type="text"], input[type="password"], input[type="number"], input[
 .lib-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
 .lib-card h3 { margin: 0 0 6px; font-size: 16px; overflow-wrap: anywhere; }
 .lib-card p { overflow-wrap: anywhere; }
+.lib-card .muted { margin: 8px 0; }
+.lib-card .form-row { margin-bottom: 0; }
 
 /* 艺术家 / 标签列表 */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -113,7 +132,7 @@ select, input[type="text"], input[type="password"], input[type="number"], input[
 
 /* ---------------------------------------------------------------- 查看器 */
 .viewer-backdrop {
-  position: fixed; inset: 0; z-index: 60; background: rgba(8, 10, 14, .97);
+  position: fixed; inset: 0; z-index: 60; background: #080a0e;
   display: flex; flex-direction: column;
 }
 .viewer-top {
@@ -175,7 +194,9 @@ select, input[type="text"], input[type="password"], input[type="number"], input[
   display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 94vw;
   opacity: .25; transition: opacity .2s;
 }
-.slideshow-backdrop:hover .slideshow-controls { opacity: 1; }
+.slideshow-backdrop:hover .slideshow-controls,
+.slideshow-controls:focus-within { opacity: 1; }
+@media (hover: none) { .slideshow-controls { opacity: 1; } }
 .fade-in { animation: fadeIn .25s ease; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
@@ -221,11 +242,26 @@ table.data th { color: var(--muted); font-weight: 500; }
   #search-form { order: 3; flex-basis: 100%; max-width: none; }
 }
 @media (max-width: 900px) {
-  #nav { display: none; }
+  #nav { order: 4; flex-basis: 100%; overflow-x: auto; gap: 18px; padding: 0 2px; }
+  #nav a { white-space: nowrap; }
   .viewer-panel { position: absolute; right: 0; top: 0; bottom: 0; z-index: 5; width: min(86vw, 360px); box-shadow: -8px 0 24px rgba(0, 0, 0, .5); border-left: none; }
   .viewer-top { align-items: flex-start; }
   .viewer-top .title { max-width: none; flex-basis: 100%; }
   .viewer-actions { margin-left: 0; width: 100%; }
+}
+@media (max-width: 600px) {
+  #topbar { padding: 10px 14px; gap: 8px; }
+  main { padding: 18px 14px 40px; }
+  .username { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .card figcaption { padding: 8px; }
+  .page-head { gap: 8px; }
+  .toolbar { margin-left: 0; width: 100%; }
+  .btn, .btn.small { min-height: 40px; }
+  .viewer-top { padding: 10px 12px; }
+  .viewer-actions { gap: 6px; }
+  .login-wrap { padding: 22px; margin-top: 4vh; }
+  .form-row input, .form-row select { max-width: 100%; min-width: 0; }
 }
 
 /* 导入表格：长路径允许折行 */

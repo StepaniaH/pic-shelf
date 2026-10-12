@@ -2,6 +2,13 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+  "密码": "Password",
+  "用户名": "Username",
+  "加载中…": "Loading…",
+  "确认删除这条评论？": "Delete this comment?",
+  "删除评论": "Delete comment",
+  "搜索图片": "Search images",
+  "跳到内容": "Skip to content",
   "Pic Shelf — 图片库": "Pic Shelf — Image Library",
   "首页": "Home",
   "收藏": "Favorites",

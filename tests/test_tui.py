@@ -75,3 +75,36 @@ def test_tui_smoke(env):
     assert favs == 1, "收藏动作未生效"
     assert ratings == 1, "评分动作未生效"
     assert tags == 1, "标签动作未生效"
+
+
+def test_tui_small_terminal_pagination_and_slideshow(env):
+    from picshelf.tui import PicShelfTUI
+
+    async def scenario():
+        app = PicShelfTUI(env["cfg"])
+        app.PAGE_SIZE = 2
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            assert not app.query_one("#left").display
+            assert app.total == 4 and len(app.current_items) == 2
+            first = app.current_items[0]["id"]
+            await pilot.press("]")
+            await pilot.pause()
+            assert app.page_offset == 2 and app.current_items[0]["id"] != first
+            await pilot.press("[")
+            await pilot.pause()
+            assert app.page_offset == 0
+            await pilot.press("s", "escape")
+            await pilot.pause()
+            assert app.slideshow_timer is None
+            app._start_slideshow("60")
+            timer = app.slideshow_timer
+            assert timer is not None
+            await pilot.press("space")
+            assert app.slideshow_paused
+            await pilot.press("space")
+            assert not app.slideshow_paused and app.slideshow_timer is timer
+            await pilot.press("b")
+            assert app.query_one("#left").display
+
+    asyncio.run(scenario())

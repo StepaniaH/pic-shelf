@@ -28,12 +28,14 @@ export async function api(path, { method = "GET", body } = {}) {
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail || msg; } catch { /* ignore */ }
+    if (Array.isArray(msg)) msg = msg.map(error => `${(error.loc || []).slice(1).join(".")}: ${error.msg}`).join("; ");
     throw new ApiError(res.status, msg || t("请求失败"));
   }
   return res.status === 204 ? null : res.json();
 }
 
-export const mediaUrl = (kind, id) => `${BASE}/media/${kind}/${id}`;
+export const mediaUrl = (kind, id, version) => `${BASE}/media/${kind}/${id}`
+  + (version ? `?v=${encodeURIComponent(version.slice(0, 16))}` : "");
 
 // 构造 /images 查询串
 export function imagesQuery({ q = "", sort = "newest", limit = 120, offset = 0, ...rest } = {}) {
