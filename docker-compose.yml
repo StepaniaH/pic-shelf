@@ -1,0 +1,23 @@
+# Pic Shelf — Docker Compose
+#
+# Quick start:  docker compose up -d --build
+# First run:    docker compose exec picshelf picshelf init --admin admin
+# Docs:         docs/deployment.md (volumes / networking / permissions / backups)
+#
+# Notes:
+#  - Binds to 127.0.0.1 by default (loopback only). Use a LAN / Tailscale
+#    address to expose it privately; never map it to the public internet.
+#  - UI language: set PICSHELF_LANG=zh (or en) under `environment:` to pin it;
+#    unset follows the system locale.
+services:
+  picshelf:
+    build: .
+    image: pic-shelf:local
+    container_name: picshelf
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:39431:39431"
+    volumes:
+      - ./data:/data                                # database / thumbnails / secret key
+      # - /path/to/your/images:/libraries/photos:ro # image library, read-only is fine for index mode
+    # user: "1000:1000"                             # uncomment when the host UID is not 1000

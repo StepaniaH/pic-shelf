@@ -5,13 +5,14 @@
 ## 项目概览
 
 自托管图片库：导入 → 编码（哈希/缩略图）→ 检索 / 评分 / Tag / 艺术家 → 规则化播放；**Web + TUI + CLI** 三端。
-当前版本：v0.1 + v0.2 托管导入（CLI + Web 向导）+ 中英双语（zh/en）已落地（2026-10-11，62 项测试全绿）。规划路线：**开源 → Docker 部署 / 安装包**。项目定名 **Pic Shelf**（2026-10-11，见 `docs/decisions.md` D11）。
+当前版本：**v0.0.1**（托管导入 + 中英双语 + Docker 化）开发完成（2026-10-11，62 项测试全绿）。规划路线：**开源（已完成）→ 镜像发布 / 安装包**。项目定名 **Pic Shelf**（2026-10-11，见 `docs/decisions.md` D11）。
 
 ## 工作流约定
 
 - **main 分支保护**：main 只放经评审的稳定版本；日常开发在 `dev`，合并需评审确认。
 - **任务驱动**：按 `TASKS.md` 分层推进，一任务一提交。
 - **English commits**：提交信息一律使用英文（Conventional Commits 前缀：`feat:` / `fix:` / `test:` / `docs:` …），面向国际协作。
+- **版本号**：正式发布（Docker Hub 等）之前一律使用 `0.0.1` 序列（`v0.0.1 → v0.0.2 → …`），不得自创版本号；包版本 / 文档 / 镜像 tag 保持一致（见 decisions D13）。
 - **分支与推送（2026-10-11 定）**：远端**只保留 `main`**（不推 `dev` 分支）；日常开发在本地 `dev`，合并（fast-forward）在本地完成后只推 `main`；推送与合并需维护者明确批准；不对外暴露服务。
 - **真实测试**：完成声明必须附真实运行结果（pytest / curl / CLI 输出）；禁止「应该能跑」式断言。
 
@@ -26,6 +27,9 @@ export UV_CACHE_DIR=$PWD/.uv-cache        # 依赖缓存留在项目内
 .venv/bin/picshelf tui                       # 终端界面
 .venv/bin/picshelf import <源目录> <库名> --apply   # 托管导入（默认预演）
 .venv/bin/picshelf --help                    # 全部命令
+
+docker compose up -d --build                 # 容器方式运行（部署见 docs/deployment.md）
+docker compose exec picshelf picshelf <命令> # 容器内执行 CLI（扫描 / 用户管理 / 备份等）
 ```
 
 ## 硬性约束
@@ -56,6 +60,7 @@ export UV_CACHE_DIR=$PWD/.uv-cache        # 依赖缓存留在项目内
 | `picshelf/cli.py` | Click CLI（入口 `main`） |
 | `picshelf/tui.py` | Textual 应用（`run_tui(cfg)`） |
 | `picshelf/web/` | 零构建前端（原生 ES modules） |
+| `Dockerfile` / `docker-compose.yml` | 容器镜像与编排（部署指南 `docs/deployment.md`） |
 
 ## 数据库
 
@@ -70,4 +75,4 @@ SQLite（WAL）；schema 变更 = `db.py` 的 `MIGRATIONS` 追加新版本块 + 
 
 ## 待办与决策
 
-见 `TASKS.md`（任务状态）与 `docs/decisions.md`（D1 加密结论；D2 已决策：本机自用 → 开源 → Docker；D10 库模式已批准推进；D11 命名已定案；D12 双语 i18n 已落地）。
+见 `TASKS.md`（任务状态）与 `docs/decisions.md`（D1 加密结论；D2 已决策：本机自用 → 开源 → Docker；D10 库模式已批准推进；D11 命名已定案；D12 双语 i18n 已落地；D13 版本号规则）。

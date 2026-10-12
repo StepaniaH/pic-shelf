@@ -1,0 +1,12 @@
+.git
+.gitignore
+.venv
+.uv-cache
+data
+tests
+docs
+TASKS.md
+AGENTS.md
+*.pyc
+__pycache__
+.pytest_cache

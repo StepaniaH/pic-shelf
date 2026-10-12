@@ -17,7 +17,7 @@ Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line 
 | Capability | Description | Status |
 |---|---|---|
 | Import & encode | Directory = library; SHA-256 (exact dedupe) + pHash (similarity) + WebP thumbnails & previews | ✅ |
-| Managed import (v0.2) | Hardlink (default — originals untouched, zero extra space) / copy / move; sha256 dedupe, automatic rename on conflicts, dry-run first; **CLI + Web admin "Import" wizard** | ✅ |
+| Managed import | Hardlink (default — originals untouched, zero extra space) / copy / move; sha256 dedupe, automatic rename on conflicts, dry-run first; **CLI + Web admin "Import" wizard** | ✅ |
 | Image groups | Folder albums (automatic) + manual albums (add/remove, cover) | ✅ |
 | Ratings | Per-user 0–10, personal + average | ✅ |
 | Tags | Namespaced tags (`artist:name` style), autocomplete, add/remove | ✅ |
@@ -29,6 +29,7 @@ Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line 
 | Comments / notes | Per-image comments and text notes (on-image region notes on the roadmap) | ✅ |
 | Multi-user shared libraries | Multiple users, per-library ACL, per-user ratings & favorites | ✅ |
 | Encryption | scrypt passwords, HMAC-signed tokens, encrypted backup export; full-library encryption deliberately out of scope for now (see `docs/decisions.md` D1) | ✅ per D1 |
+| Deployment | Docker / docker-compose ready (binds to loopback by default; no published image yet) | ✅ |
 | Localization | Fully bilingual **zh / en** across Web + TUI + CLI + API errors; follows the system locale, switchable (Web header toggle; CLI `--lang` / `PICSHELF_LANG`) | ✅ |
 | Local-model tagging | Auto-tagging / CLIP similarity (interface reserved, see Roadmap) | ⏳ planned |
 
@@ -48,7 +49,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 .venv/bin/picshelf library add wallpapers "/path/to/your/images"
 .venv/bin/picshelf scan wallpapers
 
-# 3.5) …or import external directories into a managed library (v0.2; dry-run first, then --apply; hardlink by default)
+# 3.5) …or import external directories into a managed library (dry-run first, then --apply; hardlink by default)
 .venv/bin/picshelf library add mylib "~/Pictures/PicShelfLib" --mkdir
 .venv/bin/picshelf import "~/incoming" mylib            # dry run
 .venv/bin/picshelf import "~/incoming" mylib --apply    # execute + auto-scan
@@ -64,6 +65,15 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 ```
 
 Data lives in `./data/` inside the project by default (database, thumbnails, secret key, playlists); override with `--data DIR` or `PICSHELF_DATA`.
+
+## Docker
+
+```bash
+docker compose up -d --build                               # build + start (binds 127.0.0.1:39431)
+docker compose exec picshelf picshelf init --admin admin   # first run: initialize
+```
+
+Mount your image directories in `docker-compose.yml` (read-only is fine for index mode) and register them via `docker compose exec picshelf picshelf library add ...`. Full guide (volumes, networking, permissions, upgrades, backups): `docs/deployment.md`.
 
 ## The three frontends
 

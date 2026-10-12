@@ -2,7 +2,7 @@
 
 > 任务驱动（非日历驱动）：按依赖层推进，完成一项勾一项。
 > 图例：`[x]` 完成 ｜ `[~]` 进行中 ｜ `[ ]` 待办 ｜ `[!]` 需维护者决策（见 docs/decisions.md）
-> **当前状态：v0.2（托管导入）+ 中英双语（zh/en）完成，已开源（GitHub `main = 1618423`）** · 62/62 测试全绿 · 开发分支 `dev`（仅本地）
+> **当前状态：v0.0.1（托管导入 + 中英双语 + Docker 化）开发完成，已开源（GitHub `StepaniaH/pic-shelf`，远端仅 main）** · 62/62 测试全绿 · 开发分支 `dev`（仅本地）
 
 ## T0 · 调研与立项
 - [x] 竞品调研（`docs/research/2026-10-11-open-source-image-viewers.md`，stars/活跃度快照 2026-10-11）
@@ -59,7 +59,7 @@
 - [x] README / 架构 / 决策 / 调研 / AGENTS 文档齐备
 - [x] dev 分支按任务分提交（按里程碑评审后并入 `main`）
 
-## v0.2 · 托管理库
+## v0.0.1 · 托管导入
 - [x] `picshelf/importer.py`：预演计划 + hardlink/copy/move + sha256 去重 + 同名自动改名 + 越界防护 + 跨盘降级
 - [x] CLI `picshelf import`（预演优先 / `--apply` / `--yes` / 完成后自动扫描）+ `library add --mkdir`
 - [x] Web 管理页「导入」向导（`/api/v1/import/plan|execute`，需 manage 权限；预演表格 + 确认弹窗 + 执行）
@@ -67,16 +67,22 @@
 - [x] 真实素材沙盒演示（CLI 与 Web 两条链路：预演 → 硬链接执行 → 自动入库 → 数据核对）
 - [ ] 命名模板增强（基于 tag/艺术家的目录模板）
 
-## v0.2+ · 中英双语（i18n）
+## v0.0.1 · 中英双语（i18n）
 - [x] 目录式映射：`picshelf/i18n.py` + `web/js/i18n.js`（中文原文为 msgid，缺译回退中文，零构建零依赖）
 - [x] 全端接入：CLI（`--lang` / 帮助渲染时本地化）/ TUI / Web（顶栏中·EN 切换 + `data-i18n` 骨架）/ API（Accept-Language）
 - [x] 机械转换（AST + 词法）+ 占位符一致性校验 0 不一致；嵌套模板漏译专项清扫（约 55 处）
 - [x] tests/test_i18n.py（解析优先级 / 回退 / CLI / API）；全套 **62 passed**
 - [x] README 双语（EN 库页面+查看器 / ZH 库页面，真实壁纸素材）+ 语言互切链接
 
+## v0.0.1 · Docker 化 + 部署文档
+- [x] `Dockerfile`（python:3.11-slim / 非 root UID 1000 / healthcheck / `serve --host 0.0.0.0`）
+- [x] `docker-compose.yml`（默认仅绑 127.0.0.1；data 卷 + 库目录只读挂载示例）
+- [x] `docs/deployment.md`（初始化 / 卷 / 网络 / 权限 / 升级 / 备份 / FAQ）+ README 双语 Docker 章节
+- [x] 实测：镜像构建 → 容器 init → 扫描 → 健康检查 → 页面访问全通（仅本地验证，未发布任何 registry）
+
 ## 后续（Roadmap）
 - [ ] `[!]` D1 加密：已结论「现阶段不做」（触发条件与零成本补做路径见 decisions D1）
-- [ ] 开源准备：Docker 化 + 安装包；远程访问 = tailnet 直连（Caddy 可选）（见 decisions D2 / B0）
+- [ ] 镜像发布（Docker Hub / GHCR，自 v0.0.1 起）与安装包；远程访问 = tailnet 直连（Caddy 可选）（见 decisions D2 / B0）
 - [ ] CBZ/ZIP 归档导入 + ComicInfo.xml；视频支持
 - [ ] 本地模型识图（Ollama 视觉打标 / CLIP 相似检索）
 - [ ] 图上区域注释（notes.geometry 已预留）；分享链接；SSE 实时刷新；桌面端（Tauri 评估）

@@ -17,7 +17,7 @@
 | 能力 | 说明 | 状态 |
 |---|---|---|
 | 导入与编码 | 目录即库；SHA-256（精确查重）+ pHash（相似度）+ WebP 缩略图与预览图 | ✅ |
-| 托管导入（v0.2） | 硬链接（默认，原文件不动、零额外空间）/ 复制 / 移动；sha256 去重、同名自动改名、预演优先；**CLI + Web 管理页「导入」向导** | ✅ |
+| 托管导入 | 硬链接（默认，原文件不动、零额外空间）/ 复制 / 移动；sha256 去重、同名自动改名、预演优先；**CLI + Web 管理页「导入」向导** | ✅ |
 | 图片组 | 文件夹专辑（自动）+ 手工专辑（增删、封面） | ✅ |
 | 评分 | 每用户 0–10，个人分 + 平均分 | ✅ |
 | 标签 | 命名空间标签（`作者:名字` 风格）、自动补全、增删 | ✅ |
@@ -29,6 +29,7 @@
 | 评论 / 笔记 | 每张图片的评论与文本笔记（图上区域注释在路线图上） | ✅ |
 | 多用户共享库 | 多用户、库级 ACL、各自的评分与收藏 | ✅ |
 | 加密 | scrypt 口令、HMAC 签名令牌、加密备份导出；整库加密现阶段刻意不做（见 `docs/decisions.md` D1） | ✅ 按 D1 |
+| 部署 | Docker / docker-compose 就绪（默认仅绑本机；镜像尚未发布） | ✅ |
 | 中英双语 | **Web + TUI + CLI + API 报错**全端 zh/en；跟随系统 locale，可切换（Web 顶栏按钮；CLI `--lang` / `PICSHELF_LANG`） | ✅ |
 | 本地模型识图 | 自动打标 / CLIP 相似检索（接口已预留，见路线图） | ⏳ 计划中 |
 
@@ -48,7 +49,7 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 .venv/bin/picshelf library add wallpapers "/path/to/your/images"
 .venv/bin/picshelf scan wallpapers
 
-# 3.5) ……或把外部目录导入托管的库（v0.2；预演优先，--apply 执行；默认硬链接）
+# 3.5) ……或把外部目录导入托管的库（预演优先，--apply 执行；默认硬链接）
 .venv/bin/picshelf library add mylib "~/Pictures/PicShelfLib" --mkdir
 .venv/bin/picshelf import "~/incoming" mylib            # 预演
 .venv/bin/picshelf import "~/incoming" mylib --apply    # 执行 + 自动扫描入库
@@ -66,6 +67,15 @@ uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
 数据默认放在项目内 `./data/`（数据库、缩略图、密钥、播放列表）；可用 `--data DIR` 或 `PICSHELF_DATA` 覆盖。
 
 **界面语言**：默认跟随系统 locale（zh* → 中文，其余 → 英文）。固定语言：`PICSHELF_LANG=zh`、`picshelf --lang zh`，或 Web 顶栏的「中/EN」按钮（浏览器内持久化）。
+
+## Docker 部署
+
+```bash
+docker compose up -d --build                               # 构建并启动（默认仅绑定 127.0.0.1:39431）
+docker compose exec picshelf picshelf init --admin admin   # 首次初始化
+```
+
+在 `docker-compose.yml` 里挂载你的图片目录（索引模式只读即可），再用 `docker compose exec picshelf picshelf library add ...` 注册。完整指南（卷 / 网络 / 权限 / 升级 / 备份）：`docs/deployment.md`。
 
 ## 三端介绍
 
