@@ -63,6 +63,9 @@ def scan_library(
     *,
     full: bool = False,
     progress: Callable[[dict], None] | None = None,
+    check: Callable[[], None] | None = None,
+    item_result: Callable[[str, list[str]], None] | None = None,
+    only_paths: set[str] | None = None,
 ) -> dict:
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
@@ -71,10 +74,16 @@ def scan_library(
     if not root.is_dir():
         raise ValueError(t("库目录不存在：{root}", root=root))
     with library_write_lock(cfg, root):
-        return _scan_library(conn, cfg, library_id, full=full, progress=progress)
+        try:
+            return _scan_library(conn, cfg, library_id, full=full, progress=progress,
+                                 check=check, item_result=item_result, only_paths=only_paths)
+        except BaseException:
+            conn.rollback()
+            raise
 
 
-def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
+def _scan_library(conn, cfg, library_id, *, full=False, progress=None, check=None,
+                  item_result=None, only_paths=None) -> dict:
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
         raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
@@ -105,6 +114,21 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
         seen_ids.add(int(row["id"]))
         folder_ids.setdefault(rel_dir, []).append(int(row["id"]))
 
+    def report_item(rel, before_errors):
+        conn.commit()
+        if item_result:
+            item_result(rel, stats["errors"][before_errors:])
+
+    if only_paths is not None:
+        # A retry has an explicit scope. Other records and folder memberships
+        # remain untouched, including files that appeared after submission.
+        for rel, row in existing.items():
+            if rel not in only_paths:
+                seen_ids.add(int(row["id"]))
+                if not row["missing"]:
+                    parent = Path(rel).parent.as_posix()
+                    folder_ids.setdefault("" if parent == "." else parent, []).append(int(row["id"]))
+
     def walk_error(exc):
         # 无法遍历的子树不等于文件消失，保留其索引与关联。
         failed = Path(exc.filename or root)
@@ -117,8 +141,13 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
     # ---------- 阶段 1：walk ----------
     count = 0
     for path in _iter_image_files(root, onerror=walk_error):
-        count += 1
         rel = path.relative_to(root).as_posix()
+        if only_paths is not None and rel not in only_paths:
+            continue
+        if check:
+            check()
+        count += 1
+        before_errors = len(stats["errors"])
         rel_dir = Path(rel).parent.as_posix()
         if rel_dir == ".":
             rel_dir = ""
@@ -132,9 +161,11 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
             identity = incomplete.get(str(path))
             if identity and st.st_dev == identity["device"] and st.st_ino == identity["inode"]:
                 stats["errors"].append(t("导入尚未完成：{path}，请恢复导入计划", path=rel))
+                report_item(rel, before_errors)
                 continue
         except (OSError, ValueError, RuntimeError) as exc:
             stats["errors"].append(f"{rel}: {exc}")
+            report_item(rel, before_errors)
             continue
 
         try:
@@ -163,8 +194,10 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
                 stats["updated"] += 1
             else:
                 pending_new.append((rel, rel_dir, path, st))
+                continue
         except Exception as exc:
             stats["errors"].append(f"{rel}: {exc}")
+        report_item(rel, before_errors)
         if progress and count % 25 == 0:
             progress(dict(stats, processed=count))
 
@@ -176,6 +209,9 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
 
     # ---------- 阶段 3：pending 处理（移动 or 新增） ----------
     for rel, rel_dir, path, st in pending_new:
+        if check:
+            check()
+        before_errors = len(stats["errors"])
         try:
             sha = hashing.sha256_file(path)
             candidates = gone.get(sha, [])
@@ -215,9 +251,12 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
                 stats["added"] += 1
         except Exception as exc:
             stats["errors"].append(f"{rel}: {exc}")
+        report_item(rel, before_errors)
     stats["processed"] = count
 
     # ---------- 阶段 4：软删除 ----------
+    if check:
+        check()
     for rel_path, row in existing.items():
         if int(row["id"]) not in seen_ids and not row["missing"]:
             conn.execute("UPDATE images SET missing=1 WHERE id=?", (row["id"],))
@@ -269,6 +308,13 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
          json.dumps(stats["errors"][:100], ensure_ascii=False), scan_id),
     )
     conn.commit()
+    if item_result and only_paths is not None:
+        # Old paths in a move and already-missing paths also belong to the
+        # saved work set, even though they did not yield a file during walk.
+        present = {rel for rel, _, _, _ in pending_new}
+        for rel, row in existing.items():
+            if rel in only_paths and not (root / rel).exists() and rel not in present:
+                item_result(rel, [])
     if progress:
         progress(dict(stats, done=True))
     return stats

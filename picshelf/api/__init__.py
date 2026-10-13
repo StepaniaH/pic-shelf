@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -11,7 +12,8 @@ from .. import __version__, auth
 from ..config import Config
 from ..errors import ServiceError
 from ..i18n import set_lang as _set_lang
-from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play
+from ..worker import WorkerManager
+from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -23,14 +25,26 @@ def create_app_dev() -> FastAPI:
 
 def create_app(cfg: Config) -> FastAPI:
     cfg.ensure()
+    workers = WorkerManager(cfg)
+
+    @asynccontextmanager
+    async def lifespan(app):
+        workers.start()
+        try:
+            yield
+        finally:
+            workers.close()
+
     app = FastAPI(
         title="Pic Shelf",
         version=__version__,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.cfg = cfg
+    app.state.workers = workers
     app.state.secret = auth.load_secret(cfg.secret_path)
 
     @app.exception_handler(ServiceError)
@@ -58,6 +72,7 @@ def create_app(cfg: Config) -> FastAPI:
         routes_play.router,
         routes_import.router,
         routes_admin.router,
+        routes_jobs.router,
     ):
         api.include_router(router)
     app.include_router(api)

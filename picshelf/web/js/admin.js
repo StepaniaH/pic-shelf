@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { escapeHtml, toast, uiPrompt, uiConfirm, state } from "./app.js";
 import { t } from "./i18n.js";
+import { jobKey, renderJobs, watchJob } from "./jobs.js";
 
 const CAP_LABEL = {
   view: t("查看"), rate: t("评分"), comment: t("评论"), note: t("笔记"),
@@ -15,12 +16,18 @@ export async function renderAdmin(view) {
     return;
   }
   view.innerHTML = t("\n    <div class=\"page-head\"><h1>管理</h1></div>\n    <div class=\"admin-tabs\">\n      <button class=\"btn\" data-tab=\"users\">用户</button>\n      <button class=\"btn\" data-tab=\"groups\">用户组</button>\n      <button class=\"btn\" data-tab=\"import\">导入</button>\n      <button class=\"btn\" data-tab=\"libraries\">库</button>\n    </div>\n    <div id=\"admin-body\"></div>");
+  const tasksButton = document.createElement("button");
+  tasksButton.className = "btn";
+  tasksButton.dataset.tab = "jobs";
+  tasksButton.textContent = t("后台任务");
+  view.querySelector(".admin-tabs").appendChild(tasksButton);
   const body = view.querySelector("#admin-body");
   const setTab = async (t) => {
     view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
     if (t === "users") await renderUsers(body);
     else if (t === "groups") await renderGroups(body, () => setTab("groups"));
     else if (t === "import") await renderImport(body);
+    else if (t === "jobs") await renderJobs(body);
     else await renderLibraries(body);
   };
   view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
@@ -204,10 +211,18 @@ async function renderLibraries(body) {
     btn.disabled = true;
     btn.textContent = t("扫描中…");
     try {
-      const s = await api(`/libraries/${btn.dataset.scan}/scan`, { method: "POST" });
-      toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: s.added, v1: s.updated, v2: s.moved, v3: s.missing}), "ok");
+      const queued = await api(`/libraries/${btn.dataset.scan}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
+      const target = document.createElement("div");
+      btn.parentElement.after(target);
+      const status = await watchJob(queued.id, target);
+      if (!status || !btn.isConnected) return;
+      const s = status.result;
+      if (s) toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: s.added, v1: s.updated, v2: s.moved, v3: s.missing}), status.state === "succeeded" ? "ok" : "error");
     } catch (e) { toast(e.message, "error"); }
-    await renderLibraries(body);
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = t("扫描更新");
+    }
   }));
 
   // 授权矩阵
@@ -302,9 +317,14 @@ async function renderImport(body) {
     inputControls.forEach((input) => { input.disabled = true; });
     execBtn.textContent = t("执行中…");
     try {
-      const retry = ["partial", "cancelled", "interrupted"].includes(selectedPlan.state);
-      const r = await api(`/import/plans/${selectedPlan.plan_id}/execute`, { method: "POST", body: { confirm: true, retry } });
-      selectedPlan.state = r.state;
+      const retry = ["partial", "cancelled", "interrupted", "failed"].includes(selectedPlan.state);
+      const queued = await api(`/import/plans/${selectedPlan.plan_id}/jobs`, { method: "POST", body: { confirm: true, request_key: "import:" + selectedPlan.plan_id } });
+      if (retry) await api(`/jobs/${queued.id}/retry`, {method: "POST"});
+      const status = await watchJob(queued.id, out);
+      if (!status) return;
+      selectedPlan.state = status.state;
+      const r = status.result;
+      if (!r) return;
       toast(t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", {v0: r.done.hardlink, v1: r.done.copy, v2: r.done.move, v3: r.done.skip, v4: r.done.error}), r.state === "succeeded" ? "ok" : "error");
       if (plan === selectedPlan && out.isConnected) renderDone(r, out);
     } catch (e) {
@@ -313,7 +333,7 @@ async function renderImport(body) {
       executing = false;
       inputControls.forEach((input) => { input.disabled = false; });
       execBtn.disabled = !plan;
-      execBtn.textContent = ["partial", "cancelled", "interrupted"].includes(plan?.state) ? t("重试未完成项") : t("执行");
+      execBtn.textContent = ["partial", "cancelled", "interrupted", "failed"].includes(plan?.state) ? t("重试未完成项") : t("执行");
     }
   });
 }

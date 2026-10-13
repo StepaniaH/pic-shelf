@@ -122,6 +122,11 @@ def test_import_executes_saved_preview_and_requires_new_preview_after_option_cha
     expect(page.locator("#imp-out")).to_contain_text("Scanned: added 1 image(s).")
     assert (web_server.import_target / "first.png").read_bytes() == (web_server.import_source / "first.png").read_bytes()
     assert not (web_server.import_target / "later.png").exists()
+    page.locator('[data-tab="jobs"]').click()
+    row = page.locator("tr[data-job]").filter(has_text="Import")
+    expect(row).to_contain_text("Succeeded")
+    row.locator("[data-view]").click()
+    expect(page.locator(".job-progress")).to_contain_text("Processed 1/1")
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

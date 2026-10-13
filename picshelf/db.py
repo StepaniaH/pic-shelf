@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -241,7 +241,44 @@ CREATE INDEX idx_import_plans_owner ON import_plans(created_by, created_at);
 CREATE INDEX idx_import_plan_dest ON import_plan_items(destination, state);
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
+_SCHEMA_V3 = """
+CREATE TABLE jobs (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  library_id INTEGER NOT NULL REFERENCES libraries(id),
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  local_admin INTEGER NOT NULL DEFAULT 0,
+  request_key TEXT NOT NULL,
+  params TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'queued',
+  phase TEXT NOT NULL DEFAULT 'queued',
+  total INTEGER,
+  completed INTEGER NOT NULL DEFAULT 0,
+  succeeded INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  attempt INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  result TEXT,
+  error TEXT,
+  UNIQUE(created_by, request_key)
+);
+CREATE TABLE job_items (
+  job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'pending',
+  error_code TEXT,
+  detail TEXT,
+  PRIMARY KEY(job_id, item_key)
+);
+CREATE INDEX idx_jobs_queue ON jobs(state, created_at);
+CREATE INDEX idx_jobs_owner ON jobs(created_by, created_at);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
 
 
 def utcnow() -> str:
@@ -314,6 +351,8 @@ def validate_schema(conn: sqlite3.Connection) -> int:
                     "play_sessions", "play_items", "scans"}
         if current >= 2:
             required |= {"import_plans", "import_plan_items"}
+        if current >= 3:
+            required |= {"jobs", "job_items"}
         if not required <= tables:
             raise _invalid_schema()
     return current

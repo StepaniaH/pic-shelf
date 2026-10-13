@@ -21,6 +21,7 @@ import click
 from . import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, play, search
 from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
+from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
 from .i18n import set_lang, t
 
@@ -275,28 +276,55 @@ def library_list(cfg: Config):
 @main.command()
 @click.argument("library_name")
 @click.option("--full", is_flag=True, help="强制重算所有哈希与缩略图")
+@click.option("--background", is_flag=True, help="只排队，交由 Web 服务或 picshelf worker 执行")
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
-def scan(cfg: Config, library_name: str, full: bool):
+def scan(cfg: Config, library_name: str, full: bool, background: bool, as_json: bool):
     """扫描/更新一个库（增量）。"""
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
         raise click.ClickException(t("找不到库：{library_name}", library_name=library_name))
-    last = {"n": 0}
-
-    def progress(stats: dict):
-        n = stats.get("processed", 0)
-        if n and n - last["n"] >= 100:
-            last["n"] = n
-            click.echo(t("  ... 已处理 {n} 个文件", n=n), err=True)
-
-    click.echo(t("扫描库 #{v0} {v1} → {v2}", v0=lib['id'], v1=lib['name'], v2=lib['root_path']))
-    stats = indexer.scan_library(conn, cfg, lib["id"], full=full, progress=progress)
+    from . import jobs
+    administrator = conn.execute("SELECT id FROM users WHERE is_admin=1 AND disabled=0 ORDER BY id LIMIT 1").fetchone()
+    if administrator is None and not background:
+        # Before accounts are initialized, the original local scan command is
+        # still useful. Persistent user-owned tasks require an active account.
+        stats = indexer.scan_library(conn, cfg, lib["id"], full=full)
+        if as_json:
+            click.echo(json.dumps(stats, ensure_ascii=False))
+        else:
+            click.echo(t("完成：新增 {v0}，更新 {v1}，移动 {v2}，未变 {v3}，标记缺失 {v4}，错误 {v5}",
+                         v0=stats['added'], v1=stats['updated'], v2=stats['moved'], v3=stats['unchanged'],
+                         v4=stats['missing'], v5=len(stats['errors'])))
+        if stats["errors"]:
+            raise click.exceptions.Exit(1)
+        return
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    if not background:
+        with library_write_lock(cfg, Path(lib["root_path"])):
+            pass  # Preserve the synchronous command's immediate busy error.
+    queued = jobs.submit(conn, access, "scan", lib["id"], full=full)
+    if background:
+        click.echo(json.dumps(queued, ensure_ascii=False))
+        return
+    if not as_json:
+        click.echo(t("扫描库 #{v0} {v1} → {v2}", v0=lib['id'], v1=lib['name'], v2=lib['root_path']), err=True)
+        click.echo(t("任务 ID：{job_id}", job_id=queued["id"]), err=True)
+    status = jobs.wait(cfg, access, queued["id"])
+    stats = status["result"]
+    if as_json or stats is None:
+        click.echo(json.dumps(status, ensure_ascii=False))
+        if status["state"] != "succeeded":
+            raise click.exceptions.Exit(1)
+        return
     click.echo(
         t("完成：新增 {v0}，更新 {v1}，移动 {v2}，未变 {v3}，标记缺失 {v4}，错误 {v5}", v0=stats['added'], v1=stats['updated'], v2=stats['moved'], v3=stats['unchanged'], v4=stats['missing'], v5=len(stats['errors']))
     )
     for err in stats["errors"][:10]:
         click.echo(f"  ! {err}", err=True)
+    if status["state"] != "succeeded":
+        raise click.exceptions.Exit(1)
 
 
 # ---------------------------------------------------------------- 浏览
@@ -803,7 +831,7 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
     if cfg.db_path.exists() and not force:
         raise click.ClickException(t("数据目录已有数据库。如确认覆盖请加 --force（现有库会先自动备份）"))
     # 先验证快照，再由 SQLite 自己恢复；直接覆盖主文件会混入旧 WAL。
-    with tempfile.TemporaryDirectory(dir=cfg.data_dir) as tmp:
+    with operation_lock(cfg, "catalog"), tempfile.TemporaryDirectory(dir=cfg.data_dir) as tmp:
         snap = Path(tmp) / "restore.db"
         snap.write_bytes(db_bytes)
         source = sqlite3.connect(str(snap))
@@ -940,8 +968,9 @@ def import_status(cfg: Config, plan_id: str, offset: int, limit: int):
 @click.option("--yes", is_flag=True, help="跳过执行确认")
 @click.option("--retry", is_flag=True, help="继续取消的计划或重试失败项目，成功项不会重复执行")
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
+@click.option("--background", is_flag=True, help="只排队，交由 Web 服务或 picshelf worker 执行")
 @click.pass_obj
-def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: bool):
+def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: bool, background: bool):
     """执行已查看的导入计划；不会重新扫描源目录生成另一份计划。"""
     from . import import_plans
     conn = _conn(cfg)
@@ -953,7 +982,20 @@ def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: b
                 raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
             if not click.confirm(t("确认执行计划 {plan_id}（模式：{mode}）？", plan_id=plan_id, mode=plan["mode"])):
                 raise click.ClickException(t("已取消"))
-        result = import_plans.execute_plan(conn, cfg, access, plan_id, retry=retry)
+        from . import jobs
+        queued = jobs.submit(conn, access, "import", plan["library"]["id"],
+                             plan_id=plan_id, request_key="import:" + plan_id)
+        if retry:
+            queued = jobs.retry(conn, access, queued["id"])
+        if background:
+            click.echo(json.dumps(queued, ensure_ascii=False))
+            return
+        status = jobs.wait(cfg, access, queued["id"])
+        result = status["result"]
+        if result is None:
+            click.echo(json.dumps(status, ensure_ascii=False))
+            raise click.exceptions.Exit(1)
+        result["job_id"] = status["id"]
     except ServiceError as exc:
         if not as_json:
             raise
@@ -973,6 +1015,67 @@ def import_cancel(cfg: Config, plan_id: str):
     conn = _conn(cfg)
     access = AccessContext(_acting_user(conn)["id"], local_admin=True)
     click.echo(json.dumps(import_plans.cancel_plan(conn, access, plan_id), ensure_ascii=False, indent=2))
+
+
+@main.command("worker")
+@click.option("--once", is_flag=True, help="最多执行一个排队任务后退出")
+@click.pass_obj
+def worker_command(cfg: Config, once: bool):
+    """运行本地后台任务执行器；按 Ctrl+C 安全停止。"""
+    from .worker import work
+    raise click.exceptions.Exit(work(cfg, once=once))
+
+
+@main.group("job")
+def job_group():
+    """查看、取消与重试后台任务。"""
+
+
+@job_group.command("list")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.pass_obj
+def job_list(cfg: Config, offset: int):
+    from . import jobs
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(jobs.list_jobs(conn, access, offset=offset), ensure_ascii=False, indent=2))
+
+
+@job_group.command("status")
+@click.argument("job_id")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--limit", default=100, type=click.IntRange(1, 1000))
+@click.pass_obj
+def job_status(cfg: Config, job_id: str, offset: int, limit: int):
+    from . import jobs
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(jobs.get_job(conn, access, job_id, offset=offset, limit=limit), ensure_ascii=False, indent=2))
+
+
+@job_group.command("cancel")
+@click.argument("job_id")
+@click.pass_obj
+def job_cancel(cfg: Config, job_id: str):
+    from . import jobs
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(jobs.cancel(conn, access, job_id), ensure_ascii=False, indent=2))
+
+
+@job_group.command("retry")
+@click.argument("job_id")
+@click.option("--background", is_flag=True, help="只排队，交由 Web 服务或 picshelf worker 执行")
+@click.pass_obj
+def job_retry(cfg: Config, job_id: str, background: bool):
+    from . import jobs
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    queued = jobs.retry(conn, access, job_id)
+    result = queued if background else jobs.wait(cfg, access, job_id)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not background and result["state"] != "succeeded":
+        raise click.exceptions.Exit(1)
 
 
 # ---------------------------------------------------------------- 用户 / 组 / 统计

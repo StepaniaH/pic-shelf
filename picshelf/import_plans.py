@@ -61,11 +61,13 @@ def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int
         conn.execute("INSERT INTO import_plans(id,library_id,created_by,created_at,expires_at,snapshot) "
                      "VALUES(?,?,?,?,?,?)", (plan_id, library_id, access.user_id, now.isoformat(),
                                              (now + timedelta(hours=24)).isoformat(), json.dumps(snapshot)))
-        conn.executemany("INSERT INTO import_plan_items(plan_id,position,destination,state,source_identity) "
-                         "VALUES(?,?,?,?,?)", [
+        conn.executemany("INSERT INTO import_plan_items(plan_id,position,destination,state,source_identity,error_code,detail) "
+                         "VALUES(?,?,?,?,?,?,?)", [
             (plan_id, n, item["dst"], "skipped" if item["action"] == "skip" else
              "failed" if item["action"] == "error" else "pending",
-             json.dumps(identities[n]) if identities[n] else None)
+             json.dumps(identities[n]) if identities[n] else None,
+             "preview_error" if item["action"] == "error" else None,
+             item.get("reason") if item["action"] == "error" else None)
             for n, item in enumerate(snapshot["items"])])
     return get_plan(conn, access, plan_id)
 
@@ -248,7 +250,8 @@ def _result(conn, plan_id, snapshot, scan=None):
     return {"plan_id": plan_id, "planned": snapshot["stats"], "done": done, "scan": scan}
 
 
-def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retry=False) -> dict:
+def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retry=False,
+                 check=None, progress=None) -> dict:
     row = _authorized_plan(conn, access, plan_id)
     snapshot = json.loads(row["snapshot"])
     if row["state"] == "succeeded" or (row["state"] == "partial" and not retry):
@@ -278,6 +281,8 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
         conn.commit()
         try:
             for position, item in enumerate(snapshot["items"]):
+                if check:
+                    check()
                 current = _authorized_plan(conn, access, plan_id)
                 if current["cancel_requested"]:
                     break
@@ -291,11 +296,13 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
                     error = exc if isinstance(exc, ServiceError) else _failure(
                         "import_io_error", t("无法完成文件操作，请检查文件和目录权限或可用空间"), retryable=True)
                     _record_item(conn, plan_id, position, "failed" if error.retryable else "conflict", error=error)
+                if progress:
+                    progress()
             result = _result(conn, plan_id, snapshot)
             # Recheck authority before publishing imported files into the catalog.
             current = _authorized_plan(conn, access, plan_id)
             if sum(result["done"][key] for key in importer.MODES):
-                result["scan"] = indexer.scan_library(conn, cfg, row["library_id"])
+                result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check)
             scan_errors = len(result["scan"]["errors"]) if result["scan"] else 0
             result["scan_error_count"] = scan_errors
             result["resumed_after_expiry"] = expired
