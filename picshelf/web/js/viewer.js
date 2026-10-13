@@ -169,10 +169,18 @@ export function openViewer(source, index) {
     if (focusKey && isTopDialog(backdrop)) backdrop.querySelector(focusKey)?.focus({preventScroll:true});
   }
 
+  function workHtml(d) {
+    if (!d.work) return "";
+    const labels = {original: "原图版本", compressed: "压缩版", crop: "裁剪版", resize: "尺寸版本", revision: "修订版", other: "其他版本"};
+    return `<section><h3>${t("作品文件")} · ${escapeHtml(d.work.name)}</h3><div class="add-row">${d.work.images.map(image =>
+      `<button class="btn small" data-work-image="${image.id}" ${image.missing || image.id === d.id ? "disabled" : ""}>${escapeHtml(image.filename)} · ${t(labels[image.role])}${image.id === d.work.preferred_image_id ? ` · ${t("首选")}` : ""}</button>`
+    ).join("")}</div></section>`;
+  }
+
   function panelHtml(item) {
     if (!detail) return t("<p class=\"muted\">加载中…</p>");
     const d = detail;
-    return metadataHtml(d) + t("\n      <section>\n        <h3>评分 <span class=\"muted\">（平均 {v0} · {v1} 人）</span></h3>\n        {v2}\n      </section>\n      <section>\n        <h3>标签</h3>\n        <div>{v3}\n        </div>\n        {v4}\n      </section>\n      <section>\n        <h3>艺术家</h3>\n        <div>{v5}\n        </div>\n        {v6}\n      </section>\n      <section>\n        <h3>专辑</h3>\n        <div>{v7}</div>\n        {v8}\n      </section>\n      <section>\n        <h3>评论（{v9}）</h3>\n        <div id=\"comment-list\">{v10}</div>\n        {v11}\n      </section>\n      <section>\n        <h3>笔记（{v12}）</h3>\n        {v13}\n        {v14}\n      </section>\n      <section>\n        <h3>信息</h3>\n        <div class=\"kv\">\n          <div>文件名：<b>{v15}</b></div>\n          <div>尺寸：<b>{v16}×{v17}</b> · 大小：<b>{v18} KB</b> · 格式：<b>{v19}</b></div>\n          <div>库：<b>{v20}</b></div>\n          <div>路径：<b>{v21}</b></div>\n          <div>首次入库时间：<b>{v22}</b></div>\n          <div>指纹：<b title=\"{v23}\">{v24}…</b> / pHash <b>{v25}</b></div>\n        </div>\n      </section>", {v0: d.avg_rating ?? "—", v1: d.rating_count, v2: can("rate") ? `<div class="rate-row">${Array.from({ length: 11 }, (_, i) => i).map((v) =>
+    return metadataHtml(d) + workHtml(d) + t("\n      <section>\n        <h3>评分 <span class=\"muted\">（平均 {v0} · {v1} 人）</span></h3>\n        {v2}\n      </section>\n      <section>\n        <h3>标签</h3>\n        <div>{v3}\n        </div>\n        {v4}\n      </section>\n      <section>\n        <h3>艺术家</h3>\n        <div>{v5}\n        </div>\n        {v6}\n      </section>\n      <section>\n        <h3>专辑</h3>\n        <div>{v7}</div>\n        {v8}\n      </section>\n      <section>\n        <h3>评论（{v9}）</h3>\n        <div id=\"comment-list\">{v10}</div>\n        {v11}\n      </section>\n      <section>\n        <h3>笔记（{v12}）</h3>\n        {v13}\n        {v14}\n      </section>\n      <section>\n        <h3>信息</h3>\n        <div class=\"kv\">\n          <div>文件名：<b>{v15}</b></div>\n          <div>尺寸：<b>{v16}×{v17}</b> · 大小：<b>{v18} KB</b> · 格式：<b>{v19}</b></div>\n          <div>库：<b>{v20}</b></div>\n          <div>路径：<b>{v21}</b></div>\n          <div>首次入库时间：<b>{v22}</b></div>\n          <div>指纹：<b title=\"{v23}\">{v24}…</b> / pHash <b>{v25}</b></div>\n        </div>\n      </section>", {v0: d.avg_rating ?? "—", v1: d.rating_count, v2: can("rate") ? `<div class="rate-row">${Array.from({ length: 11 }, (_, i) => i).map((v) =>
           `<button class="rate-btn ${d.my_rating === v ? "on" : ""}" data-rate="${v}" title="${t("{n} 分", {n: v})}">${v}</button>`).join("")}
           <button class="rate-btn" data-rate="clear" style="width:auto;padding:0 10px" title="${t("清除评分")}">${t("清除")}</button></div>`
         : `<p class="muted">${t("我的评分：{v0}", {v0: d.my_rating >= 0 ? d.my_rating : t("未评")})}</p>`, v3: (d.tags || []).map((tag) => `
@@ -222,6 +230,14 @@ export function openViewer(source, index) {
     q(".nav-btn.prev").addEventListener("click", () => show(current - 1));
     q(".nav-btn.next").addEventListener("click", () => show(current + 1));
     q("#v-slideshow").addEventListener("click", () => openSlideshow(source, current));
+    for (const button of backdrop.querySelectorAll("[data-work-image]")) button.addEventListener("click", () => {
+      if (saving) { setStatus(t("正在保存，请稍候。")); return; }
+      const id = Number(button.dataset.workImage);
+      const known = source.items.findIndex(image => image.id === id);
+      if (known !== -1) { show(known); return; }
+      const related = detail.work.images.filter(image => !image.missing);
+      openViewer({title: detail.work.name, items: related, loadedAll: true, onChange: () => refresh(item.id)}, related.findIndex(image => image.id === id));
+    });
     q("#v-zoom").addEventListener("click", () => {
       zoom = SIZE_CYCLE[(SIZE_CYCLE.indexOf(zoom) + 1) % SIZE_CYCLE.length];
       savePrefs();

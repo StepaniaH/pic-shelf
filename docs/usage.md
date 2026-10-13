@@ -10,6 +10,8 @@ Use [portable metadata](metadata-format.md) to move personal organization and sh
 
 Use [library paths and naming](paths.md) to rebind verified original-file copies, name new imports, or explicitly reorganize a managed library.
 
+Use [works and file versions](works.md) to manually link original, compressed, cropped or revised files while retaining each image's organization.
+
 ## Web browsing
 
 Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags

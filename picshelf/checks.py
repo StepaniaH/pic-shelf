@@ -89,6 +89,9 @@ def check(cfg, *, full=False):
                                     'WHERE a.cover_image_id IS NOT NULL AND (i.id IS NULL OR i.missing=1 OR '
                                     'NOT EXISTS(SELECT 1 FROM album_images ai WHERE ai.album_id=a.id AND ai.image_id=a.cover_image_id))'):
                 issue('album_cover_invalid', album_id=row[0])
+            if schema >= 13:
+                for row in conn.execute('SELECT id FROM works w WHERE preferred_image_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM work_images wi WHERE wi.work_id=w.id AND wi.image_id=w.preferred_image_id)'):
+                    issue('work_preference_invalid', work_id=row[0])
             for cache in cfg.media_dir.rglob('*.webp'):
                 try:
                     if cache.is_symlink():

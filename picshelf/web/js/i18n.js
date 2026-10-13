@@ -2,6 +2,19 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "请先查看作品关联和待匹配引用，再明确确认解除": "Inspect work membership and pending references before explicitly confirming unlinking",
+    "作品关联无法完成": "The work relationship could not be changed",
+    "请检查图片权限与关系类型；先解除错误关联，再重新关联；首选图片必须属于该作品": "Check image permissions and relationship roles; unlink an incorrect relationship before relinking; the preferred image must belong to the work",
+    "手工关联同一作品的文件版本，保留各图片元数据。": "Manually link file versions of a work while preserving each image’s metadata.",
+    "JSON 数组，每项包含 image_id 和 role": "JSON array with image_id and role in each item",
+    "作品文件": "Work files",
+    "原图版本": "Original version",
+    "压缩版": "Compressed version",
+    "裁剪版": "Crop",
+    "尺寸版本": "Resized version",
+    "修订版": "Revision",
+    "其他版本": "Other version",
+    "首选": "Preferred",
     "命名模板或字段无效": "Invalid naming template or fields",
     "请使用 artists、tags、source、date、stem、ext；不允许绝对路径、父目录或格式转换": "Use artists, tags, source, date, stem and ext; absolute paths, parent directories and format conversions are not allowed",
     "库路径迁移未执行": "The library root was not rebound",

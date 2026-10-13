@@ -17,7 +17,7 @@ from .coordination import library_write_lock
 from .errors import ServiceError
 from .i18n import t
 
-FORMAT = 1
+FORMAT = 2
 MAX_BYTES = 20 * 1024 * 1024
 MAX_RECORDS = 50000
 # This is an export allowlist, not a reflection of the database schema.
@@ -42,14 +42,17 @@ COLUMNS = {
     'tag_claims': ('id', 'image_id', 'tag_id', 'origin', 'confirmed', 'source_ref', 'created_by', 'created_at', 'confirmed_by', 'confirmed_at', 'retired_at'),
     'saved_queries': ('id', 'owner_id', 'name', 'kind', 'query', 'sort', 'display', 'created_at', 'updated_at'),
     'play_rules': ('id', 'owner_id', 'name', 'spec', 'created_at', 'updated_at'),
+    'works': ('id', 'name', 'preferred_image_id', 'created_by', 'created_at'),
+    'work_images': ('work_id', 'image_id', 'role', 'created_at'),
 }
 REFERENCES = {'library_id': 'libraries', 'image_id': 'images', 'cover_image_id': 'images',
               'tag_id': 'tags', 'artist_id': 'artists', 'album_id': 'albums',
               'user_id': 'users', 'owner_id': 'users', 'added_by': 'users',
-              'created_by': 'users', 'confirmed_by': 'users'}
+              'created_by': 'users', 'confirmed_by': 'users', 'work_id': 'works', 'preferred_image_id': 'images'}
 KEYS = {'image_tags': ('image_id', 'tag_id'), 'image_artists': ('image_id', 'artist_id'),
         'album_images': ('album_id', 'image_id'), 'ratings': ('image_id', 'user_id'),
-        'favorites': ('image_id', 'user_id'), 'image_workflow': ('image_id', 'user_id')}
+        'favorites': ('image_id', 'user_id'), 'image_workflow': ('image_id', 'user_id'),
+        'work_images': ('work_id', 'image_id')}
 TIMES = {'created_at', 'updated_at', 'added_at', 'confirmed_at', 'retired_at', 'collected_at', 'created_time'}
 
 
@@ -119,6 +122,13 @@ def export(conn, access, library_ids=None):
             raise _error('library_not_found', 404)
         rows['images'] = [row for row in rows['images'] if row['library_id'] in selected]
         image_ids = {row['id'] for row in rows['images']}
+        work_ids = {row['work_id'] for row in rows['work_images'] if row['image_id'] in image_ids}
+        visible_ids = {row[0] for row in conn.execute('SELECT id FROM images WHERE library_id IN (' + ','.join('?' for _ in allowed) + ')', allowed)} if allowed is not None else None
+        rows['works'] = [row for row in rows['works'] if row['id'] in work_ids]
+        rows['work_images'] = [row for row in rows['work_images'] if row['work_id'] in work_ids and (visible_ids is None or row['image_id'] in visible_ids)]
+        for work in rows['works']:
+            if visible_ids is not None and work['preferred_image_id'] not in visible_ids:
+                work['preferred_image_id'] = None
         for table in ('ratings', 'favorites', 'image_workflow', 'comments', 'notes'):
             rows[table] = [row for row in rows[table] if row['image_id'] in image_ids and row['user_id'] == access.user_id]
         for table in ('image_tags', 'image_artists', 'image_sources', 'tag_claims'):
@@ -167,6 +177,18 @@ def export(conn, access, library_ids=None):
                 if 'id' in row:
                     row['id'] = _uid(conn, table, row['id'])
             records.sort(key=canonical)
+        for pending in conn.execute('SELECT * FROM pending_work_images ORDER BY work_id,image_uid'):
+            if pending['work_id'] not in work_ids:
+                continue
+            local_image = _resolve(conn, 'images', pending['image_uid'])
+            if local_image is not None and visible_ids is not None and local_image not in visible_ids:
+                continue
+            work_uid = _uid(conn, 'works', pending['work_id'])
+            rows['work_images'].append({'work_id': work_uid, 'image_id': pending['image_uid'],
+                                        'role': pending['role'], 'created_at': pending['created_at']})
+            if pending['preferred']:
+                next(work for work in rows['works'] if work['id'] == work_uid)['preferred_image_id'] = pending['image_uid']
+        rows['work_images'].sort(key=canonical)
         result = {'type': 'picshelf.metadata', 'format': FORMAT, 'exported_at': db.utcnow(),
                   'owner': _uid(conn, 'users', access.user_id), 'records': rows}
         if sum(map(len, rows.values())) > MAX_RECORDS or len(canonical(result).encode()) > MAX_BYTES:
@@ -175,7 +197,7 @@ def export(conn, access, library_ids=None):
 
 
 def validate(value):
-    if not isinstance(value, dict) or value.get('type') != 'picshelf.metadata' or type(value.get('format')) is not int or value['format'] != FORMAT:
+    if not isinstance(value, dict) or value.get('type') != 'picshelf.metadata' or type(value.get('format')) is not int or value['format'] not in (1, FORMAT):
         raise _error('manifest_version_unsupported')
     if not {'type', 'format', 'exported_at', 'owner', 'records', 'checksum'} <= value.keys():
         raise _error()
@@ -191,8 +213,10 @@ def validate(value):
     if value.get('checksum') != checksum({k: v for k, v in value.items() if k != 'checksum'}):
         raise _error('manifest_checksum_mismatch')
     records = value.get('records')
-    if not isinstance(records, dict) or set(COLUMNS) - set(records):
+    required = set(COLUMNS) - ({'works', 'work_images'} if value['format'] == 1 else set())
+    if not isinstance(records, dict) or required - set(records):
         raise _error()
+    records = {'works': [], 'work_images': [], **records}
     if any(not isinstance(records[table], list) for table in COLUMNS) or sum(len(records[t]) for t in COLUMNS) > MAX_RECORDS:
         raise _error('manifest_too_large', 413)
     unknown = [key for key in value if key not in {'type', 'format', 'exported_at', 'owner', 'records', 'checksum'}]
@@ -208,7 +232,7 @@ def validate(value):
             record = {key: row[key] for key in fields}
             for field, item in record.items():
                 if field in REFERENCES or field in ('id', 'entity_id'):
-                    nullable = field in ('added_by', 'created_by', 'confirmed_by', 'cover_image_id') or (table == 'albums' and field == 'library_id')
+                    nullable = field in ('added_by', 'created_by', 'confirmed_by', 'cover_image_id', 'preferred_image_id') or (table == 'albums' and field == 'library_id')
                     if item is None and not nullable:
                         raise _error()
                     if item is not None and (not isinstance(item, str) or not re.fullmatch('[0-9a-f]{32}', item)):
@@ -241,6 +265,10 @@ def validate(value):
                 names.display(record['name'])
             if table == 'albums' and record['kind'] not in ('folder', 'manual'):
                 raise _error()
+            if table == 'work_images':
+                from .works import ROLES
+                if record['role'] not in ROLES:
+                    raise _error()
             if table in ('comments', 'notes') and (not isinstance(record['body'], str) or not record['body'].strip()):
                 raise _error()
             clean[table].append(record)
@@ -255,6 +283,7 @@ def _fingerprint(conn):
     rows['identities'] = [tuple(row) for row in conn.execute('SELECT * FROM portable_import_ids ORDER BY uid')]
     rows['local_identities'] = [tuple(row) for row in conn.execute('SELECT * FROM portable_ids ORDER BY kind,local_id')]
     rows['revision'] = conn.execute("SELECT value FROM meta WHERE key='catalog_revision'").fetchone()[0]
+    rows['pending_works'] = [tuple(row) for row in conn.execute('SELECT * FROM pending_work_images ORDER BY work_id,image_uid')]
     return checksum(rows)
 
 
@@ -353,6 +382,7 @@ def _verify_file(conn, image, record):
 def _apply(conn, access, records, mappings):
     mapping = _mappings(conn, access, records, mappings)
     conflicts, targets, counts = [], [], {'created': 0, 'unchanged': 0, 'matched_images': 0}
+    created_works, pending_preferences = set(), {}
     for table, rows in records.items():
         for index, source in enumerate(rows):
             uid = source.get('id')
@@ -364,6 +394,29 @@ def _apply(conn, access, records, mappings):
                         _remember(conn, table, uid, mapping[table, uid])
                     continue
                 record = dict(source)
+                if table == 'works' and record['preferred_image_id'] is not None and ('images', record['preferred_image_id']) not in mapping:
+                    pending_preferences[uid] = record['preferred_image_id']
+                    candidate = _resolve(conn, 'images', record['preferred_image_id'])
+                    if candidate is not None:
+                        access.require_image(conn, candidate, 'edit', include_missing=True)
+                        mapping['images', record['preferred_image_id']] = candidate
+                    else:
+                        record['preferred_image_id'] = None
+                if table == 'work_images':
+                    from . import works
+                    work_id = mapping['works', source['work_id']]
+                    if work_id not in created_works:
+                        works._edit(conn, access, work_id)
+                    if ('images', source['image_id']) not in mapping:
+                        preferred = int(pending_preferences.get(source['work_id']) == source['image_id'])
+                        existing = conn.execute('SELECT role,preferred FROM pending_work_images WHERE work_id=? AND image_uid=?', (work_id, source['image_id'])).fetchone()
+                        if existing and tuple(existing) != (source['role'], preferred):
+                            raise _error('manifest_metadata_conflict', 409)
+                        conn.execute('INSERT OR IGNORE INTO pending_work_images VALUES(?,?,?,?,?,?)',
+                                     (work_id, source['image_id'], source['role'], preferred, access.user_id, source['created_at']))
+                        counts['unchanged' if existing else 'created'] += 1
+                        continue
+                    access.require_image(conn, mapping['images', source['image_id']], 'edit', include_missing=True)
                 refs = dict(REFERENCES)
                 if table.endswith('_aliases'):
                     refs['entity_id'] = 'tags' if table == 'tag_aliases' else 'artists'
@@ -371,6 +424,9 @@ def _apply(conn, access, records, mappings):
                     if record.get(field) is not None:
                         record[field] = mapping[target, record[field]]
                 target_id = mapping.get((table, uid)) or (_resolve(conn, table, uid) if uid else None)
+                if table == 'works' and target_id is not None:
+                    from .works import _edit
+                    _edit(conn, access, target_id)
                 if table == 'images':
                     if target_id is None:
                         row = conn.execute('SELECT id FROM images WHERE library_id=? AND rel_path=?',
@@ -440,6 +496,11 @@ def _apply(conn, access, records, mappings):
                         # Timestamps do not identify associations; later values are never overwritten.
                         ignored = TIMES | {'id'}
                         for key, value in record.items():
+                            if table == 'works' and key == 'preferred_image_id' and existing[key] is None and value is not None:
+                                pending = conn.execute('SELECT 1 FROM pending_work_images WHERE work_id=? AND image_uid=? AND preferred=1', (target_id, source[key])).fetchone()
+                                if pending:
+                                    conn.execute('UPDATE works SET preferred_image_id=? WHERE id=?', (value, target_id))
+                                    continue
                             if key not in ignored and (json.loads(existing[key]) if key in ('spec', 'display') else existing[key]) != (json.loads(value) if key in ('spec', 'display') else value):
                                 raise _error('manifest_metadata_conflict', 409)
                         counts['unchanged'] += 1
@@ -447,6 +508,8 @@ def _apply(conn, access, records, mappings):
                         fields = [field for field in COLUMNS[table] if field != 'id']
                         result = conn.execute(f"INSERT INTO {table}({','.join(fields)}) VALUES({','.join('?' for _ in fields)})", [record[field] for field in fields])
                         target_id = result.lastrowid if uid else None
+                        if table == 'works':
+                            created_works.add(target_id)
                         counts['created'] += 1
                 if uid:
                     _remember(conn, table, uid, target_id)
@@ -457,7 +520,16 @@ def _apply(conn, access, records, mappings):
                                   'code': exc.code if isinstance(exc, ServiceError) else 'manifest_record_conflict'})
             finally:
                 conn.execute('RELEASE manifest_row')
-    return {'counts': counts, 'conflicts': conflicts, 'images': targets}
+    from .works import resolve_pending
+    resolved = resolve_pending(conn, access) if not conflicts else 0
+    for work in records['works']:
+        local_id = mapping.get(('works', work['id']))
+        if local_id is not None and conn.execute('SELECT 1 FROM works w WHERE w.id=? AND w.preferred_image_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM work_images wi WHERE wi.work_id=w.id AND wi.image_id=w.preferred_image_id)', (local_id,)).fetchone():
+            conflicts.append({'table': 'works', 'id': work['id'], 'code': 'manifest_work_preference_invalid'})
+    pending = conn.execute('SELECT COUNT(*) FROM pending_work_images WHERE work_id IN (' + ','.join('?' for _ in records['works']) + ')',
+                           [mapping.get(('works', work['id'])) for work in records['works']]).fetchone()[0]
+    return {'counts': counts, 'conflicts': conflicts, 'images': targets,
+            'pending_relations': pending, 'resolved_relations': resolved}
 
 
 def preview(conn, access, manifest, mappings):

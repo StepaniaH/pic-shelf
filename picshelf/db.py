@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -488,7 +488,45 @@ ALTER TABLE import_plan_items ADD COLUMN image_id INTEGER REFERENCES images(id);
 ALTER TABLE import_plan_items ADD COLUMN catalog_published INTEGER NOT NULL DEFAULT 0;
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12}
+_SCHEMA_V13 = """
+CREATE TABLE works (
+ id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+ preferred_image_id INTEGER REFERENCES images(id) ON DELETE SET NULL,
+ created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL
+);
+CREATE TABLE work_images (
+ work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+ image_id INTEGER NOT NULL UNIQUE REFERENCES images(id) ON DELETE CASCADE,
+ role TEXT NOT NULL CHECK(role IN ('original','compressed','crop','resize','revision','other')),
+ created_at TEXT NOT NULL, PRIMARY KEY(work_id,image_id)
+);
+CREATE TABLE pending_work_images (
+ work_id INTEGER NOT NULL REFERENCES works(id) ON DELETE CASCADE,
+ image_uid TEXT NOT NULL, role TEXT NOT NULL,
+ preferred INTEGER NOT NULL DEFAULT 0,
+ created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
+ PRIMARY KEY(work_id,image_uid)
+);
+INSERT INTO portable_ids(kind,local_id,uid) SELECT 'works',id,lower(hex(randomblob(16))) FROM works;
+CREATE TRIGGER portable_works_insert AFTER INSERT ON works BEGIN
+ INSERT INTO portable_ids(kind,local_id,uid) VALUES('works',NEW.id,lower(hex(randomblob(16))));
+END;
+CREATE TRIGGER portable_works_delete AFTER DELETE ON works BEGIN
+ DELETE FROM portable_ids WHERE kind='works' AND local_id=OLD.id;
+END;
+CREATE TRIGGER work_unlink_preference AFTER DELETE ON work_images BEGIN
+ UPDATE works SET preferred_image_id=NULL WHERE id=OLD.work_id AND preferred_image_id=OLD.image_id;
+END;
+"""
+for _work_table in ('works', 'work_images', 'pending_work_images'):
+    for _work_action in ('INSERT', 'UPDATE', 'DELETE'):
+        _SCHEMA_V13 += f"""
+CREATE TRIGGER catalog_{_work_table}_{_work_action.lower()} AFTER {_work_action} ON {_work_table} BEGIN
+ UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='catalog_revision';
+END;
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12, 13: _SCHEMA_V13}
 
 
 def utcnow() -> str:
@@ -607,6 +645,8 @@ def validate_schema(conn: sqlite3.Connection) -> int:
             required |= {"portable_ids", "portable_import_ids", "manifest_plans"}
         if current >= 12:
             required |= {"relocation_plans"}
+        if current >= 13:
+            required |= {"works", "work_images", "pending_work_images"}
         if not required <= tables:
             raise _invalid_schema()
     return current

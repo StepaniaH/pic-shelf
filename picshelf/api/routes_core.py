@@ -285,6 +285,8 @@ def image_detail(image_id: Identifier, conn: Db, user: User):
     detail["comments"] = ops.list_comments(conn, image_id)
     detail["notes"] = ops.list_notes(conn, image_id)
     detail["metadata"] = metadata.get(conn, AccessContext(user["id"]), image_id)
+    from .. import works
+    detail['work'] = works.by_image(conn, AccessContext(user['id']), image_id)
     detail["metadata_editable"] = (auth.has_cap(conn, user, "tag_edit") and
                                    auth.library_access(conn, user, detail["library_id"]) in ("edit", "manage"))
     return serialize_image(detail)

@@ -18,7 +18,7 @@ from ..i18n import set_lang as _set_lang
 from ..i18n import t
 from .security import check_browser_request
 from ..worker import WorkerManager
-from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata, routes_batches, routes_queries, routes_manifests, routes_paths
+from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata, routes_batches, routes_queries, routes_manifests, routes_paths, routes_works
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -129,6 +129,7 @@ def create_app(cfg: Config) -> FastAPI:
         routes_queries.router,
         routes_manifests.router,
         routes_paths.router,
+        routes_works.router,
     ):
         api.include_router(router)
     app.include_router(api)

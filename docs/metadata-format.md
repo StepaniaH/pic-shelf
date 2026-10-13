@@ -74,7 +74,11 @@ changed back. Repeating a successful plan or importing the same unchanged
 manifest again does not duplicate comments, sources, aliases or associations.
 Execution never replaces a different rating, note, comment or entity definition.
 
-## Format 1
+## Formats 1 and 2
+
+Exports now use format 2, which adds [work relationships](works.md). Format 1
+remains readable and defaults to empty `works` and `work_images` arrays. The
+small example below intentionally demonstrates the original format 1.
 
 [A small complete example](examples/metadata-v1.json) contains one synthetic
 image, a zero rating and a comment. Its identities and timestamp are fixed for
@@ -94,7 +98,7 @@ Register and scan that directory, then map the example's library and owner IDs
 as described above. Use a disposable instance to try it. A rating record of `0`
 is intentional; an unrated image would have no rating record.
 
-Top-level fields are `type` (`picshelf.metadata`), `format` (integer `1`),
+Top-level fields are `type` (`picshelf.metadata`), `format` (integer `1` or `2`),
 `exported_at`, `owner`, `records` and `checksum`. Stable identities are 32 lowercase
 hexadecimal characters, generated independently of local row numbers and file
 hashes. References in records use those identities, not SQLite IDs.
@@ -132,6 +136,8 @@ rating record. `confirmed` and `deleted` are integer `0`/`1` markers.
 | `tag_claims` | `id`, `image_id`, `tag_id`, `origin`, `confirmed`, `source_ref`, `created_by`, `created_at`, `confirmed_by`, `confirmed_at`, `retired_at` |
 | `saved_queries` | `id`, `owner_id`, `name`, `kind`, `query`, `sort`, `display`, `created_at`, `updated_at` |
 | `play_rules` | `id`, `owner_id`, `name`, `spec`, `created_at`, `updated_at` |
+| `works` (format 2) | `id`, `name`, `preferred_image_id`, `created_by`, `created_at` |
+| `work_images` (format 2) | `work_id`, `image_id`, `role`, `created_at`; out-of-scope stable references may remain pending |
 
 Queries are exported as arrays of `{kind, values, neg}` clauses. A numeric album
 reference becomes `{"album":"STABLE_ALBUM_ID"}` in `values`. Other values remain

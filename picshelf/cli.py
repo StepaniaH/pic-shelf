@@ -173,7 +173,7 @@ class _I18nGroup(click.Group):
 
 def _json_requested(command, args):
     """Inspect Click's parsed options without invoking callbacks or opening data."""
-    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup", "paths"}
+    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup", "paths", "works"}
     json_commands = {"check", "organize", "rebuild", "import-status", "import-execute", "import-cancel"}
     path = []
     machine = False
@@ -1563,6 +1563,88 @@ def manifest_execute(cfg, plan_id, yes, user):
                            next_step=t('请先检查元数据导入预演，再明确确认执行'))
     conn = _conn(cfg)
     click.echo(json.dumps(manifest.execute(conn, cfg, _batch_access(conn, user), plan_id), ensure_ascii=False, indent=2))
+
+
+@main.group('works')
+def works_group():
+    """手工关联同一作品的文件版本，保留各图片元数据。"""
+
+
+def _work_members(value):
+    try:
+        return json.loads(value)
+    except ValueError as exc:
+        raise click.UsageError(t('JSON 格式无效，请检查输入')) from exc
+
+
+@works_group.command('create')
+@click.argument('name')
+@click.option('--members', required=True, help='JSON 数组，每项包含 image_id 和 role')
+@click.option('--preferred', type=click.IntRange(1, 2**63-1), default=None)
+@click.pass_obj
+def work_create(cfg, name, members, preferred):
+    from . import works
+    conn = _conn(cfg)
+    click.echo(json.dumps(works.create(conn, _batch_access(conn, None), name, _work_members(members), preferred), ensure_ascii=False, indent=2))
+
+
+@works_group.command('show')
+@click.argument('work_id', type=click.IntRange(1, 2**63-1))
+@click.option('--user', default=None)
+@click.pass_obj
+def work_show(cfg, work_id, user):
+    from . import works
+    conn = _conn(cfg)
+    click.echo(json.dumps(works.get(conn, AccessContext(_acting_user(conn, user)['id']), work_id), ensure_ascii=False, indent=2))
+
+
+@works_group.command('link')
+@click.argument('work_id', type=click.IntRange(1, 2**63-1))
+@click.option('--members', required=True)
+@click.pass_obj
+def work_link(cfg, work_id, members):
+    from . import works
+    conn = _conn(cfg)
+    click.echo(json.dumps(works.link(conn, _batch_access(conn, None), work_id, _work_members(members)), ensure_ascii=False, indent=2))
+
+
+@works_group.command('pending')
+@click.argument('work_id', type=click.IntRange(1, 2**63-1))
+@click.pass_obj
+def work_pending(cfg, work_id):
+    from . import works
+    conn = _conn(cfg)
+    click.echo(json.dumps(works.pending(conn, _batch_access(conn, None), work_id), ensure_ascii=False, indent=2))
+
+
+@works_group.command('drop-pending')
+@click.argument('work_id', type=click.IntRange(1, 2**63-1))
+@click.argument('image_uid')
+@click.option('--yes', is_flag=True)
+@click.pass_obj
+def work_drop_pending(cfg, work_id, image_uid, yes):
+    if not yes:
+        raise ServiceError('confirmation_required', t('结构化执行需要 --yes；请先检查预演结果'),
+                           next_step=t('请先查看作品关联和待匹配引用，再明确确认解除'))
+    from . import works
+    conn = _conn(cfg)
+    click.echo(json.dumps(works.drop_pending(conn, _batch_access(conn, None), work_id, image_uid), ensure_ascii=False, indent=2))
+
+
+for _name, _operation in (('unlink', 'unlink'), ('prefer', 'prefer')):
+    def _work_action(cfg, work_id, image_id, yes=False, _op=_operation):
+        from . import works
+        if _op == 'unlink' and not yes:
+            raise ServiceError('confirmation_required', t('结构化执行需要 --yes；请先检查预演结果'),
+                               next_step=t('请先查看作品关联和待匹配引用，再明确确认解除'))
+        conn = _conn(cfg)
+        click.echo(json.dumps(getattr(works, _op)(conn, _batch_access(conn, None), work_id, image_id), ensure_ascii=False, indent=2))
+    _work_action = click.pass_obj(_work_action)
+    if _operation == 'unlink':
+        _work_action = click.option('--yes', is_flag=True)(_work_action)
+    _work_action = click.argument('image_id', type=click.IntRange(1, 2**63-1))(_work_action)
+    _work_action = click.argument('work_id', type=click.IntRange(1, 2**63-1))(_work_action)
+    works_group.command(_name)(_work_action)
 
 
 # ---------------------------------------------------------------- 用户 / 组 / 统计
