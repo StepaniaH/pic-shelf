@@ -65,6 +65,14 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "元数据清单无法安全导入": "The metadata manifest cannot be imported safely",
+    "请检查格式版本、校验和、显式映射及预演冲突；修正后重新预演": "Check the format version, checksum, explicit mappings and preview conflicts, then create a new preview",
+    "请先检查元数据导入预演，再明确确认执行": "Inspect the metadata import preview before explicitly confirming execution",
+    "导出可移植元数据，或预演并确认导入。": "Export portable metadata, or preview and confirm an import.",
+    "只导出指定库，可重复；默认全部可见库": "Export these libraries; repeatable; defaults to all visible libraries",
+    "稳定 ID 到本地 ID 的 JSON 映射，必须包含 libraries 和 users": "JSON mapping from stable IDs to local IDs; libraries and users are required",
+    "请先运行 library list 检查库名": "Run library list first to check library names",
+
     "TUI 需要交互终端；管道请使用 ls --json": "TUI requires an interactive terminal; use ls --json in a pipeline",
     "请求参数无效": "Invalid request parameters",
     "请按接口说明检查字段类型和范围后重试": "Check field types and ranges in the API reference before retrying",

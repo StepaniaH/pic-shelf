@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -431,7 +431,53 @@ CREATE TABLE play_requests (
 );
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10}
+_SCHEMA_V11 = """
+CREATE TABLE portable_ids (
+ kind TEXT NOT NULL, local_id INTEGER NOT NULL, uid TEXT NOT NULL UNIQUE,
+ PRIMARY KEY(kind,local_id)
+);
+CREATE TABLE portable_import_ids (
+ uid TEXT PRIMARY KEY, kind TEXT NOT NULL, local_id INTEGER NOT NULL,
+ FOREIGN KEY(kind,local_id) REFERENCES portable_ids(kind,local_id) ON DELETE CASCADE
+);
+CREATE TABLE manifest_plans (
+ id TEXT PRIMARY KEY, created_by INTEGER NOT NULL REFERENCES users(id),
+ created_at TEXT NOT NULL, expires_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'preview',
+ manifest TEXT NOT NULL, mappings TEXT NOT NULL, fingerprint TEXT NOT NULL,
+ preview TEXT NOT NULL, result TEXT
+);
+INSERT INTO meta(key,value) VALUES('catalog_revision','0');
+"""
+for _portable_table in ('users', 'libraries', 'images', 'tags', 'artists', 'albums',
+                        'comments', 'notes', 'image_sources', 'tag_claims',
+                        'tag_aliases', 'artist_aliases', 'saved_queries', 'play_rules'):
+    _SCHEMA_V11 += f"""
+INSERT INTO portable_ids(kind,local_id,uid) SELECT '{_portable_table}',id,lower(hex(randomblob(16))) FROM {_portable_table};
+CREATE TRIGGER portable_{_portable_table}_insert AFTER INSERT ON {_portable_table}
+BEGIN
+ INSERT INTO portable_ids(kind,local_id,uid) VALUES('{_portable_table}',NEW.id,lower(hex(randomblob(16))));
+END;
+CREATE TRIGGER portable_{_portable_table}_delete AFTER DELETE ON {_portable_table}
+BEGIN
+ DELETE FROM portable_ids WHERE kind='{_portable_table}' AND local_id=OLD.id;
+END;
+"""
+for _catalog_table in ('users', 'libraries', 'images', 'tags', 'artists', 'albums',
+                       'comments', 'notes', 'image_sources', 'tag_claims',
+                       'tag_aliases', 'artist_aliases', 'saved_queries', 'play_rules',
+                       'image_tags', 'image_artists', 'album_images', 'ratings',
+                       'favorites', 'image_workflow'):
+    for _catalog_action in ('INSERT', 'UPDATE', 'DELETE'):
+        _catalog_event = ('UPDATE OF username,display_name' if _catalog_table == 'users'
+                          and _catalog_action == 'UPDATE' else _catalog_action)
+        _SCHEMA_V11 += f"""
+CREATE TRIGGER catalog_{_catalog_table}_{_catalog_action.lower()} AFTER {_catalog_event} ON {_catalog_table}
+BEGIN
+ UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='catalog_revision';
+END;
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11}
 
 
 def utcnow() -> str:

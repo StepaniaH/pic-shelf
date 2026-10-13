@@ -1,0 +1,66 @@
+{
+  "type": "picshelf.metadata",
+  "format": 1,
+  "exported_at": "2026-01-01T00:00:00+00:00",
+  "owner": "11111111111111111111111111111111",
+  "records": {
+    "users": [
+      {
+        "id": "11111111111111111111111111111111",
+        "username": "example",
+        "display_name": "Example owner"
+      }
+    ],
+    "libraries": [
+      {
+        "id": "22222222222222222222222222222222",
+        "name": "Example collection",
+        "description": null
+      }
+    ],
+    "images": [
+      {
+        "id": "33333333333333333333333333333333",
+        "library_id": "22222222222222222222222222222222",
+        "rel_path": "sample.png",
+        "sha256": "b1ff9c8ea3a780bad09b346c423d2d0e46815926879b18e841d928376a946640",
+        "size_bytes": 69
+      }
+    ],
+    "tags": [],
+    "artists": [],
+    "albums": [],
+    "tag_aliases": [],
+    "artist_aliases": [],
+    "image_tags": [],
+    "image_artists": [],
+    "album_images": [],
+    "ratings": [
+      {
+        "image_id": "33333333333333333333333333333333",
+        "user_id": "11111111111111111111111111111111",
+        "value": 0,
+        "updated_at": "2026-01-01T00:00:00+00:00"
+      }
+    ],
+    "favorites": [],
+    "image_workflow": [],
+    "comments": [
+      {
+        "id": "44444444444444444444444444444444",
+        "image_id": "33333333333333333333333333333333",
+        "user_id": "11111111111111111111111111111111",
+        "body": "A portable comment.",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "deleted": 0
+      }
+    ],
+    "notes": [],
+    "image_sources": [],
+    "tag_claims": [],
+    "saved_queries": [],
+    "play_rules": []
+  },
+  "checksum": "8867df5bd85231186239024d43d99fa3382b6c574e89b658db1fe5676c980ffc"
+}

@@ -175,7 +175,7 @@ class _I18nGroup(click.Group):
 
 def _json_requested(command, args):
     """Inspect Click's parsed options without invoking callbacks or opening data."""
-    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources"}
+    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest"}
     json_commands = {"organize", "rebuild", "import-status", "import-execute", "import-cancel"}
     path = []
     machine = False
@@ -1543,6 +1543,73 @@ def job_retry(cfg: Config, job_id: str, background: bool):
     click.echo(json.dumps(result, ensure_ascii=False, indent=2))
     if not background and result["state"] != "succeeded":
         raise click.exceptions.Exit(1)
+
+
+@main.group('manifest')
+def manifest_group():
+    """导出可移植元数据，或预演并确认导入。"""
+
+
+@manifest_group.command('export')
+@click.option('--library', 'library_names', multiple=True, help='只导出指定库，可重复；默认全部可见库')
+@click.option('--user', default=None)
+@click.pass_obj
+def manifest_export(cfg, library_names, user):
+    from . import manifest
+    conn = _conn(cfg)
+    ids = []
+    for name in library_names:
+        library = libsvc.find_library(conn, name)
+        if library is None:
+            raise ServiceError('library_not_found', t('库不存在'), status=404,
+                               next_step=t('请先运行 library list 检查库名'))
+        ids.append(library['id'])
+    click.echo(json.dumps(manifest.export(conn, _batch_access(conn, user), ids if library_names else None), ensure_ascii=False, indent=2))
+
+
+@manifest_group.command('preview')
+@click.argument('file', type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option('--mappings', required=True, help='稳定 ID 到本地 ID 的 JSON 映射，必须包含 libraries 和 users')
+@click.option('--user', default=None)
+@click.pass_obj
+def manifest_preview(cfg, file, mappings, user):
+    from . import manifest
+    if file.stat().st_size > manifest.MAX_BYTES:
+        raise manifest._error('manifest_too_large', 413)
+    try:
+        document = json.loads(file.read_text(encoding='utf-8'))
+        maps = json.loads(mappings)
+    except (ValueError, UnicodeError) as exc:
+        raise click.UsageError(t('JSON 格式无效，请检查输入')) from exc
+    conn = _conn(cfg)
+    result = manifest.preview(conn, _batch_access(conn, user), document, maps)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result['preview']['ready']:
+        raise click.exceptions.Exit(1)
+
+
+@manifest_group.command('show')
+@click.argument('plan_id')
+@click.option('--user', default=None)
+@click.pass_obj
+def manifest_show(cfg, plan_id, user):
+    from . import manifest
+    conn = _conn(cfg)
+    click.echo(json.dumps(manifest.get_plan(conn, _batch_access(conn, user), plan_id), ensure_ascii=False, indent=2))
+
+
+@manifest_group.command('execute')
+@click.argument('plan_id')
+@click.option('--yes', is_flag=True)
+@click.option('--user', default=None)
+@click.pass_obj
+def manifest_execute(cfg, plan_id, yes, user):
+    from . import manifest
+    if not yes:
+        raise ServiceError('confirmation_required', t('结构化执行需要 --yes；请先检查预演结果'),
+                           next_step=t('请先检查元数据导入预演，再明确确认执行'))
+    conn = _conn(cfg)
+    click.echo(json.dumps(manifest.execute(conn, cfg, _batch_access(conn, user), plan_id), ensure_ascii=False, indent=2))
 
 
 # ---------------------------------------------------------------- 用户 / 组 / 统计

@@ -68,7 +68,7 @@ Web 生命周期最多启动两个本机子进程；同一数据目录的所有�
 
 恢复数据库使用排他维护锁，与扫描、导入和任务队列写入互斥。该文件锁不能约束直接打开 SQLite 的其他软件；恢复前仍须停止 Web、TUI 和其他元数据写入命令。任务记录随数据库备份恢复，恢复后先检查库路径与任务，再显式重试。
 
-## 数据库（schema v10）
+## 数据库（schema v11）
 
 SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
 
@@ -93,6 +93,7 @@ SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；�
 | `scans`, `meta` | 扫描记录与 schema 版本 |
 | `import_plans`, `import_plan_items` | 不可变导入快照、所有者、执行状态和逐项恢复日志 |
 | `jobs`, `job_items` | 本机持久化队列、请求幂等标识、状态、工作集合和单项错误 |
+| `portable_ids`, `portable_import_ids`, `manifest_plans` | 跨数据库稳定身份、导入身份别名与固定范围的元数据导入；全局目录修订号防止预演后修改再改回 |
 
 迁移只追加到 `MIGRATIONS` 并更新 `SCHEMA_VERSION`，不重写已发布版本。所有待执行版本的结构变更与版本记录在同一个 `BEGIN IMMEDIATE` 事务中提交；失败或进程退出会回滚。并发初始化在取得写锁后重新检查版本。迁移脚本不得自行提交、回滚、修改 PRAGMA 或附加数据库，也不得调用 `executescript()` 隐式提交外围事务。
 

@@ -6,6 +6,8 @@ See [Authentication and shared-library permissions](security.md) for role requir
 
 Use [batch organization and undo](batches.md) to select images across pages, preview a fixed set, edit metadata, and restore changes without overwriting later edits. The Unorganized view follows each user's explicit workflow state.
 
+Use [portable metadata](metadata-format.md) to move personal organization and shared catalog metadata onto separately copied originals. Database backups also contain account data and are described under Backup and restore.
+
 ## Web browsing
 
 Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags
@@ -76,7 +78,7 @@ overrides `PICSHELF_DATA`; it does not change library roots. `search` remains an
 alias of `ls`. Use `--help` on the selected command to see its supported options.
 
 `ls`/`search`, `show`, `rate`, `scan` and `import` support `--json`. The `batch`,
-`queries`, `play-rules`, `play-sessions`, `job`, `metadata` and `import-sources`
+`queries`, `play-rules`, `play-sessions`, `job`, `metadata`, `manifest` and `import-sources`
 groups, plus `organize`, `rebuild`, `library configure`, `import-status`,
 `import-execute` and `import-cancel`, produce JSON by default. Errors in these
 modes are also JSON on stdout; readable error recovery, prompts and progress use stderr. `--help` always
