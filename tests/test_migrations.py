@@ -157,7 +157,7 @@ def test_future_schema_errors_are_actionable_in_cli_and_api(tmp_path):
     result = cli(cfg, "stats")
     assert result.returncode != 0 and "Traceback" not in result.stderr
     assert "unsupported_schema" in result.stderr
-    with TestClient(create_app(cfg)) as client:
+    with TestClient(create_app(cfg), headers={"Origin": "http://testserver"}) as client:
         response = client.get("/api/v1/health")
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "unsupported_schema"

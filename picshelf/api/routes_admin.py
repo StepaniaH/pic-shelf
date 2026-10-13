@@ -5,15 +5,36 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import auth
+from .. import auth, source_access
+from ..access import AccessContext
 from .deps import Db, User, ensure_library_access, require_cap
 from ..i18n import t
 
 router = APIRouter(tags=["admin"])
 
 Admin = Annotated[sqlite3.Row, Depends(require_cap("admin"))]
+
+
+class SourceRootBody(BaseModel):
+    root_path: str = Field(min_length=1, max_length=4096)
+    allow_move: bool = False
+
+
+@router.get("/import-sources")
+def list_sources(conn: Db, admin: Admin):
+    return source_access.list_roots(conn, AccessContext(admin["id"]))
+
+
+@router.post("/import-sources")
+def add_source(body: SourceRootBody, conn: Db, admin: Admin):
+    return source_access.register(conn, AccessContext(admin["id"]), body.root_path, allow_move=body.allow_move)
+
+
+@router.delete("/import-sources/{root_id}")
+def revoke_source(root_id: int, conn: Db, admin: Admin):
+    return source_access.revoke(conn, AccessContext(admin["id"]), root_id)
 
 
 def _user_dict(conn, row) -> dict:
@@ -36,8 +57,8 @@ def _user_dict(conn, row) -> dict:
 # ---------------------------------------------------------------- 用户
 
 class UserBody(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(min_length=6, max_length=1024)
     is_admin: bool = False
     display_name: str | None = None
     groups: list[str] | None = None
@@ -46,7 +67,7 @@ class UserBody(BaseModel):
 class UserPatch(BaseModel):
     is_admin: bool | None = None
     disabled: bool | None = None
-    password: str | None = None
+    password: str | None = Field(default=None, min_length=6, max_length=1024)
     display_name: str | None = None
 
 
@@ -106,6 +127,8 @@ def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
         sets.append("password_hash=?")
         params.append(auth.hash_password(body.password))
     if sets:
+        if body.password is not None or body.disabled is not None or body.is_admin is not None:
+            sets.append("token_version=token_version+1")
         params.append(user_id)
         conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id=?", params)
         conn.commit()

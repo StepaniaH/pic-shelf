@@ -241,7 +241,7 @@ def test_api_pagination_expiry_options_and_ownership(workspace):
     cfg, conn, access, source, target, lid, password = workspace
     for n in range(4, 305):
         draw_image(source / f"extra-{n:03}.png", n)
-    with TestClient(create_app(cfg)) as client:
+    with TestClient(create_app(cfg), headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "planner", "password": password}).status_code == 200
         plan = client.post("/api/v1/import/plan", json={"source_dir": str(source), "library_id": lid, "mode": "copy"}).json()
         assert plan["items_total"] == 304 and len(plan["items"]) == 300
@@ -265,10 +265,12 @@ def test_api_pagination_expiry_options_and_ownership(workspace):
 
 def test_api_rechecks_revoked_grants_before_execution(workspace):
     cfg, conn, access, source, target, lid, password = workspace
+    from picshelf import source_access
+    source_access.register(conn, access, str(source))
     uid = auth.create_user(conn, "manager", password)
     conn.execute("UPDATE library_grants SET access='manage'")
     conn.commit()
-    with TestClient(create_app(cfg)) as client:
+    with TestClient(create_app(cfg), headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "manager", "password": password}).status_code == 200
         plan = client.post("/api/v1/import/plan", json={"source_dir": str(source), "library_id": lid}).json()
         conn.execute("DELETE FROM user_groups WHERE user_id=?", (uid,))
@@ -280,6 +282,8 @@ def test_api_rechecks_revoked_grants_before_execution(workspace):
 
 def test_revocation_during_execution_stops_at_next_file(workspace, monkeypatch):
     cfg, conn, access, source, target, lid, password = workspace
+    from picshelf import source_access
+    source_access.register(conn, access, str(source))
     uid = auth.create_user(conn, "manager", password)
     conn.execute("UPDATE library_grants SET access='manage'")
     conn.commit()
@@ -365,7 +369,7 @@ with library_write_lock(Config(Path(sys.argv[1])),Path(sys.argv[2])):
         assert caught.value.code == "library_busy" and caught.value.retryable
         result = cli(cfg, "scan", "target")
         assert result.returncode != 0 and "library_busy" in result.stderr
-        with TestClient(create_app(cfg)) as client:
+        with TestClient(create_app(cfg), headers={"Origin": "http://testserver"}) as client:
             assert client.post("/api/v1/auth/login", json={"username": "planner", "password": workspace.password}).status_code == 200
             response = client.post(f"/api/v1/libraries/{lid}/scan")
             assert response.status_code == 409 and response.json()["error"]["code"] == "library_busy"

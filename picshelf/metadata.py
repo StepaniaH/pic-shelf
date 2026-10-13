@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from . import names
 from .db import utcnow
 from .errors import ServiceError
 from .i18n import t
@@ -139,6 +140,9 @@ def add_tag_claim(conn, access, image_id, name, *, origin="imported", source_ref
     with conn:
         conn.execute("BEGIN IMMEDIATE")
         access.require_image(conn, image_id, minimum="edit", capability="tag_edit", include_missing=True)
+        existing = names.resolve(conn, "tag", name)
+        if existing:
+            access.require_entity(conn, "tag", existing)
         tag_id = ensure_tag(conn, name)
         when = utcnow()
         confirmed = origin == "manual"

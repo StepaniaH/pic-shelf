@@ -6,7 +6,7 @@ from typing import Annotated, Iterator
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request
 
-from .. import auth, search
+from .. import auth
 from ..access import AccessContext
 from ..db import open_db
 from ..i18n import t
@@ -38,7 +38,7 @@ def current_user(
         token = picshelf_session
     if not token:
         raise HTTPException(status_code=401, detail=t("未登录"))
-    uid = auth.verify_token(request.app.state.secret, token)
+    uid = auth.verify_token(request.app.state.secret, token, conn)
     user = auth.get_user(conn, uid) if uid is not None else None
     if user is None:
         raise HTTPException(status_code=401, detail=t("登录已过期，请重新登录"))
@@ -68,24 +68,7 @@ def image_and_access(conn: sqlite3.Connection, user: sqlite3.Row,
 
 def ensure_catalog_access(conn: sqlite3.Connection, user: sqlite3.Row,
                           kind: str, entity_id: int) -> None:
-    """保护全局目录中仅关联到不可见库的条目；未关联条目仍可编辑。"""
-    table, links, column = {
-        "artist": ("artists", "image_artists", "artist_id"),
-        "tag": ("tags", "image_tags", "tag_id"),
-    }[kind]
-    if not conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (entity_id,)).fetchone():
-        raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))
-    allowed = auth.visible_library_ids(conn, user)
-    if allowed is None:
-        return
-    if not conn.execute(f"SELECT 1 FROM {links} WHERE {column}=?", (entity_id,)).fetchone():
-        return
-    visible, params = search.visible_images_sql(allowed)
-    if not conn.execute(
-        f"WITH visible AS ({visible}) SELECT 1 FROM {links} "
-        f"WHERE {column}=? AND image_id IN (SELECT id FROM visible)", [*params, entity_id],
-    ).fetchone():
-        raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))
+    AccessContext(user["id"]).require_entity(conn, kind, entity_id)
 
 
 def serialize_image(d: dict, *, base: str = "/api/v1/media") -> dict:

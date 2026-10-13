@@ -5,7 +5,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import auth, ops, play, search
-from .deps import Db, User, ensure_library_access, serialize_image
+from ..access import AccessContext
+from ..errors import ServiceError
+from .deps import Db, User, ensure_catalog_access, ensure_library_access, serialize_image
 from ..i18n import t
 
 router = APIRouter(tags=["play"])
@@ -43,22 +45,30 @@ def _validate_source(conn, user, src: PlaySource, order: str) -> None:
     if src.library_id is not None:
         ensure_library_access(conn, user, src.library_id)
     if src.album_id is not None:
-        album = ops.get_album(conn, src.album_id)
-        if album is None:
-            raise HTTPException(status_code=404, detail=t("专辑不存在"))
-        if album["library_id"] is not None:
-            ensure_library_access(conn, user, album["library_id"])
+        AccessContext(user["id"]).require_album(conn, src.album_id)
     if src.artist_id is not None:
+        ensure_catalog_access(conn, user, "artist", src.artist_id)
         try:
             ops.get_artist(conn, src.artist_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
 
-def _session_or_404(conn, token: str, user) -> "play.sqlite3.Row":
+def _session_or_404(conn, token: str, user, *, check_scope=True) -> "play.sqlite3.Row":
     session = play.get_session_by_token(conn, token)
     if session is None or (int(session["user_id"]) != int(user["id"]) and not user["is_admin"]):
         raise HTTPException(status_code=404, detail=t("播放会话不存在"))
+    if not check_scope:
+        return session
+    # A snapshot must not keep granting access after its library grant is lost.
+    # Refuse the old session; rebuilding it uses the caller's current scope.
+    for row in conn.execute("SELECT DISTINCT i.library_id FROM play_items pi JOIN images i ON i.id=pi.image_id "
+                            "WHERE pi.session_id=?", (session["id"],)):
+        try:
+            AccessContext(user["id"]).require_library(conn, row[0])
+        except ServiceError as exc:
+            raise ServiceError("play_scope_changed", t("播放队列的库权限已变化"), status=403,
+                               next_step=t("请按当前权限重新创建播放会话")) from exc
     return session
 
 
@@ -92,6 +102,8 @@ def _attach_image(conn, result: dict, user) -> dict:
         detail = search.get_image(conn, int(iid), int(user["id"]), allowed)
         if detail:
             result["image"] = serialize_image(detail)
+        else:
+            result["image_id"] = None
     return result
 
 
@@ -164,7 +176,7 @@ def session_items(token: str, conn: Db, user: User, offset: int = 0, limit: int 
 
 @router.delete("/play/sessions/{token}")
 def delete_session(token: str, conn: Db, user: User):
-    session = _session_or_404(conn, token, user)
+    session = _session_or_404(conn, token, user, check_scope=False)
     conn.execute("DELETE FROM play_sessions WHERE id=?", (session["id"],))
     conn.commit()
     return {"ok": True}

@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import uuid
 
-from . import hashing, importer, indexer, libsvc, metadata
+from . import hashing, importer, indexer, libsvc, metadata, source_access
 from .access import AccessContext
 from .config import Config
 from .coordination import library_write_lock
@@ -44,6 +44,7 @@ def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int
         raise _failure("library_not_found", t("库不存在"))
     libsvc.require_importable(library)
     mode = library["default_import_mode"] if mode is None else mode
+    source_access.require_source(conn, access, source_dir, mode=mode)
     snapshot = importer.plan_import(conn, library, source_dir, mode=mode, rename=rename)
     snapshot["rename"] = rename
     snapshot["root_identity"] = _identity(Path(snapshot["root"]).stat())
@@ -81,6 +82,8 @@ def _authorized_plan(conn, access, plan_id):
         raise ServiceError("plan_not_found", t("导入计划不存在或无权访问"), status=404,
                            next_step=t("请使用创建计划的账户，或重新预演"))
     access.require_library(conn, row["library_id"], "manage")
+    snapshot = json.loads(row["snapshot"])
+    source_access.require_source(conn, access, snapshot["source"], mode=snapshot["mode"])
     return row
 
 

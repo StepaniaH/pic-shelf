@@ -3,15 +3,19 @@ from __future__ import annotations
 
 from pathlib import Path
 from contextlib import asynccontextmanager
+from threading import BoundedSemaphore
 
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from .. import __version__, auth
 from ..config import Config
 from ..errors import ServiceError
 from ..i18n import set_lang as _set_lang
+from ..i18n import t
+from .security import check_browser_request
 from ..worker import WorkerManager
 from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata
 
@@ -46,10 +50,18 @@ def create_app(cfg: Config) -> FastAPI:
     app.state.cfg = cfg
     app.state.workers = workers
     app.state.secret = auth.load_secret(cfg.secret_path)
+    app.state.login_slots = BoundedSemaphore(4)
 
     @app.exception_handler(ServiceError)
     async def _service_error(request, exc: ServiceError):
-        return JSONResponse(status_code=exc.status, content=exc.as_dict())
+        headers = {"Retry-After": str(getattr(exc, "retry_after", 60))} if exc.status == 429 else None
+        return JSONResponse(status_code=exc.status, content=exc.as_dict(), headers=headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error(request, exc):
+        # Validation inputs may contain passwords, tokens or private paths.
+        return JSONResponse(status_code=422, content={"detail": [
+            {key: error[key] for key in ("type", "loc", "msg")} for error in exc.errors()]})
 
     @app.middleware("http")
     async def _lang_from_header(request, call_next):
@@ -62,7 +74,26 @@ def create_app(cfg: Config) -> FastAPI:
             _set_lang("en")
         elif not header:
             _set_lang(None)  # 回退：PICSHELF_LANG / locale / 默认
-        return await call_next(request)
+        try:
+            if request.url.path.startswith("/api/"):
+                check_browser_request(request, cfg)
+                if request.method not in ("GET", "HEAD", "OPTIONS"):
+                    body = bytearray()
+                    async for chunk in request.stream():
+                        body.extend(chunk)
+                        if len(body) > 1024 * 1024:
+                            raise ServiceError("request_too_large", t("请求内容过大"), status=413,
+                                               next_step=t("请缩小请求范围后重试"))
+                    request._body = bytes(body)
+            response = await call_next(request)
+        except ServiceError as exc:
+            response = await _service_error(request, exc)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "same-origin"
+        response.headers["X-Frame-Options"] = "DENY"
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     api = APIRouter(prefix="/api/v1")
     for router in (

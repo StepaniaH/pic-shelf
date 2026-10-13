@@ -276,12 +276,14 @@ class PicShelfTUI(App):
             t("标签：{tags}", tags=tags),
             t("艺术家：{artists}       专辑：{albums}", artists=artists, albums=albums),
         ]
+        content = Text("\n".join(lines))
         if self.show_preview:
             path = self._current_path(iid)
             art = _render_preview(path) if path else None
             if art:
-                lines.append(art)
-        detail.update(Text.from_ansi("\n".join(lines)))
+                content.append("\n")
+                content.append(Text.from_ansi(art))
+        detail.update(content)
 
     # ------------------------------------------------------------ 动作
 

@@ -2,6 +2,8 @@
 
 Pic Shelf keeps image files in registered libraries and stores metadata in a separate data directory. Indexing an existing directory does not move or rename its files. Managed import copies, hardlinks or moves files into a registered library.
 
+See [Authentication and shared-library permissions](security.md) for role requirements, approved import sources, session revocation, browser origins and upgrade compatibility. After upgrading to schema 7, sign in again and replace older script tokens. Cookie-based scripts must supply the matching Origin; Bearer scripts do not need that header.
+
 ## Commands
 
 Use `picshelf --help` and `picshelf <command> --help` for the complete options. In a source checkout, the executable is `.venv/bin/picshelf`. Global options, including `--data` and `--lang`, precede the command.

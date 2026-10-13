@@ -234,7 +234,7 @@ def test_api_import_plan_execute(env):
 
     from picshelf.api import create_app
 
-    c = TestClient(create_app(env["cfg"]))
+    c = TestClient(create_app(env["cfg"]), headers={"Origin": "http://testserver"})
     assert c.post("/api/v1/auth/login",
                   json={"username": "admin", "password": "admin-pass-123"}).status_code == 200
 
@@ -276,7 +276,7 @@ def test_api_import_requires_manage(env):
     from picshelf.api import create_app
 
     auth.create_user(env["conn"], "alice2", "alice2-pass-1")  # members 组：只有 view
-    c = TestClient(create_app(env["cfg"]))
+    c = TestClient(create_app(env["cfg"]), headers={"Origin": "http://testserver"})
     assert c.post("/api/v1/auth/login",
                   json={"username": "alice2", "password": "alice2-pass-1"}).status_code == 200
     r = c.post("/api/v1/import/plan", json={

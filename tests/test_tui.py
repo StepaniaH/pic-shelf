@@ -77,6 +77,25 @@ def test_tui_smoke(env):
     assert tags == 1, "标签动作未生效"
 
 
+def test_tui_metadata_does_not_interpret_rich_or_ansi(env):
+    from picshelf.tui import PicShelfTUI
+    from picshelf import ops
+    with dbm.open_db(env["cfg"].db_path) as conn:
+        for row in conn.execute("SELECT id FROM images"):
+            ops.add_tags(conn,row[0],["[bold]literal tag[/bold]"],1)
+        conn.execute("UPDATE images SET filename='[link=https://example.org]literal[/link].png'");conn.commit()
+    async def scenario():
+        app = PicShelfTUI(env["cfg"])
+        async with app.run_test(size=(140,44)) as pilot:
+            await pilot.pause()
+            app._update_detail()
+            text = app.query_one("#detail").render()
+            assert "[bold]literal tag[/bold]" in text.plain
+            assert "[link=https://example.org]literal[/link].png" in text.plain
+            assert not text.spans
+    asyncio.run(scenario())
+
+
 def test_tui_small_terminal_pagination_and_slideshow(env):
     from picshelf.tui import PicShelfTUI
 

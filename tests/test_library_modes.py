@@ -149,7 +149,7 @@ def test_cli_first_use_managed_preview_and_legacy_compatibility(catalog, tmp_pat
 def test_api_modes_and_server_path_contract(catalog, tmp_path):
     root = tmp_path / "api-root"
     root.mkdir()
-    with TestClient(create_app(catalog.cfg)) as client:
+    with TestClient(create_app(catalog.cfg), headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "curator", "password": catalog.password}).status_code == 200
         created = client.post("/api/v1/libraries", json={"name": "API", "root_path": str(root),
                               "mode": "managed", "default_import_mode": "copy"})

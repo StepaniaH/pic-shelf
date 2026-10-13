@@ -185,7 +185,7 @@ def test_cli_api_read_write_and_json_export_agree(catalog):
     assert exported.returncode == 0
     payload = json.loads(exported.stdout)
     assert payload["workflow"]["state"] == "done" and payload["schema"] == "picshelf.image-metadata/1"
-    with TestClient(create_app(catalog.cfg)) as client:
+    with TestClient(create_app(catalog.cfg), headers={"Origin": "http://testserver"}) as client:
         client.post("/api/v1/auth/login", json={"username":"reader","password":catalog.password})
         result = client.get(f"/api/v1/images/{iid}/metadata")
         assert result.status_code == 200 and result.json() == payload
@@ -295,7 +295,7 @@ def test_provenance_and_workflow_survive_database_export_and_restore(catalog, tm
 def test_api_confirmation_scope_bilingual_validation_and_literal_text(catalog):
     iid = catalog.images["n01"]
     note = '<img src=x onerror="window.bad=true">'
-    with TestClient(create_app(catalog.cfg)) as client:
+    with TestClient(create_app(catalog.cfg), headers={"Origin": "http://testserver"}) as client:
         client.post("/api/v1/auth/login", json={"username":"curator","password":catalog.password})
         response = client.post(f"/api/v1/images/{iid}/sources", json={"note": note})
         assert response.status_code == 200 and response.json()["note"] == note

@@ -259,7 +259,7 @@ def test_unsafe_artist_link_is_not_rendered(page, web_server):
         "id": 999, "name": "Link test", "links": ["javascript:alert(1)", "https://example.org"],
     }))
     page.goto(web_server.url + "/#/artist/999")
-    expect(page.locator('a[href="https://example.org"]')).to_be_visible()
+    expect(page.locator('a[href="https://example.org/"]')).to_be_visible()
     expect(page.locator('a[href^="javascript:"]')).to_have_count(0)
 
 
@@ -300,3 +300,29 @@ def test_concurrent_load_more_does_not_duplicate_images(page, web_server):
         unique: new Set(source.items.map(item => item.id)).size };
     }""")
     assert result == {"total": 125, "loaded": 125, "unique": 125}
+
+
+def test_reader_view_is_read_only_and_logout_removes_private_media_access(page,tmp_path):
+    from playwright.sync_api import expect
+    from tests.scenario_support import build_catalog,http_server
+    catalog = build_catalog(tmp_path)
+    with http_server(catalog.cfg) as client:
+        page.add_init_script("localStorage.setItem('picshelf.lang','en')")
+        page.goto(str(client.base_url))
+        page.locator("#login-username").fill("reader")
+        page.locator("#login-password").fill(catalog.password)
+        page.locator("#login-form button").click()
+        expect(page.locator(".lib-card")).to_have_count(1)
+        page.locator('.lib-card a[href^="#/library/"]').click()
+        expect(page.locator("#grid .card")).to_have_count(12)
+        page.locator("#grid .card").first.click()
+        expect(page.locator(".viewer-stage img")).to_be_visible()
+        expect(page.locator("#tag-input")).to_have_count(0)
+        expect(page.locator("#artist-input")).to_have_count(0)
+        media_url = page.locator(".viewer-stage img").get_attribute("src")
+        page.keyboard.press("Escape")
+        page.locator("#logout-btn").click()
+        expect(page.locator("#login-form")).to_be_visible()
+        # A new request in the same browser context cannot reuse a cached private response.
+        result = page.evaluate("async url => {const response = await fetch(url); return response.status;}",media_url)
+        assert result == 401

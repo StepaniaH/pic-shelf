@@ -100,7 +100,7 @@ def http_server(cfg: Config):
         try:
             assert server.started, "Local HTTP server did not start"
             with httpx.Client(base_url=f"http://127.0.0.1:{sock.getsockname()[1]}",
-                              trust_env=False, timeout=10) as client:
+                              trust_env=False, timeout=10, headers={"Origin": f"http://127.0.0.1:{sock.getsockname()[1]}"}) as client:
                 yield client
         finally:
             server.should_exit = True

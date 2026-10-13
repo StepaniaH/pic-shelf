@@ -27,6 +27,8 @@ class ImageQuery:
 
 def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQuery) -> dict:
     allowed = access.allowed_libraries(conn)
+    if spec.album_id is not None:
+        access.require_album(conn, spec.album_id)
     clauses, params = [], {}
     if spec.library_id is not None:
         clauses.append("i.library_id=:f_lib")

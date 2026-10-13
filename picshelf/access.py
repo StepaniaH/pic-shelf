@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from . import auth
+from . import auth, search
 from .errors import ServiceError
 from .i18n import t
 
@@ -54,3 +54,44 @@ class AccessContext:
                                objects={"image_id": image_id})
         self.require_library(conn, row["library_id"], minimum)
         return row
+
+    def require_album(self, conn, album_id, minimum="view"):
+        user = self.user(conn)
+        row = conn.execute("SELECT * FROM albums WHERE id=?", (album_id,)).fetchone()
+        if row is None:
+            raise ServiceError("album_not_found", t("专辑不存在"), status=404,
+                               next_step=t("请刷新专辑列表后重试"))
+        if minimum != "view":
+            self.require_capability(conn, "tag_edit")
+        members = [r[0] for r in conn.execute("SELECT DISTINCT i.library_id FROM album_images ai "
+                   "JOIN images i ON i.id=ai.image_id WHERE ai.album_id=?", (album_id,))]
+        if row["library_id"] is None:
+            if minimum != "view":
+                self.require_capability(conn, "admin")
+            elif not self.local_admin and not auth.has_cap(conn, user, "admin"):
+                allowed = self.allowed_libraries(conn)
+                if not any(lid in (allowed or []) for lid in members):
+                    raise ServiceError("album_not_found", t("专辑不存在"), status=404,
+                                       next_step=t("请刷新专辑列表后重试"))
+        else:
+            self.require_library(conn, row["library_id"], minimum)
+        if minimum != "view":
+            for lid in members:
+                self.require_library(conn, lid, minimum)
+        return row
+
+    def require_entity(self, conn, kind, entity_id):
+        table, links, column = {"tag": ("tags", "image_tags", "tag_id"),
+                                "artist": ("artists", "image_artists", "artist_id")}[kind]
+        allowed = self.allowed_libraries(conn)
+        exists = conn.execute(f"SELECT 1 FROM {table} WHERE id=?", (entity_id,)).fetchone()
+        if exists and allowed is not None:
+            linked = conn.execute(f"SELECT 1 FROM {links} WHERE {column}=?", (entity_id,)).fetchone()
+            if linked:
+                visible, params = search.visible_images_sql(allowed)
+                exists = conn.execute(f"WITH visible AS ({visible}) SELECT 1 FROM {links} "
+                                      f"WHERE {column}=? AND image_id IN (SELECT id FROM visible)",
+                                      [*params, entity_id]).fetchone()
+        if not exists:
+            raise ServiceError("entity_not_found", t("条目不存在或无权访问"), status=404,
+                               next_step=t("请刷新列表，或联系管理员检查库授权"))

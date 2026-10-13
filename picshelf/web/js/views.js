@@ -5,6 +5,7 @@ import { openViewer } from "./viewer.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
 import { jobKey, watchJob } from "./jobs.js";
+import { externalUrl } from "./format.js";
 
 export function fmtSize(n) {
   if (!n && n !== 0) return "—";
@@ -268,8 +269,8 @@ export async function renderArtist(view, artistId) {
     { filters: { artist_id: artistId } },
   );
   await source.load(true);
-  const links = (artist.links || []).filter(u => /^https?:\/\//i.test(u)).map((u) =>
-    `<a class="pill" href="${escapeHtml(u)}" target="_blank" rel="noopener">${escapeHtml(u.replace(/^https?:\/\//, ""))}</a>`).join(" ");
+  const links = (artist.links || []).map(externalUrl).filter(Boolean).map((u) =>
+    `<a class="pill" href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer">${escapeHtml(u.replace(/^https?:\/\//, ""))}</a>`).join(" ");
   const extra = [artist.aliases ? t("<span class=\"pill\">别名：{v0}</span>", {v0: escapeHtml(artist.aliases)}) : "", links,
     t("<a class=\"btn small\" href=\"#/artists\">← 全部艺术家</a>")].join(" ");
   renderGridInto(view, source, { headerExtraHtml: extra });

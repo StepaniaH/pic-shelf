@@ -41,7 +41,7 @@ def test_cli_lang_flag():
 
 
 def test_api_accept_language(cfg):
-    client = TestClient(create_app(cfg))
+    client = TestClient(create_app(cfg), headers={"Origin": "http://testserver"})
     r = client.get("/api/v1/libraries", headers={"Accept-Language": "en"})
     assert r.status_code == 401
     assert r.json()["detail"] == "Not signed in"

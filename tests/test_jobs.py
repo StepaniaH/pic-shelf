@@ -231,7 +231,7 @@ jobs.run_job(Config(Path(sys.argv[1])), sys.argv[2])
 
 def test_api_worker_lifespan_and_cli_background_contract(catalog):
     app = create_app(catalog.cfg)
-    with TestClient(app) as client:
+    with TestClient(app, headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "curator", "password": catalog.password}).status_code == 200
         queued = client.post(f"/api/v1/libraries/{catalog.libraries['north']}/scan-jobs", json={"request_key": "api-north"})
         assert queued.status_code == 202
@@ -291,7 +291,7 @@ jobs.run_job(Config(Path(sys.argv[1])), sys.argv[2], should_stop=stop_path.exist
         assert running["state"] == "running" and running["completed"] == 1
         # Actual application handlers must still query and create playback while
         # the other process owns the library and its job lock.
-        client = TestClient(create_app(catalog.cfg))
+        client = TestClient(create_app(catalog.cfg), headers={"Origin": "http://testserver"})
         try:
             client.post("/api/v1/auth/login", json={"username": "curator", "password": catalog.password})
             assert client.get("/api/v1/images").json()["total"] == 24

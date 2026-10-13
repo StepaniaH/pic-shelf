@@ -115,6 +115,20 @@ function renderUserBox() {
   if (state.user) {
     adminLink.hidden = !state.user.is_admin;
     box.innerHTML = t("<span class=\"username\">{v0}</span>\n      <button class=\"btn small\" id=\"logout-btn\">退出</button>", {v0: escapeHtml(state.user.display_name || state.user.username)});
+    const revoke = document.createElement("button");
+    revoke.className = "btn small";
+    revoke.textContent = t("退出所有设备");
+    revoke.id = "revoke-sessions-btn";
+    box.appendChild(revoke);
+    revoke.addEventListener("click", async () => {
+      if (!await uiConfirm(t("退出所有设备"), t("当前设备与其他设备都需要重新登录。"))) return;
+      try {
+        await api("/auth/revoke-sessions", { method: "POST" });
+        state.user = null;
+        renderUserBox();
+        navigate("#/login");
+      } catch (error) { toast(error.message, "error"); }
+    });
     box.querySelector("#logout-btn").addEventListener("click", async () => {
       await api("/auth/logout", { method: "POST" });
       state.user = null;

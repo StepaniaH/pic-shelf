@@ -27,7 +27,7 @@ def env(tmp_path):
     conn.close()
 
     app = create_app(cfg)
-    client = TestClient(app)
+    client = TestClient(app, headers={"Origin": "http://testserver"})
     return {
         "cfg": cfg, "client": client, "app": app,
         "library_id": lib_id, "root": root,
@@ -166,7 +166,7 @@ def test_media_serving(env):
     assert r.status_code == 200
     assert "attachment" in r.headers.get("content-disposition", "")
     # 未登录不可访问
-    anon = TestClient(env["app"])
+    anon = TestClient(env["app"], headers={"Origin": "http://testserver"})
     assert anon.get(f"/api/v1/media/thumb/{iid}").status_code == 401
     # 不存在
     assert c.get("/api/v1/media/thumb/99999").status_code == 404
@@ -278,7 +278,7 @@ def test_user_admin_and_acl(env):
     user = c.post("/api/v1/users", json={"username": "alice", "password": "alice-pass-1"}).json()
     assert user["groups"][0]["name"] == "members"
 
-    alice = TestClient(env["app"])
+    alice = TestClient(env["app"], headers={"Origin": "http://testserver"})
     _login(alice, "alice", "alice-pass-1")
     assert alice.get("/api/v1/images").json()["total"] == 4  # members 默认 view
     iid = _find_image(alice, "red.png")["id"]
@@ -354,7 +354,7 @@ def test_catalog_and_stats_follow_library_grants(env):
     private_album = ops.create_album(conn, "Private album", hidden_lib)
     ops.album_add_images(conn, private_album["id"], [visible_id])
     conn.close()
-    reader = TestClient(env["app"])
+    reader = TestClient(env["app"], headers={"Origin": "http://testserver"})
     _login(reader, "reader", "reader-pass-123")
     stats = reader.get("/api/v1/stats").json()
     assert stats["images"] == 4 and stats["libraries"] == 1
@@ -363,12 +363,12 @@ def test_catalog_and_stats_follow_library_grants(env):
     assert [x["name"] for x in reader.get("/api/v1/artists").json()] == ["public"]
     assert reader.get(f"/api/v1/artists/{private_artist}").status_code == 404
     assert reader.get(f"/api/v1/artists/{private_artist}/images").status_code == 404
-    assert reader.patch(f"/api/v1/artists/{private_artist}", json={"note": "changed"}).status_code == 404
+    assert reader.patch(f"/api/v1/artists/{private_artist}", json={"note": "changed"}).status_code == 403
     assert reader.post("/api/v1/artists", json={"name": "private"}).status_code == 404
-    assert reader.post(f"/api/v1/images/{visible_id}/artists", json={"artist_id": private_artist}).status_code == 404
+    assert reader.post(f"/api/v1/images/{visible_id}/artists", json={"artist_id": private_artist}).status_code == 403
     assert reader.get(f"/api/v1/artists/{public_artist}").json()["image_count"] == 1
     assert reader.post("/api/v1/artists", json={"name": "public"}).json()["image_count"] == 1
-    assert reader.patch(f"/api/v1/artists/{public_artist}", json={"note": "updated"}).json()["image_count"] == 1
+    assert reader.patch(f"/api/v1/artists/{public_artist}", json={"note": "updated"}).status_code == 403
     assert reader.post("/api/v1/artists", json={"name": "new artist"}).json()["image_count"] == 0
     album_detail = reader.get(f"/api/v1/albums/{album['id']}").json()
     assert album_detail["image_count"] == 1 and album_detail["cover_image_id"] is None

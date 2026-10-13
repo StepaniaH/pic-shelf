@@ -44,6 +44,8 @@ docker compose exec picshelf picshelf scan photos           # 增量扫描
 - **反向代理**：Pic Shelf 只提供明文 HTTP，TLS 由外层终止（Caddy / Nginx 等），上游填 `宿主IP:39431`。
 - 切勿把端口直接映射到公网。服务零遥测、无外联；认证模型面向私有网络内的可信使用。
 
+TLS 终止部署需设置 `PICSHELF_PUBLIC_ORIGIN` 为浏览器访问的完整站点来源（不含路径），以匹配 Cookie 变更请求并启用 Secure Cookie。本机 HTTP 无需该设置。`picshelf serve` 默认忽略代理头；需要接收时，`PICSHELF_TRUSTED_PROXIES` 只允许明确的代理 IP 或网段，不接受 `*`。代理必须覆盖转发头并限制上游直连。配置、会话升级影响及导入来源权限见 [认证与共享权限](security.md)。
+
 ## 权限（UID/GID）
 
 容器以 UID 1000 运行；`./data` 需要该 UID 可写。宿主 UID 不是 1000 时二选一：

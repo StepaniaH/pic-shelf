@@ -23,7 +23,7 @@ from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
 from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
-from . import entity_edits, metadata as metasvc, names as catalog_names
+from . import entity_edits, metadata as metasvc, names as catalog_names, source_access
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -220,11 +220,13 @@ def serve(cfg: Config, host: str, port: int, reload: bool):
 
     if reload:
         os.environ["PICSHELF_DATA"] = str(cfg.data_dir)
-        uvicorn.run("picshelf.api:create_app_dev", host=host, port=port, reload=True, factory=True)
+        uvicorn.run("picshelf.api:create_app_dev", host=host, port=port, reload=True, factory=True,
+                    proxy_headers=bool(cfg.trusted_proxies), forwarded_allow_ips=list(cfg.trusted_proxies))
         return
     app = create_app(cfg)
     click.echo(f"Pic Shelf Web → http://{host}:{port}")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info",
+                proxy_headers=bool(cfg.trusted_proxies), forwarded_allow_ips=list(cfg.trusted_proxies))
 
 
 # ---------------------------------------------------------------- library / scan
@@ -232,6 +234,38 @@ def serve(cfg: Config, host: str, port: int, reload: bool):
 @main.group()
 def library():
     """库管理。"""
+
+
+@main.group("import-sources")
+def import_sources():
+    """配置非管理员可用的导入源根。"""
+
+
+@import_sources.command("list")
+@click.pass_obj
+def source_list(cfg):
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(source_access.list_roots(conn, access), ensure_ascii=False))
+
+
+@import_sources.command("allow")
+@click.argument("root", type=click.Path(exists=True, file_okay=False))
+@click.option("--allow-move", is_flag=True, help="同时允许移动源文件；默认只允许复制或硬链接")
+@click.pass_obj
+def source_allow(cfg, root, allow_move):
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(source_access.register(conn, access, root, allow_move=allow_move), ensure_ascii=False))
+
+
+@import_sources.command("revoke")
+@click.argument("root_id", type=int)
+@click.pass_obj
+def source_revoke(cfg, root_id):
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(source_access.revoke(conn, access, root_id)))
 
 
 @library.command("add")
@@ -1248,7 +1282,7 @@ def users_passwd(cfg, username, password_stdin):
     if user is None:
         raise click.ClickException(t("用户不存在：{username}", username=username))
     pw = _read_password(password_stdin, t("为 {username} 设置新密码", username=username), confirm=True)
-    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (auth.hash_password(pw), user["id"]))
+    auth.set_password(conn, user["id"], pw)
     conn.commit()
     click.echo(t("密码已更新"))
 

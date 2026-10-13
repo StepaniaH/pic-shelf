@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -341,7 +341,19 @@ CREATE TABLE entity_edit_plans (
 );
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6}
+_SCHEMA_V7 = """
+ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE revoked_tokens (digest TEXT PRIMARY KEY, expires_at INTEGER NOT NULL);
+CREATE INDEX idx_revoked_expiry ON revoked_tokens(expires_at);
+CREATE TABLE login_attempts (bucket TEXT PRIMARY KEY, failures INTEGER NOT NULL, window_start INTEGER NOT NULL);
+CREATE TABLE import_source_roots (
+ id INTEGER PRIMARY KEY, root_path TEXT NOT NULL UNIQUE, device INTEGER NOT NULL, inode INTEGER NOT NULL,
+ enabled INTEGER NOT NULL DEFAULT 1, allow_move INTEGER NOT NULL DEFAULT 0 CHECK(allow_move IN (0,1)),
+ created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
+);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7}
 
 
 def utcnow() -> str:

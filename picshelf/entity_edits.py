@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import uuid
 
-from . import names
+from . import auth, names
 from .db import utcnow
 from .errors import ServiceError
 from .i18n import t
@@ -18,7 +18,7 @@ def _conflict():
 
 def _manager(conn, access):
     user = access.user(conn)
-    if not (access.local_admin or user["is_admin"]):
+    if not (access.local_admin or auth.has_cap(conn, user, "admin")):
         raise ServiceError("permission_denied", t("别名和关联合并需要管理员权限"), status=403,
                            next_step=t("请联系管理员核对共享名称和关联的影响范围"))
 

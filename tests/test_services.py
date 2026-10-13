@@ -19,7 +19,7 @@ def collection(tmp_path):
 
 def test_service_and_http_queries_follow_known_sets(collection):
     access = AccessContext(collection.users["reader"])
-    with db.open_db(collection.cfg.db_path) as conn, TestClient(create_app(collection.cfg)) as client:
+    with db.open_db(collection.cfg.db_path) as conn, TestClient(create_app(collection.cfg), headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "reader", "password": collection.password}).status_code == 200
         for case in CATALOG["queries"]:
             expected = {collection.images[key] for key in case["expected"]}
@@ -37,7 +37,7 @@ def test_rating_service_http_and_cli_share_result_and_error_codes(collection, la
     access = AccessContext(collection.users["reader"])
     token = i18n.push_lang(language)
     try:
-        with db.open_db(collection.cfg.db_path) as conn, TestClient(create_app(collection.cfg)) as client:
+        with db.open_db(collection.cfg.db_path) as conn, TestClient(create_app(collection.cfg), headers={"Origin": "http://testserver"}) as client:
             client.headers["Accept-Language"] = language
             assert client.post("/api/v1/auth/login", json={"username": "reader", "password": collection.password}).status_code == 200
             expected = {"my_rating": 0, "avg_rating": 0.0, "rating_count": 1}
@@ -87,7 +87,7 @@ def test_reused_access_context_observes_revocation_and_disabled_account(collecti
 
 def test_unauthorized_rating_never_writes_but_local_admin_keeps_compatibility(collection):
     iid = collection.images["s01"]
-    with TestClient(create_app(collection.cfg)) as client:
+    with TestClient(create_app(collection.cfg), headers={"Origin": "http://testserver"}) as client:
         assert client.post("/api/v1/auth/login", json={"username": "reader", "password": collection.password}).status_code == 200
         denied = client.post(f"/api/v1/images/{iid}/rating", json={"value": 9})
         assert denied.status_code == 403 and denied.json()["error"]["code"] == "permission_denied"

@@ -27,6 +27,23 @@ assert.equal(imageMediaUrl('preview', {...image, preview_url: '/api/v1/media/pre
     assert result.returncode == 0, result.stderr
 
 
+def test_user_links_cannot_be_active_code_or_contain_credentials():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for frontend module contracts")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/format.js").as_uri()
+    script = r"""
+const {externalUrl} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+for (const value of ['javascript:alert(1)', 'data:text/html,payload', '//example.org', 'https://user:secret@example.org/', 'https://example.org/\u000aalert', null]) {
+  assert.equal(externalUrl(value), null);
+}
+assert.equal(externalUrl('https://example.org/work?q=hello#details'), 'https://example.org/work?q=hello#details');
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script, module], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_displayed_times_use_explicit_utc_without_guessing_naive_dates():
     node = shutil.which("node")
     if not node:

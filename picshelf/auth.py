@@ -5,13 +5,17 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import sqlite3
 import time
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 
 from .db import utcnow
 from .i18n import t
+from .errors import ServiceError
 
 TOKEN_TTL_DEFAULT = 30 * 24 * 3600  # 30 天
 
@@ -24,6 +28,8 @@ DEFAULT_MEMBER_CAPS = ("view", "rate", "comment", "note", "tag_edit")
 def hash_password(password: str, *, n: int = 2**14, r: int = 8, p: int = 1) -> str:
     if not password:
         raise ValueError(t("口令不能为空"))
+    if len(password) > 1024:
+        raise ValueError(t("口令不能超过 1024 个字符"))
     salt = secrets.token_bytes(16)
     dk = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32)
     return f"scrypt${n}${r}${p}${salt.hex()}${dk.hex()}"
@@ -31,14 +37,17 @@ def hash_password(password: str, *, n: int = 2**14, r: int = 8, p: int = 1) -> s
 
 def verify_password(password: str, stored: str) -> bool:
     try:
+        if len(password) > 1024 or len(stored) > 512:
+            return False
         scheme, n, r, p, salt_hex, hash_hex = stored.split("$")
-        if scheme != "scrypt":
+        if (scheme != "scrypt" or not 2 <= int(n) <= 2**16 or not 1 <= int(r) <= 8
+                or not 1 <= int(p) <= 4 or not 16 <= len(salt_hex) <= 64 or len(hash_hex) != 64):
             return False
         dk = hashlib.scrypt(
             password.encode("utf-8"),
             salt=bytes.fromhex(salt_hex),
             n=int(n), r=int(r), p=int(p),
-            dklen=len(hash_hex) // 2,
+            dklen=len(hash_hex) // 2, maxmem=64 * 1024 * 1024,
         )
         return hmac.compare_digest(dk.hex(), hash_hex)
     except Exception:
@@ -48,21 +57,33 @@ def verify_password(password: str, stored: str) -> bool:
 # ---------------------------------------------------------------- 令牌
 
 def load_secret(path: Path) -> bytes:
-    if path.exists():
-        return path.read_bytes()
     path.parent.mkdir(parents=True, exist_ok=True)
-    secret = secrets.token_bytes(32)
-    path.write_bytes(secret)
     try:
-        path.chmod(0o600)
-    except OSError:  # pragma: no cover
-        pass
-    return secret
+        if not path.exists():
+            # Publish a fully written owner-only file without replacing a key
+            # installed by another starting process.
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".secret-") as candidate:
+                candidate.write(secrets.token_bytes(32))
+                candidate.flush()
+                os.fsync(candidate.fileno())
+                try:
+                    os.link(candidate.name, path)
+                except FileExistsError:
+                    pass
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        with os.fdopen(descriptor, "rb") as stream:
+            secret = stream.read(33)
+        if len(secret) != 32:
+            raise ValueError
+        return secret
+    except (OSError, ValueError) as exc:
+        raise ServiceError("session_key_invalid", t("会话密钥不可读或格式无效"),
+                           next_step=t("请检查数据目录权限，并从备份恢复原有密钥；不要用空文件替代")) from exc
 
 
-def sign_token(secret: bytes, user_id: int, ttl: int = TOKEN_TTL_DEFAULT) -> str:
+def sign_token(secret: bytes, user_id: int, ttl: int = TOKEN_TTL_DEFAULT, *, version: int = 0) -> str:
     payload = json.dumps(
-        {"uid": user_id, "exp": int(time.time()) + ttl, "n": secrets.token_hex(8)},
+        {"uid": user_id, "exp": int(time.time()) + ttl, "n": secrets.token_hex(8), "ver": version},
         separators=(",", ":"),
     ).encode("utf-8")
     body = base64.urlsafe_b64encode(payload).rstrip(b"=").decode("ascii")
@@ -70,19 +91,89 @@ def sign_token(secret: bytes, user_id: int, ttl: int = TOKEN_TTL_DEFAULT) -> str
     return f"{body}.{sig}"
 
 
-def verify_token(secret: bytes, token: str) -> int | None:
+def _token_data(secret: bytes, token: str) -> dict | None:
     try:
+        if len(token) > 4096:
+            return None
         body, sig = token.rsplit(".", 1)
         expect = hmac.new(secret, body.encode("ascii"), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(expect, sig):
             return None
         pad = "=" * (-len(body) % 4)
         data = json.loads(base64.urlsafe_b64decode(body + pad))
-        if int(data["exp"]) < time.time():
+        if (type(data.get("uid")) is not int or data["uid"] < 1 or type(data.get("exp")) is not int or
+                type(data.get("ver")) is not int or data["ver"] < 0 or data["exp"] <= time.time()):
             return None
-        return int(data["uid"])
+        return data
     except Exception:
         return None
+
+
+def verify_token(secret: bytes, token: str, conn: sqlite3.Connection | None = None) -> int | None:
+    data = _token_data(secret, token)
+    if data is None:
+        return None
+    if conn is not None:
+        user = get_user(conn, data["uid"])
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        if (user is None or user["token_version"] != data["ver"] or
+                conn.execute("SELECT 1 FROM revoked_tokens WHERE digest=?", (digest,)).fetchone()):
+            return None
+    return data["uid"]
+
+
+def revoke_token(conn, secret, token):
+    data = _token_data(secret, token)
+    if data is None:
+        return
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO revoked_tokens VALUES(?,?)", (hashlib.sha256(token.encode()).hexdigest(), data["exp"]))
+        conn.execute("DELETE FROM revoked_tokens WHERE digest IN (SELECT digest FROM revoked_tokens WHERE expires_at<? LIMIT 500)", (int(time.time()),))
+
+
+def revoke_sessions(conn, user_id):
+    conn.execute("UPDATE users SET token_version=token_version+1 WHERE id=?", (user_id,))
+    conn.commit()
+
+
+def set_password(conn, user_id, password):
+    encoded = hash_password(password)
+    conn.execute("UPDATE users SET password_hash=?,token_version=token_version+1 WHERE id=?", (encoded, user_id))
+    conn.commit()
+
+
+@lru_cache(maxsize=1)
+def _dummy_hash():
+    return hash_password(secrets.token_urlsafe(24))
+
+
+def login_buckets(secret, username, client):
+    # Store keyed identifiers rather than raw usernames or client addresses.
+    return [hmac.new(secret, value.encode(), hashlib.sha256).hexdigest() for value in
+            ("user:" + username.strip().casefold(), "client:" + client)]
+
+
+def check_login_limit(conn, buckets):
+    now = int(time.time())
+    for bucket, limit in zip(buckets, (5, 30)):
+        row = conn.execute("SELECT * FROM login_attempts WHERE bucket=?", (bucket,)).fetchone()
+        if row and now < row["window_start"] + 60 and row["failures"] >= limit:
+            retry = max(1, row["window_start"] + 60 - now)
+            error = ServiceError("login_limited", t("登录尝试过多，请稍后重试"), status=429, retryable=True,
+                                 next_step=t("请等待一分钟后重试，或联系管理员检查账户"))
+            error.retry_after = retry
+            raise error
+
+
+def record_login_failure(conn, buckets):
+    now = int(time.time())
+    with conn:
+        for bucket in buckets:
+            conn.execute("INSERT INTO login_attempts VALUES(?,1,?) ON CONFLICT(bucket) DO UPDATE SET "
+                         "failures=CASE WHEN window_start<=? THEN 1 ELSE failures+1 END,"
+                         "window_start=CASE WHEN window_start<=? THEN excluded.window_start ELSE window_start END",
+                         (bucket, now, now-60, now-60))
+        conn.execute("DELETE FROM login_attempts WHERE bucket IN (SELECT bucket FROM login_attempts WHERE window_start<? LIMIT 500)", (now-60,))
 
 
 # ---------------------------------------------------------------- 用户与组
@@ -167,6 +258,8 @@ def library_access(conn: sqlite3.Connection, user: sqlite3.Row, library_id: int)
     """返回 'manage' | 'edit' | 'view' | None（最高级别）。"""
     if user["is_admin"]:
         return "manage"
+    if not has_cap(conn, user, "view"):
+        return None
     rank = {"view": 1, "edit": 2, "manage": 3}
     best: str | None = None
     rows = conn.execute(
@@ -186,6 +279,8 @@ def visible_library_ids(conn: sqlite3.Connection, user: sqlite3.Row) -> list[int
     """None 表示不受限（管理员）。"""
     if user["is_admin"]:
         return None
+    if not has_cap(conn, user, "view"):
+        return []
     rows = conn.execute(
         "SELECT DISTINCT lg.library_id FROM library_grants lg "
         "JOIN user_groups ug ON ug.group_id=lg.group_id WHERE ug.user_id=?",

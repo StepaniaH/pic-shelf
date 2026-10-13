@@ -68,13 +68,15 @@ Web 生命周期最多启动两个本机子进程；同一数据目录的所有�
 
 恢复数据库使用排他维护锁，与扫描、导入和任务队列写入互斥。该文件锁不能约束直接打开 SQLite 的其他软件；恢复前仍须停止 Web、TUI 和其他元数据写入命令。任务记录随数据库备份恢复，恢复后先检查库路径与任务，再显式重试。
 
-## 数据库（schema v6）
+## 数据库（schema v7）
 
 SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
 
 | 表组 | 内容 |
 | --- | --- |
 | `users`, `groups`, `user_groups` | 账号、组与能力 |
+| `revoked_tokens`, `login_attempts` | 会话摘要撤销与有时限的登录失败计数；用户会话版本位于 users |
+| `import_source_roots` | 非管理员导入允许的源根、物理身份与移动权限 |
 | `libraries`, `library_grants` | 库目录及组的 view/edit/manage 授权 |
 | `images` | 相对路径、尺寸、文件属性、哈希、派生图路径、缺失状态 |
 | `albums`, `album_images` | 文件夹/手工专辑、成员与封面 |
@@ -101,7 +103,9 @@ SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；�
 
 图片查询、媒体、统计和关联实体查询都按可见库过滤。派生图和原图也检查路径仍位于对应根目录内，防止扫描后替换符号链接造成越界读取。全局用户数量只对管理员返回。
 
-认证使用 scrypt 口令哈希与带过期时间的 HMAC 令牌。Cookie 为 HttpOnly、SameSite=Lax；脚本使用 Bearer 认证。默认只绑定本机，HTTP 本身不提供 TLS。当前模型面向私有网络的可信使用，不具备公网服务所需的登录限流等完整防护。
+认证使用有成本上限的 scrypt 与带过期时间、用户会话版本的 HMAC 令牌。改密、账户启停和显式撤销会让旧会话失效；单次登出记录令牌摘要。Cookie 为 HttpOnly、SameSite=Lax，HTTPS 或明确 HTTPS 站点配置启用 Secure；Cookie 变更请求校验来源，脚本使用 Bearer。登录失败有短时限流，并发密码检查和请求体有上限。默认只绑定本机，HTTP 本身不提供 TLS；当前仍是私有网络内的可信共享模型。
+
+全局名称/作者资料修改需要 admin 能力，单图关联需要 tag_edit 和 edit 库授权。非管理员导入需要管理员批准源根，移动还需额外批准；预演和逐文件执行检查目录身份、符号链接与当前授权。API 和媒体均不持久缓存。完整权限表、升级影响及代理信任配置见 [安全说明](security.md)。
 
 接口路径和命令示例见 [使用说明](usage.md)，部署与卷配置见 [部署指南](deployment.md)。交互式 API 文档位于 `/api/docs`。
 

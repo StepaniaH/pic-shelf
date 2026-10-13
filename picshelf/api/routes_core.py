@@ -58,8 +58,7 @@ def list_libraries(conn: Db, user: User):
 
 @router.post("/libraries")
 def create_library(body: LibraryBody, conn: Db, user: User):
-    if not auth.has_cap(conn, user, "manage_library"):
-        raise HTTPException(status_code=403, detail=t("缺少权限：manage_library"))
+    AccessContext(user["id"]).require_capability(conn, "admin")
     if not Path(body.root_path).expanduser().is_absolute():
         raise ServiceError("library_path_invalid", t("请填写服务端的绝对目录路径"),
                            next_step=t("浏览器本地文件不会自动上传；容器内请使用挂载后的容器路径"))
@@ -99,7 +98,8 @@ def scan_library(library_id: int, request: Request, conn: Db, user: User):
     ensure_library_access(conn, user, library_id, minimum="manage")
     cfg = request.app.state.cfg
     try:
-        return indexer.scan_library(conn, cfg, library_id)
+        return indexer.scan_library(conn, cfg, library_id,
+                                    check=lambda: AccessContext(user["id"]).require_library(conn, library_id, "manage"))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -165,6 +165,7 @@ def create_album(body: AlbumBody, conn: Db, user: User):
 
 @router.get("/albums/{album_id}")
 def get_album(album_id: int, conn: Db, user: User):
+    AccessContext(user["id"]).require_album(conn, album_id)
     album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
@@ -175,6 +176,7 @@ def get_album(album_id: int, conn: Db, user: User):
 
 @router.patch("/albums/{album_id}")
 def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
+    AccessContext(user["id"]).require_album(conn, album_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
@@ -183,7 +185,11 @@ def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
     if body.cover_image_id is not None:
-        image_and_access(conn, user, body.cover_image_id)
+        image_and_access(conn, user, body.cover_image_id, "edit")
+        if not conn.execute("SELECT 1 FROM album_images WHERE album_id=? AND image_id=?",
+                            (album_id, body.cover_image_id)).fetchone():
+            raise ServiceError("album_cover_invalid", t("专辑封面必须是专辑内的图片"),
+                               next_step=t("请先将图片加入该专辑，再设置封面"))
     ops.update_album(conn, album_id, name=body.name, category=body.category,
                      description=body.description, cover_image_id=body.cover_image_id)
     return ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
@@ -192,6 +198,7 @@ def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
 @router.get("/albums/{album_id}/images")
 def album_images(album_id: int, conn: Db, user: User,
                  sort: str = "path", limit: int = 60, offset: int = 0):
+    AccessContext(user["id"]).require_album(conn, album_id)
     album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
@@ -210,6 +217,7 @@ def album_images(album_id: int, conn: Db, user: User,
 
 @router.post("/albums/{album_id}/images")
 def album_add(album_id: int, body: IdList, conn: Db, user: User):
+    AccessContext(user["id"]).require_album(conn, album_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
@@ -218,7 +226,7 @@ def album_add(album_id: int, body: IdList, conn: Db, user: User):
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"], minimum="edit")
     for iid in body.image_ids:
-        image_and_access(conn, user, iid)
+        image_and_access(conn, user, iid, "edit")
     try:
         n = ops.album_add_images(conn, album_id, body.image_ids)
     except ValueError as exc:
@@ -228,6 +236,8 @@ def album_add(album_id: int, body: IdList, conn: Db, user: User):
 
 @router.delete("/albums/{album_id}/images/{image_id}")
 def album_remove(album_id: int, image_id: int, conn: Db, user: User):
+    AccessContext(user["id"]).require_album(conn, album_id, "edit")
+    image_and_access(conn, user, image_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     album = ops.get_album(conn, album_id)
@@ -281,11 +291,10 @@ def image_detail(image_id: int, conn: Db, user: User):
 def _serve_file(cfg, path: Path, media_type: str, etag: str, download_name: str | None = None):
     if not path.is_file():
         raise HTTPException(status_code=404, detail=t("文件不存在"))
-    headers = {"Cache-Control": "private, max-age=3600", "ETag": f'"{etag}"'}
+    headers = {"Cache-Control": "private, no-store", "ETag": f'"{etag}"', "X-Content-Type-Options": "nosniff"}
     kwargs = {}
     if download_name:
         kwargs["filename"] = download_name
-        headers["Cache-Control"] = "private, max-age=86400"
     return FileResponse(str(path), media_type=media_type, headers=headers, **kwargs)
 
 
@@ -302,11 +311,7 @@ def media(kind: str, image_id: int, request: Request, conn: Db, user: User, down
             if not path.is_relative_to(cfg.media_dir.resolve()):
                 raise HTTPException(status_code=404, detail=t("文件不存在"))
             etag = f"{kind}-d{row['derivative_version']}-{row['sha256'] or image_id}"
-            response = _serve_file(cfg, path, "image/webp", etag)
-            expected = f"{(row['sha256'] or '')[:16]}-d{row['derivative_version']}"
-            if request.query_params.get("v") != expected:
-                response.headers["Cache-Control"] = "private, no-cache"
-            return response
+            return _serve_file(cfg, path, "image/webp", etag)
         kind = "original"  # 缩略图缺失时回退原图
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
     root = Path(lib["root_path"]).resolve()
@@ -322,6 +327,9 @@ def media(kind: str, image_id: int, request: Request, conn: Db, user: User, down
     if not path.is_relative_to(root):
         raise HTTPException(status_code=404, detail=t("文件不存在"))
     media_type = mimetypes.guess_type(row["filename"])[0] or "application/octet-stream"
+    if media_type not in {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff", "image/avif"}:
+        media_type = "application/octet-stream"
+        download = 1
     return _serve_file(cfg, path, media_type, row["sha256"] or str(image_id),
                        download_name=row["filename"] if download else None)
 
@@ -346,6 +354,9 @@ def list_tags(conn: Db, user: User, q: str | None = None, limit: int = 50):
 def create_tag(body: TagBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
+    existing = names.resolve(conn, "tag", body.name)
+    if existing:
+        ensure_catalog_access(conn, user, "tag", existing)
     try:
         tag_id = ops.ensure_tag(conn, body.name, body.category)
     except ValueError as exc:
@@ -356,8 +367,7 @@ def create_tag(body: TagBody, conn: Db, user: User):
 
 @router.patch("/tags/{tag_id}")
 def rename_tag(tag_id: int, body: TagPatch, conn: Db, user: User):
-    if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
+    AccessContext(user["id"]).require_capability(conn, "admin")
     ensure_catalog_access(conn, user, "tag", tag_id)
     try:
         return ops.rename_tag(conn, tag_id, body.name)
@@ -411,8 +421,7 @@ def get_artist(artist_id: int, conn: Db, user: User):
 
 @router.patch("/artists/{artist_id}")
 def patch_artist(artist_id: int, body: ArtistPatch, conn: Db, user: User):
-    if not auth.has_cap(conn, user, "tag_edit"):
-        raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
+    AccessContext(user["id"]).require_capability(conn, "admin")
     ensure_catalog_access(conn, user, "artist", artist_id)
     try:
         ops.update_artist(conn, artist_id, name=body.name, aliases=body.aliases,
