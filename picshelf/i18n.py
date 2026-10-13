@@ -65,6 +65,21 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "首次核对根目录时未找到匹配的旧图片，未标记缺失": "Initial root verification found no matching old images; files were not marked missing",
+    "请检查挂载和库路径，恢复可核对的原图片后重新扫描": "Check the mount and library path, restore verifiable originals, then scan again",
+    "库目录身份已变化，未标记缺失图片": "The library directory identity changed; images were not marked missing",
+    "请恢复原目录或挂载；如需迁移，请先核对根目录和图片内容": "Restore the original directory or mount; verify roots and image contents before migrating",
+    "扫描期间图片内容变化，请保存文件后重新扫描": "The image changed during scanning; finish saving the file and scan again",
+    "多个相同内容文件无法唯一匹配原记录：{path}；请恢复原路径后重扫": "Identical files cannot be uniquely matched to previous records: {path}; restore their original paths and scan again",
+    "图片超过解码资源预算，已跳过": "The image exceeds the decoding resource budget and was skipped",
+    "请在独立副本中缩小图片后重试；原文件未更改": "Reduce the image size in an independent copy and retry; the original file was not changed",
+    "无法读取图片的颜色配置，已保留原文件": "The color profile could not be read; the original file was preserved",
+    "请用图像编辑器检查独立副本的颜色配置，再重新扫描": "Check the color profile in an independent copy using an image editor, then scan again",
+    "无法解码图片，请检查文件完整性及已安装的格式支持": "Cannot decode the image; check its integrity and installed format support",
+    "请先用图像查看器打开独立副本，确认可读取后重扫": "Open an independent copy in an image viewer to verify it can be read, then scan again",
+    "仅重建任务支持按算法版本筛选": "Filtering by algorithm version is available only for rebuild tasks",
+    "仅重建算法版本过时的派生图和指纹": "Rebuild only derivatives and fingerprints with outdated algorithm versions",
+    "重建派生图片与指纹，保留原图及人工元数据；输出 JSON。": "Rebuild derivatives and fingerprints, preserving originals and manual metadata; output JSON.",
     "操作正在由其他进程执行": "Another process is using this operation",
     "请等待当前任务结束后重试": "Wait for the current task to finish, then retry",
     "后台执行单元正在使用中": "Background execution slots are busy",

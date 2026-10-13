@@ -50,7 +50,7 @@ def _catalog_write(function):
 
 
 @_catalog_write
-def submit(conn, access, kind, library_id, *, request_key=None, plan_id=None, full=False) -> dict:
+def submit(conn, access, kind, library_id, *, request_key=None, plan_id=None, full=False, outdated_only=False) -> dict:
     access.require_library(conn, library_id, "manage")
     if kind not in ("scan", "rebuild", "import"):
         raise _error("invalid_job", "不支持此任务类型", status=400)
@@ -62,6 +62,10 @@ def submit(conn, access, kind, library_id, *, request_key=None, plan_id=None, fu
         if plan["library"]["id"] != library_id:
             raise _error("plan_scope_changed", "源目录或目标库已变化，请重新预演")
     signature = {"plan_id": plan_id if kind == "import" else None, "full": bool(full or kind == "rebuild")}
+    if outdated_only:
+        if kind != "rebuild":
+            raise _error("invalid_job", "仅重建任务支持按算法版本筛选", status=400)
+        signature["outdated_only"] = True
     existing = conn.execute("SELECT * FROM jobs WHERE created_by=? AND request_key=?",
                             (access.user_id, request_key)).fetchone()
     if existing:
@@ -84,7 +88,7 @@ def submit(conn, access, kind, library_id, *, request_key=None, plan_id=None, fu
                                                        request_key, json.dumps(params), now, now))
     except sqlite3.IntegrityError:
         # Another request with the same key committed between lookup and insert.
-        return submit(conn, access, kind, library_id, request_key=request_key, plan_id=plan_id, full=full)
+        return submit(conn, access, kind, library_id, request_key=request_key, plan_id=plan_id, full=full, outdated_only=outdated_only)
     return get_job(conn, access, job_id)
 
 
@@ -103,6 +107,11 @@ def reconcile(conn, cfg, job_id):
                 conn.execute("UPDATE import_plans SET state='interrupted' WHERE id=? AND state IN ('running','cancelling')",
                              (plan_id,))
                 _import_progress(conn, job_id, plan_id)
+            else:
+                scan_id = json.loads(row["params"]).get("active_scan_id")
+                if scan_id:
+                    conn.execute("UPDATE scans SET status='interrupted',finished_at=? WHERE id=? AND status='running'",
+                                 (db.utcnow(), scan_id))
             conn.commit()
     except ServiceError as exc:
         if exc.code != "operation_busy":
@@ -193,14 +202,21 @@ def _counts(conn, job_id):
 def _scan(conn, cfg, row, params, check):
     job_id, root = row["id"], Path(params["root"])
     if not params["manifest_ready"]:
-        paths = {item[0] for item in conn.execute("SELECT rel_path FROM images WHERE library_id=?", (row["library_id"],))}
+        if params["input"].get("outdated_only"):
+            from .hashing import DERIVATIVE_VERSION, PHASH_VERSION
+            paths = {item[0] for item in conn.execute(
+                "SELECT rel_path FROM images WHERE library_id=? AND missing=0 AND (phash_version!=? OR derivative_version!=?)",
+                (row["library_id"], PHASH_VERSION, DERIVATIVE_VERSION))}
+        else:
+            paths = {item[0] for item in conn.execute("SELECT rel_path FROM images WHERE library_id=?", (row["library_id"],))}
 
         def walk_error(exc):
             raise _error("scan_unavailable", "无法读取完整目录，未开始扫描，请检查挂载与权限", retryable=True)
 
-        for path in indexer._iter_image_files(root, onerror=walk_error):
-            check()
-            paths.add(path.relative_to(root).as_posix())
+        if not params["input"].get("outdated_only"):
+            for path in indexer._iter_image_files(root, onerror=walk_error):
+                check()
+                paths.add(path.relative_to(root).as_posix())
         params["manifest_ready"] = True
         with conn:
             conn.executemany("INSERT INTO job_items(job_id,item_key) VALUES(?,?)", [(job_id, path) for path in sorted(paths)])
@@ -214,8 +230,14 @@ def _scan(conn, cfg, row, params, check):
                       "\n".join(errors)[:4096] if errors else None, job_id, path))
         _counts(conn, job_id)
 
+    def progress(stats):
+        if stats.get("scan_id"):
+            params["active_scan_id"] = stats["scan_id"]
+            conn.execute("UPDATE jobs SET params=? WHERE id=?", (json.dumps(params), job_id))
+            conn.commit()
+
     result = indexer.scan_library(conn, cfg, row["library_id"], full=params["input"]["full"],
-                                  check=check, item_result=item_result, only_paths=paths)
+                                  check=check, item_result=item_result, only_paths=paths, progress=progress)
     conn.execute("UPDATE job_items SET state='failed',error_code='file_unavailable',detail=? "
                  "WHERE job_id=? AND state='pending'", (t("文件未能处理，请检查路径后重试"), job_id))
     _counts(conn, job_id)

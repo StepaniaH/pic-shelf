@@ -108,6 +108,62 @@ Scanning preserves image IDs, ratings, tags and notes when an unchanged file mov
 
 Incremental scans reuse files with unchanged size and modification time when both derivative images exist. Use `scan <library> --full` when file contents may have changed without changing these attributes, or to rebuild all hashes and thumbnails. Animated formats use the first frame for hashing and derivatives; the original file remains available.
 
+### Scan safety and derivative versions
+
+A one-to-one content match preserves the image record when a file moves. If
+several missing records or new paths share the same bytes, scanning reports an
+ambiguous move. It keeps the original IDs and manual metadata, marks the absent
+paths missing, and leaves ambiguous new paths unassigned. Restore their original
+paths and scan again before reorganizing them individually.
+
+A successful initial scan records the physical root directory identity. Replacing
+the directory, changing a root symlink, or losing a mount stops missing-file
+classification. An upgraded catalog with no recorded directory identity also
+refuses to mark everything missing when its first verification finds no known
+content. Check the mount and restore verifiable original files before retrying.
+A genuinely empty directory with the same recorded identity can mark files missing.
+
+Read/decode errors use `scan_error_code` and `scan_error_detail`, independently of
+`missing`. A successful later scan clears these errors. Original files and manual
+metadata remain intact. New corrupt files can have records without derivatives.
+
+```bash
+picshelf rebuild collection --outdated-only
+picshelf rebuild collection --outdated-only --background
+picshelf scan collection --full --json
+```
+
+Derivative and fingerprint algorithm versions are stored separately. Legacy
+records use version 0; startup does not rebuild them. Version 2 uses EXIF orientation,
+sRGB color conversion and preserved alpha. Its 64-bit perceptual hash composites
+transparency onto white; comparisons do not mix different algorithm versions.
+The explicit outdated-only rebuild updates that subset while preserving current
+outputs. Deleting a derivative and rescanning repairs it without changing image IDs.
+
+Both outputs use versioned filenames. The catalog references them only after
+encoding and source checks succeed, so a failed preview write preserves the previous
+visible derivatives. Unreferenced complete derivatives can remain after failure;
+they are cache data, not copies of the original collection.
+
+| Input | Derived output |
+| --- | --- |
+| JPEG/JFIF, PNG, BMP, WebP | First image; EXIF orientation, aspect ratio and alpha where present |
+| GIF / animated WebP | First frame; original animation remains available |
+| TIFF | First page; original multipage file remains available |
+| AVIF | Available when the installed Pillow build includes its decoder |
+| Grayscale / untagged CMYK | Basic RGB conversion; untagged CMYK has no calibrated color guarantee |
+| Embedded ICC | Converted to sRGB with LittleCMS; invalid profiles produce an actionable item error |
+
+The browser must support the original format to display it directly; WebP
+thumbnails and previews provide a common derived format. Professional color
+reference coverage is separate from generated geometry/color tests.
+
+Files above 256 MiB encoded size or 33,554,432 decoded pixels are rejected before
+pixel decoding. The pixel bound uses a 512 MiB working-input budget at 16 bytes per
+pixel; native codec RSS is not a hard-capped process limit. Background concurrency
+remains two tasks. Large files can require an independent reduced copy; Pic Shelf
+never resizes or rewrites their originals.
+
 ### Background tasks
 
 The Web administrator's scan and import actions submit persistent tasks. Open
@@ -184,7 +240,7 @@ Interactive documentation is available at `/api/docs`; the machine-readable sche
 | Saved import plan / pages | `GET /import/plans/{plan-id}?offset=0&limit=300` |
 | Execute or retry the saved plan | `POST /import/plans/{plan-id}/execute` with `confirm: true`, optionally `retry: true` |
 | Cancel at the next file boundary | `POST /import/plans/{plan-id}/cancel` |
-| Queue a scan / derivative rebuild | `POST /libraries/{id}/{scan-jobs,rebuild-jobs}` with `request_key`, optionally `full` for scans |
+| Queue a scan / derivative rebuild | `POST /libraries/{id}/{scan-jobs,rebuild-jobs}` with `request_key`, optionally `full` for scans or `outdated_only` for rebuilds |
 | Queue the saved import | `POST /import/plans/{plan-id}/jobs` with `confirm: true` and `request_key` |
 | Task list / paginated item results | `GET /jobs`, `GET /jobs/{id}?offset=0&limit=100` |
 | Cancel / retry unfinished task items | `POST /jobs/{id}/{cancel,retry}` |

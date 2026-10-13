@@ -2,16 +2,27 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import tempfile
+import warnings
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
-try:  # Pillow < 10 兼容；AVIF 读取需要较新版本
-    Image.MAX_IMAGE_PIXELS = 500_000_000  # 5 亿像素上限，防解压炸弹误伤大图
-except Exception:  # pragma: no cover
-    pass
+from .errors import ServiceError
+from .i18n import t
+
+PHASH_VERSION = 2
+DERIVATIVE_VERSION = 2
+# Admission budgets bound decoded dimensions and input size before allocation.
+# They are not an operating-system RSS limit for native codecs.
+MAX_WORKING_BYTES = 512 * 1024 * 1024
+MAX_PIXELS = MAX_WORKING_BYTES // 16
+MAX_SOURCE_BYTES = 256 * 1024 * 1024
+_SRGB = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+Image.init()
+READ_FORMATS = [name for name in ("JPEG", "PNG", "GIF", "WEBP", "BMP", "TIFF", "AVIF") if name in Image.OPEN]
 
 try:
     import imagehash
@@ -40,9 +51,44 @@ def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
 
 def _open_image(path: Path) -> Image.Image:
     # 将像素与文件句柄分离，动图/多页文件也在离开时关闭。
-    with Image.open(path) as img:
-        img.seek(0)
-        return ImageOps.exif_transpose(img)
+    def too_large():
+        return ServiceError("image_too_large", t("图片超过解码资源预算，已跳过"),
+                            next_step=t("请在独立副本中缩小图片后重试；原文件未更改"))
+    if path.stat().st_size > MAX_SOURCE_BYTES:
+        raise too_large()
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(path, formats=READ_FORMATS) as img:
+                img.seek(0)
+                if img.width * img.height > MAX_PIXELS:
+                    raise too_large()
+                return ImageOps.exif_transpose(img)
+    except (Image.DecompressionBombWarning, Image.DecompressionBombError) as exc:
+        raise too_large() from exc
+    except UnidentifiedImageError as exc:
+        raise ServiceError("image_decode_error", t("无法解码图片，请检查文件完整性及已安装的格式支持"),
+                           next_step=t("请先用图像查看器打开独立副本，确认可读取后重扫")) from exc
+
+
+def _normalized_color(img: Image.Image) -> Image.Image:
+    alpha = img.convert("RGBA").getchannel("A") if img.mode in ("P", "LA", "RGBA") else None
+    profile = img.info.get("icc_profile")
+    if profile:
+        try:
+            source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile))
+            color_input = img if img.mode in ("RGB", "CMYK", "L", "LAB") else img.convert("RGB")
+            base = ImageCms.profileToProfile(color_input, source_profile, _SRGB, outputMode="RGB",
+                                            renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC)
+        except (ImageCms.PyCMSError, OSError, ValueError) as exc:
+            raise ServiceError("invalid_color_profile", t("无法读取图片的颜色配置，已保留原文件"),
+                               next_step=t("请用图像编辑器检查独立副本的颜色配置，再重新扫描")) from exc
+    else:
+        base = img.convert("RGB")
+    if alpha is not None:
+        base.putalpha(alpha)
+        alpha.close()
+    return base
 
 
 def phash_file(path: Path) -> str | None:
@@ -51,7 +97,17 @@ def phash_file(path: Path) -> str | None:
         return None
     try:
         with _open_image(path) as img:
-            return str(imagehash.phash(img.convert("RGB"), hash_size=8))
+            with _normalized_color(img) as base:
+                # Normalize hidden transparent color onto white at hash size.
+                small = base.resize((32, 32), Image.Resampling.LANCZOS)
+                if small.mode == "RGBA":
+                    background = Image.new("RGBA", small.size, "white")
+                    flattened = Image.alpha_composite(background, small).convert("RGB")
+                    small.close()
+                    background.close()
+                    small = flattened
+                with small:
+                    return str(imagehash.phash(small, hash_size=8))
     except Exception:
         return None
 
@@ -72,7 +128,9 @@ def _save_webp(img: Image.Image, path: Path, quality: int) -> None:
     fd, name = tempfile.mkstemp(prefix=".thumb-", suffix=".webp", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as output:
-            img.save(output, "WEBP", quality=quality, method=4)
+            img.save(output, "WEBP", quality=quality, method=4, icc_profile=_SRGB.tobytes())
+            output.flush()
+            os.fsync(output.fileno())
         os.replace(name, path)
     finally:
         Path(name).unlink(missing_ok=True)
@@ -89,23 +147,18 @@ def make_derivatives(
     返回 (thumb_rel, preview_rel, width, height)；thumb/preview 相对 media_dir。
     无法解码时抛异常，由调用方记录为扫描错误。
     """
-    with _open_image(src) as img:
+    digest = sha256_file(src)
+    with _open_image(src) as img, _normalized_color(img) as base:
         width, height = img.size
-        if img.mode in ("P", "LA") or (img.mode == "RGBA"):
-            # 保留透明通道（PNG 抠图类）；其余统一 RGB
-            base = img.convert("RGBA")
-        else:
-            base = img.convert("RGB")
-
-        thumb = base.copy()
-        thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.Resampling.LANCZOS)
-        tpath = _shard_dir(thumbs_dir, image_id) / f"{image_id}.webp"
-        _save_webp(thumb, tpath, quality=82)
-
-        preview = base.copy()
-        preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX), Image.LANCZOS)
-        ppath = _shard_dir(previews_dir, image_id) / f"{image_id}.webp"
-        _save_webp(preview, ppath, quality=85)
+        name = f"{image_id}-v{DERIVATIVE_VERSION}-{digest}.webp"
+        tpath = _shard_dir(thumbs_dir, image_id) / name
+        ppath = _shard_dir(previews_dir, image_id) / name
+        with base.copy() as thumb:
+            thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.Resampling.LANCZOS)
+            _save_webp(thumb, tpath, quality=82)
+        with base.copy() as preview:
+            preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX), Image.Resampling.LANCZOS)
+            _save_webp(preview, ppath, quality=85)
 
     thumb_rel = str(tpath.relative_to(thumbs_dir.parent))
     preview_rel = str(ppath.relative_to(previews_dir.parent))

@@ -329,6 +329,25 @@ def scan(cfg: Config, library_name: str, full: bool, background: bool, as_json: 
 
 # ---------------------------------------------------------------- 浏览
 
+@main.command("rebuild")
+@click.argument("library_name")
+@click.option("--outdated-only", is_flag=True, help="仅重建算法版本过时的派生图和指纹")
+@click.option("--background", is_flag=True, help="只排队，交由 Web 服务或 picshelf worker 执行")
+@click.pass_obj
+def rebuild(cfg: Config, library_name: str, outdated_only: bool, background: bool):
+    """重建派生图片与指纹，保留原图及人工元数据；输出 JSON。"""
+    from . import jobs
+    conn = _conn(cfg)
+    library = libsvc.find_library(conn, library_name)
+    if library is None:
+        raise click.ClickException(t("找不到库：{library_name}", library_name=library_name))
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    queued = jobs.submit(conn, access, "rebuild", library["id"], outdated_only=outdated_only)
+    result = queued if background else jobs.wait(cfg, access, queued["id"])
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not background and result["state"] != "succeeded":
+        raise click.exceptions.Exit(1)
+
 def _base_where(conn, user, opts) -> tuple[list[str], dict]:
     """把 CLI 过滤选项转成 search 的 extra_where/extra_params。"""
     extra_where: list[str] = []

@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -278,7 +278,18 @@ CREATE INDEX idx_jobs_queue ON jobs(state, created_at);
 CREATE INDEX idx_jobs_owner ON jobs(created_by, created_at);
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3}
+_SCHEMA_V4 = """
+ALTER TABLE libraries ADD COLUMN root_device INTEGER;
+ALTER TABLE libraries ADD COLUMN root_inode INTEGER;
+ALTER TABLE images ADD COLUMN phash_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE images ADD COLUMN derivative_version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE images ADD COLUMN scan_error_code TEXT;
+ALTER TABLE images ADD COLUMN scan_error_detail TEXT;
+ALTER TABLE images ADD COLUMN verified_at TEXT;
+CREATE INDEX idx_images_encoding_version ON images(library_id, derivative_version, phash_version);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4}
 
 
 def utcnow() -> str:

@@ -15,6 +15,7 @@ class SubmitJob(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_key: str = Field(min_length=1, max_length=128)
     full: bool = False
+    outdated_only: bool = False
 
 
 class SubmitImport(BaseModel):
@@ -26,14 +27,15 @@ class SubmitImport(BaseModel):
 @router.post("/libraries/{library_id}/scan-jobs", status_code=202)
 def submit_scan(library_id: int, body: SubmitJob, request: Request, conn: Db, user: User):
     value = jobs.submit(conn, AccessContext(user["id"]), "scan", library_id,
-                         request_key=body.request_key, full=body.full)
+                         request_key=body.request_key, full=body.full, outdated_only=body.outdated_only)
     request.app.state.workers.start()
     return value
 
 
 @router.post("/libraries/{library_id}/rebuild-jobs", status_code=202)
 def submit_rebuild(library_id: int, body: SubmitJob, request: Request, conn: Db, user: User):
-    value = jobs.submit(conn, AccessContext(user["id"]), "rebuild", library_id, request_key=body.request_key)
+    value = jobs.submit(conn, AccessContext(user["id"]), "rebuild", library_id,
+                         request_key=body.request_key, outdated_only=body.outdated_only)
     request.app.state.workers.start()
     return value
 

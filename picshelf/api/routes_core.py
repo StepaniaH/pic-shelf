@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, search
 from ..access import AccessContext
+from ..errors import ServiceError
 from .deps import Db, User, ensure_catalog_access, ensure_library_access, image_and_access, require_cap, serialize_image
 from ..i18n import t
 
@@ -299,10 +300,19 @@ def media(kind: str, image_id: int, request: Request, conn: Db, user: User, down
             path = (cfg.media_dir / rel).resolve()
             if not path.is_relative_to(cfg.media_dir.resolve()):
                 raise HTTPException(status_code=404, detail=t("文件不存在"))
-            return _serve_file(cfg, path, "image/webp", row["sha256"] or str(image_id))
+            etag = f"{kind}-d{row['derivative_version']}-{row['sha256'] or image_id}"
+            return _serve_file(cfg, path, "image/webp", etag)
         kind = "original"  # 缩略图缺失时回退原图
-    lib = conn.execute("SELECT root_path FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
+    lib = conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
     root = Path(lib["root_path"]).resolve()
+    try:
+        identity = root.stat()
+    except OSError as exc:
+        raise ServiceError("library_unavailable", t("库目录暂不可访问，请检查挂载与权限"), status=503,
+                           next_step=t("请恢复原目录或挂载；如需迁移，请先核对根目录和图片内容")) from exc
+    if lib["root_device"] is not None and (identity.st_dev, identity.st_ino) != (lib["root_device"], lib["root_inode"]):
+        raise ServiceError("library_root_changed", t("库目录身份已变化，未标记缺失图片"), status=409,
+                           next_step=t("请恢复原目录或挂载；如需迁移，请先核对根目录和图片内容"))
     path = (root / row["rel_path"]).resolve()
     if not path.is_relative_to(root):
         raise HTTPException(status_code=404, detail=t("文件不存在"))

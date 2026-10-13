@@ -91,8 +91,9 @@ def ensure_catalog_access(conn: sqlite3.Connection, user: sqlite3.Row,
 def serialize_image(d: dict, *, base: str = "/api/v1/media") -> dict:
     iid = d.get("id")
     if iid is not None:
-        version = f"?v={d['sha256'][:16]}" if d.get("sha256") else ""
+        original_version = f"?v={d['sha256'][:16]}" if d.get("sha256") else ""
+        version = original_version + f"-d{d.get('derivative_version', 0)}" if original_version else ""
         d.setdefault("thumb_url", f"{base}/thumb/{iid}{version}")
         d.setdefault("preview_url", f"{base}/preview/{iid}{version}")
-        d.setdefault("original_url", f"{base}/original/{iid}{version}")
+        d.setdefault("original_url", f"{base}/original/{iid}{original_version}")
     return d

@@ -113,7 +113,7 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
     """
     if not 0 <= threshold <= 64:
         raise ValueError(t("相似距离必须在 0–64 之间"))
-    sql = "SELECT id, phash, filename FROM images WHERE missing=0 AND phash IS NOT NULL"
+    sql = "SELECT id,phash,phash_version,filename FROM images WHERE missing=0 AND phash IS NOT NULL AND scan_error_code IS NULL"
     params: list = []
     if allowed is not None:
         if not allowed:
@@ -123,24 +123,26 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
         params += allowed
     rows = conn.execute(sql + " ORDER BY id", params).fetchall()
     groups: list[list[dict]] = []
-    representatives: list[int] = []
-    placed: dict[int, int] = {}
+    representatives: list[tuple[int, int]] = []
+    placed: dict[tuple[int, int], int] = {}
     for r in rows:
         ph = int(r["phash"], 16)
-        target = placed.get(ph)
+        version = int(r["phash_version"])
+        key = (version, ph)
+        target = placed.get(key)
         if target is None:
-            for gi, representative in enumerate(representatives):
-                if (representative ^ ph).bit_count() <= threshold:
+            for gi, (algorithm, representative) in enumerate(representatives):
+                if algorithm == version and (representative ^ ph).bit_count() <= threshold:
                     target = gi
                     break
         entry = {"id": int(r["id"]), "phash": ph, "filename": r["filename"]}
         if target is None:
             target = len(groups)
-            representatives.append(ph)
+            representatives.append((version, ph))
             groups.append([entry])
         else:
             groups[target].append(entry)
-        placed[ph] = target
+        placed[key] = target
     return [
         {"count": len(g), "images": [{"id": e["id"], "filename": e["filename"],
                                       "distance": (g[0]["phash"] ^ e["phash"]).bit_count()}
