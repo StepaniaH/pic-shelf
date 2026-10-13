@@ -17,7 +17,7 @@ from ..i18n import set_lang as _set_lang
 from ..i18n import t
 from .security import check_browser_request
 from ..worker import WorkerManager
-from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata
+from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata, routes_batches
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -105,6 +105,7 @@ def create_app(cfg: Config) -> FastAPI:
         routes_admin.router,
         routes_jobs.router,
         routes_metadata.router,
+        routes_batches.router,
     ):
         api.include_router(router)
     app.include_router(api)

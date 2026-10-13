@@ -68,7 +68,7 @@ Web 生命周期最多启动两个本机子进程；同一数据目录的所有�
 
 恢复数据库使用排他维护锁，与扫描、导入和任务队列写入互斥。该文件锁不能约束直接打开 SQLite 的其他软件；恢复前仍须停止 Web、TUI 和其他元数据写入命令。任务记录随数据库备份恢复，恢复后先检查库路径与任务，再显式重试。
 
-## 数据库（schema v7）
+## 数据库（schema v8）
 
 SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
 
@@ -77,6 +77,7 @@ SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；�
 | `users`, `groups`, `user_groups` | 账号、组与能力 |
 | `revoked_tokens`, `login_attempts` | 会话摘要撤销与有时限的登录失败计数；用户会话版本位于 users |
 | `import_source_roots` | 非管理员导入允许的源根、物理身份与移动权限 |
+| `metadata_batches`, `metadata_batch_items`, `metadata_versions` | 固定选择、分块事务、逐项前后状态及存储层字段版本，用于冲突检测与撤销 |
 | `libraries`, `library_grants` | 库目录及组的 view/edit/manage 授权 |
 | `images` | 相对路径、尺寸、文件属性、哈希、派生图路径、缺失状态 |
 | `albums`, `album_images` | 文件夹/手工专辑、成员与封面 |

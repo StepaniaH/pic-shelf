@@ -4,6 +4,8 @@ Pic Shelf keeps image files in registered libraries and stores metadata in a sep
 
 See [Authentication and shared-library permissions](security.md) for role requirements, approved import sources, session revocation, browser origins and upgrade compatibility. After upgrading to schema 7, sign in again and replace older script tokens. Cookie-based scripts must supply the matching Origin; Bearer scripts do not need that header.
 
+Use [batch organization and undo](batches.md) to select images across pages, preview a fixed set, edit metadata, and restore changes without overwriting later edits. The Unorganized view follows each user's explicit workflow state.
+
 ## Commands
 
 Use `picshelf --help` and `picshelf <command> --help` for the complete options. In a source checkout, the executable is `.venv/bin/picshelf`. Global options, including `--data` and `--lang`, precede the command.

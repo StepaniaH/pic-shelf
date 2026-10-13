@@ -4,6 +4,7 @@ import * as views from "./views.js";
 import { renderAdmin } from "./admin.js";
 import { t, getLocale, setLocale } from "./i18n.js";
 import { activateDialog } from "./dialog.js";
+import {renderBatchHistory} from "./batches.js";
 
 export const state = { user: null, route: null };
 
@@ -199,6 +200,9 @@ async function route() {
       case "tags": await views.renderTags(target); break;
       case "tag": await views.renderTag(target, r.id); break;
       case "favorites": await views.renderFavorites(target); break;
+      case "inbox": await views.renderInbox(target); break;
+      case "batches": await renderBatchHistory(target); break;
+      case "batch": await renderBatchHistory(target,r.id); break;
       case "search": await views.renderSearch(target, r.params.get("q") || ""); break;
       case "library": await views.renderLibrary(target, Number(r.id)); break;
       case "admin": await renderAdmin(target, r.params); break;

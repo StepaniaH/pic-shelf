@@ -23,6 +23,7 @@ class ImageQuery:
     tag: str | None = None
     favorites: bool = False
     rating_min: int | None = None
+    workflow: str | None = None
 
 
 def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQuery) -> dict:
@@ -30,6 +31,12 @@ def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQue
     if spec.album_id is not None:
         access.require_album(conn, spec.album_id)
     clauses, params = [], {}
+    if spec.workflow is not None:
+        if spec.workflow not in ("inbox","done"):
+            raise ServiceError("query_invalid",t("整理状态必须为 inbox 或 done"),
+                               next_step=t("请检查搜索条件后重试"))
+        clauses.append("COALESCE((SELECT state FROM image_workflow w WHERE w.image_id=i.id AND w.user_id=:uid),'inbox')=:f_workflow")
+        params["f_workflow"] = spec.workflow
     if spec.library_id is not None:
         clauses.append("i.library_id=:f_lib")
         params["f_lib"] = spec.library_id

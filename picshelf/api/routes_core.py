@@ -260,14 +260,14 @@ def list_images(
     q: str = "", sort: str = "newest", limit: int = 60, offset: int = 0,
     library_id: int | None = None, album_id: int | None = None,
     artist_id: int | None = None, tag: str | None = None,
-    favorites: bool = False, rating_min: int | None = None,
+    favorites: bool = False, rating_min: int | None = None, workflow: Literal["inbox","done"] | None = None,
 ):
     if library_id is not None:
         ensure_library_access(conn, user, library_id)
     res = catalog.query_images(conn, AccessContext(user["id"]), catalog.ImageQuery(
         query=q, sort=sort, limit=limit, offset=offset, library_id=library_id,
         album_id=album_id, artist_id=artist_id, tag=tag,
-        favorites=favorites, rating_min=rating_min))
+        favorites=favorites, rating_min=rating_min, workflow=workflow))
     res["items"] = [serialize_image(i) for i in res["items"]]
     return res
 

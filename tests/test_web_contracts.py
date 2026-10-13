@@ -59,3 +59,26 @@ assert.equal(formatTimestamp(null), '—');
 """
     result = subprocess.run([node, "--input-type=module", "-e", script, module], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_selection_keeps_explicit_cross_page_ids_and_separates_all_matching():
+    node=shutil.which("node")
+    if not node:pytest.skip("Node.js is required for selection contracts")
+    module=(Path(__file__).parents[1]/"picshelf/web/js/selection.js").as_uri()
+    script="""
+const {ImageSelection}=await import(process.argv[1]);
+const {strict:assert}=await import('node:assert');
+const selected=new ImageSelection();
+const source={q:'tag:blue',sort:'path',filters:{library_id:3}};
+selected.toggle(7,true);selected.toggle(131,true);
+assert.deepEqual(selected.payload(source),{image_ids:[7,131]});
+selected.loaded([{id:7},{id:9}]);
+assert.deepEqual(selected.payload(source),{image_ids:[7,131,9]});
+selected.toggle(7,false);
+assert.deepEqual(selected.payload(source),{image_ids:[131,9]});
+selected.all();
+assert.deepEqual(selected.payload(source),{query:{query:'tag:blue',sort:'path',library_id:3}});
+selected.clear();assert.deepEqual(selected.payload(source),{image_ids:[]});
+"""
+    result=subprocess.run([node,"--input-type=module","-e",script,module],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stderr

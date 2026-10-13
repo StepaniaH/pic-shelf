@@ -23,7 +23,7 @@ from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
 from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
-from . import entity_edits, metadata as metasvc, names as catalog_names, source_access
+from . import batches, entity_edits, metadata as metasvc, names as catalog_names, source_access
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -266,6 +266,89 @@ def source_revoke(cfg, root_id):
     conn = _conn(cfg)
     access = AccessContext(_acting_user(conn)["id"], local_admin=True)
     click.echo(json.dumps(source_access.revoke(conn, access, root_id)))
+
+
+@main.group("batch")
+def batch_cmd():
+    """预演、执行和撤销元数据批次。"""
+
+
+def _batch_access(conn,username):
+    return AccessContext(_acting_user(conn,username)["id"],local_admin=username is None)
+
+
+@batch_cmd.command("preview")
+@click.argument("image_ids",nargs=-1,type=int)
+@click.option("--action",required=True,help="操作 JSON，例如 {\"kind\":\"rating\",\"value\":0}")
+@click.option("--query-json",default=None,help="固定全部匹配结果的查询 JSON，不能同时提供图片 ID")
+@click.option("--request-key",default=None)
+@click.option("--user",default=None)
+@click.pass_obj
+def batch_preview(cfg,image_ids,action,query_json,request_key,user):
+    conn = _conn(cfg)
+    try:
+        operation = json.loads(action)
+        query = json.loads(query_json) if query_json is not None else None
+    except ValueError as exc:
+        raise click.ClickException(t("批量操作或查询 JSON 无效")) from exc
+    result = batches.preview(conn,_batch_access(conn,user),operation,image_ids=list(image_ids) if image_ids else None,
+                             query=query,request_key=request_key)
+    click.echo(json.dumps(result,ensure_ascii=False))
+
+
+@batch_cmd.command("show")
+@click.argument("batch_id")
+@click.option("--user",default=None)
+@click.option("--offset",default=0,type=click.IntRange(min=0))
+@click.option("--limit",default=200,type=click.IntRange(1,1000))
+@click.pass_obj
+def batch_show(cfg,batch_id,user,offset,limit):
+    conn = _conn(cfg)
+    click.echo(json.dumps(batches.get(conn,_batch_access(conn,user),batch_id,offset=offset,limit=limit),ensure_ascii=False))
+
+
+@batch_cmd.command("list")
+@click.option("--user",default=None)
+@click.option("--offset",default=0,type=click.IntRange(min=0))
+@click.pass_obj
+def batch_list(cfg,user,offset):
+    conn = _conn(cfg)
+    click.echo(json.dumps(batches.list_batches(conn,_batch_access(conn,user),offset=offset),ensure_ascii=False))
+
+
+@batch_cmd.command("execute")
+@click.argument("batch_id")
+@click.option("--yes",is_flag=True)
+@click.option("--background",is_flag=True)
+@click.option("--retry",is_flag=True)
+@click.option("--user",default=None)
+@click.pass_obj
+def batch_execute(cfg,batch_id,yes,background,retry,user):
+    if not yes:raise click.ClickException(t("请先查看批次，再使用 --yes 确认执行"))
+    conn = _conn(cfg)
+    access = _batch_access(conn,user)
+    result = batches.queue(conn,access,batch_id,retry=retry) if background else batches.execute(conn,cfg,access,batch_id,retry=retry)
+    click.echo(json.dumps(result,ensure_ascii=False))
+
+
+@batch_cmd.command("cancel")
+@click.argument("batch_id")
+@click.option("--user",default=None)
+@click.pass_obj
+def batch_cancel(cfg,batch_id,user):
+    conn = _conn(cfg)
+    click.echo(json.dumps(batches.cancel(conn,_batch_access(conn,user),batch_id),ensure_ascii=False))
+
+
+@batch_cmd.command("undo")
+@click.argument("batch_id")
+@click.option("--yes",is_flag=True)
+@click.option("--user",default=None)
+@click.pass_obj
+def batch_undo(cfg,batch_id,yes,user):
+    if not yes:raise click.ClickException(t("请先查看批次，再使用 --yes 确认撤销"))
+    conn = _conn(cfg)
+    click.echo(json.dumps(batches.undo(conn,cfg,_batch_access(conn,user),batch_id),ensure_ascii=False))
 
 
 @library.command("add")

@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -353,7 +353,49 @@ CREATE TABLE import_source_roots (
 );
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7}
+_SCHEMA_V8 = """
+CREATE TABLE metadata_versions (
+ image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+ field_key TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY(image_id,field_key)
+);
+CREATE TABLE metadata_batches (
+ id TEXT PRIMARY KEY, created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL, request_key TEXT NOT NULL, request TEXT NOT NULL, action TEXT NOT NULL,
+ selection TEXT NOT NULL, target_snapshot TEXT NOT NULL, local_admin INTEGER NOT NULL DEFAULT 0, resolved TEXT,
+ state TEXT NOT NULL DEFAULT 'preview', phase TEXT NOT NULL DEFAULT 'apply', cancel_requested INTEGER NOT NULL DEFAULT 0,
+ updated_at TEXT NOT NULL, error_code TEXT, executed_by INTEGER REFERENCES users(id),
+ UNIQUE(created_by,request_key)
+);
+CREATE INDEX idx_batch_queue ON metadata_batches(state,created_at);
+CREATE TABLE metadata_batch_items (
+ batch_id TEXT NOT NULL REFERENCES metadata_batches(id) ON DELETE CASCADE,
+ position INTEGER NOT NULL, image_id INTEGER NOT NULL REFERENCES images(id),
+ before_value TEXT NOT NULL, before_version INTEGER NOT NULL, after_value TEXT, after_version INTEGER,
+ state TEXT NOT NULL DEFAULT 'pending', error_code TEXT, PRIMARY KEY(batch_id,position), UNIQUE(batch_id,image_id)
+);
+"""
+
+# Record field revisions at the storage boundary, including writes from legacy
+# API/CLI entry points. Comparing revisions prevents an edit-and-revert from
+# being mistaken for an untouched batch result.
+for _table, _key in (
+    ("ratings", "'rating:' || {row}.user_id"),
+    ("favorites", "'favorite:' || {row}.user_id"),
+    ("image_workflow", "'workflow:' || {row}.user_id"),
+    ("image_tags", "'tags'"), ("tag_claims", "'tags'"),
+    ("image_artists", "'artists'"), ("album_images", "'album:' || {row}.album_id"),
+):
+    for _event, _row in (("INSERT", "NEW"), ("UPDATE", "NEW"), ("DELETE", "OLD")):
+        _SCHEMA_V8 += f"""
+CREATE TRIGGER metadata_version_{_table}_{_event.lower()} AFTER {_event} ON {_table}
+BEGIN
+ INSERT INTO metadata_versions(image_id,field_key,version)
+ SELECT {_row}.image_id,{_key.format(row=_row)},1 WHERE EXISTS(SELECT 1 FROM images WHERE id={_row}.image_id)
+ ON CONFLICT(image_id,field_key) DO UPDATE SET version=version+1;
+END;
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8}
 
 
 def utcnow() -> str:

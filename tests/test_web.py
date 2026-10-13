@@ -326,3 +326,40 @@ def test_reader_view_is_read_only_and_logout_removes_private_media_access(page,t
         # A new request in the same browser context cannot reuse a cached private response.
         result = page.evaluate("async url => {const response = await fetch(url); return response.status;}",media_url)
         assert result == 401
+
+
+def test_cross_page_selection_preview_undo_and_later_edit_conflict(page,tmp_path):
+    from playwright.sync_api import expect
+    from tests.scenario_support import build_catalog,http_server
+    catalog=build_catalog(tmp_path)
+    with dbm.open_db(catalog.cfg.db_path) as conn:
+        for n in range(121):make_image(catalog.roots/"north"/f"batch-{n:03}.png",(n,70,190))
+        indexer.scan_library(conn,catalog.cfg,catalog.libraries["north"])
+        conn.execute("UPDATE library_grants SET access='edit' WHERE group_id IN (SELECT group_id FROM user_groups WHERE user_id=?)",(catalog.users["reader"],));conn.commit()
+    with http_server(catalog.cfg) as client:
+        page.add_init_script("localStorage.setItem('picshelf.lang','en')")
+        page.goto(str(client.base_url))
+        page.locator("#login-username").fill("reader");page.locator("#login-password").fill(catalog.password)
+        page.locator("#login-form button").click()
+        page.locator('.lib-card a[href^="#/library/"]').click()
+        expect(page.locator("#grid .card")).to_have_count(120)
+        first=int(page.locator("[data-select-image]").first.get_attribute("data-select-image"))
+        page.locator("[data-select-image]").first.check()
+        page.locator("#more-btn").click()
+        expect(page.locator("#grid .card")).to_have_count(133)
+        last=int(page.locator("[data-select-image]").last.get_attribute("data-select-image"))
+        page.locator("[data-select-image]").last.check()
+        page.locator("[data-batch-names]").fill("Web selected only")
+        page.locator("[data-batch-preview]").click()
+        expect(page.locator("[data-batch-review]")).to_contain_text("Preview fixed 2 images")
+        page.locator("[data-batch-apply]").click()
+        expect(page.locator("[data-batch-status]")).to_contain_text("changed 2")
+        with dbm.open_db(catalog.cfg.db_path) as conn:
+            observed={r[0] for r in conn.execute("SELECT it.image_id FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE t.name='Web selected only'")}
+            assert observed=={first,last}
+            ops.add_tags(conn,first,["Later manual annotation"],catalog.users["curator"])
+        page.locator("[data-batch-undo]").click();page.locator("[data-yes]").click()
+        expect(page.locator("[data-batch-status]")).to_contain_text("Undo has conflicts")
+        with dbm.open_db(catalog.cfg.db_path) as conn:
+            assert {r[0] for r in conn.execute("SELECT it.image_id FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE t.name='Web selected only'")}=={first}
+            assert conn.execute("SELECT 1 FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE it.image_id=? AND t.name='Later manual annotation'",(first,)).fetchone()

@@ -425,7 +425,7 @@ def get_album(conn: sqlite3.Connection, album_id: int,
         ).fetchone()["n"]
     )
     if d["cover_image_id"] is not None and not conn.execute(
-        f"WITH visible AS ({visible}) SELECT 1 FROM visible WHERE id=?", [*params, d["cover_image_id"]],
+        f"WITH visible AS ({visible}) SELECT 1 FROM visible WHERE id=? AND EXISTS(SELECT 1 FROM album_images WHERE album_id=? AND image_id=visible.id)", [*params, d["cover_image_id"], album_id],
     ).fetchone():
         d["cover_image_id"] = None
     if d.get("library_id"):
@@ -446,7 +446,7 @@ def list_albums(conn: sqlite3.Connection, *, library_id: int | None = None,
         f"WITH visible AS ({visible}) "
         "SELECT al.*, (SELECT COUNT(*) FROM album_images ai JOIN visible i ON i.id=ai.image_id "
         "WHERE ai.album_id=al.id) AS image_count, "
-        "al.cover_image_id IN (SELECT id FROM visible) AS cover_visible, "
+        "(al.cover_image_id IN (SELECT id FROM visible) AND EXISTS(SELECT 1 FROM album_images ai WHERE ai.album_id=al.id AND ai.image_id=al.cover_image_id)) AS cover_visible, "
         "(SELECT name FROM libraries l WHERE l.id=al.library_id) AS library_name "
         "FROM albums al WHERE 1=1"
     )

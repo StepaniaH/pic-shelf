@@ -6,6 +6,7 @@ import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
 import { jobKey, watchJob } from "./jobs.js";
 import { externalUrl } from "./format.js";
+import {attachBatchControls} from "./batches.js";
 
 export function fmtSize(n) {
   if (!n && n !== 0) return "—";
@@ -68,7 +69,8 @@ export class Source {
 function cardHtml(item) {
   const rating = item.my_rating >= 0 ? `<span class="badge rated">${item.my_rating}</span>` : "";
   const fav = item.favorite ? `<span class="badge fav">★</span>` : "";
-  return `<figure class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="${escapeHtml(item.filename)}">
+  return `<figure class="card" data-id="${item.id}" tabindex="0" aria-label="${escapeHtml(item.filename)}">
+    <label class="card-selection"><input type="checkbox" data-select-image="${item.id}" aria-label="${escapeHtml(t("选择 {name}",{name:item.filename}))}"></label>
     <img src="${imageMediaUrl("thumb", item)}" alt="" loading="lazy" decoding="async">
     <figcaption><span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
     <span class="badges">${rating}${fav}</span></figcaption></figure>`;
@@ -84,6 +86,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   warnings.className = "error";
   warnings.setAttribute("role", "status");
   grid.before(warnings);
+  let updateSelection = () => {};
   const paint = () => {
     grid.innerHTML = source.items.map(cardHtml).join("") || `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
     view.querySelector("#count").textContent = t("共 {v0} 张", {v0: source.total});
@@ -91,7 +94,9 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     warnings.textContent = source.errors.join(" ");
     warnings.hidden = !source.errors.length;
     view.querySelector("#slideshow-btn").disabled = source.total === 0;
+    updateSelection();
   };
+  updateSelection = attachBatchControls(view,source,grid,async()=>{await source.load(true);paint();});
   paint();
 
   moreBtn.addEventListener("click", async () => {
@@ -109,6 +114,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   });
   view.querySelector("#slideshow-btn").addEventListener("click", () => openSlideshow(source));
   grid.addEventListener("click", (e) => {
+    if(e.target.closest("input,label"))return;
     const card = e.target.closest(".card");
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
@@ -116,6 +122,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     if (idx >= 0) openViewer(source, idx);
   });
   grid.addEventListener("keydown", (e) => {
+    if(e.target.closest("input,label"))return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     const card = e.target.closest(".card");
@@ -303,6 +310,12 @@ export async function renderFavorites(view) {
     { filters: { favorites: "true" } });
   await source.load(true);
   renderGridInto(view, source, {});
+}
+
+export async function renderInbox(view) {
+  const source=new Source(t("待整理"),{title:t("待整理")},{filters:{workflow:"inbox"}});
+  await source.load(true);
+  renderGridInto(view,source);
 }
 
 export async function renderSearch(view, q) {

@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 
-from . import db, jobs
+from . import batches, db, jobs
 from .config import Config
 from .errors import ServiceError
 
@@ -26,7 +26,7 @@ def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
 
     while not should_stop():
         try:
-            worked = jobs.run_next(cfg, should_stop=should_stop)
+            worked = jobs.run_next(cfg, should_stop=should_stop) or batches.run_next(cfg, should_stop=should_stop)
         except (ServiceError, OSError):
             if once:
                 return 1
@@ -58,6 +58,8 @@ class WorkerManager:
                 conn = db.open_db(self.cfg.db_path)
                 try:
                     pending = conn.execute("SELECT 1 FROM jobs WHERE state IN ('queued','running','cancelling') LIMIT 1").fetchone()
+                    if not pending:
+                        pending = conn.execute("SELECT 1 FROM metadata_batches WHERE state='queued' LIMIT 1").fetchone()
                 finally:
                     conn.close()
             except ServiceError:
