@@ -1,11 +1,12 @@
 """Metadata batch previews, execution, cancellation and guarded undo."""
 from fastapi import APIRouter,Query,Request
-from pydantic import BaseModel,ConfigDict,Field,StrictInt
+from pydantic import StrictBool, BaseModel,ConfigDict,Field,StrictInt
 
 from .. import batches
 from ..access import AccessContext
 from ..errors import ServiceError
 from ..i18n import t
+from .types import BodyIdentifier, MAX_INTEGER
 from .deps import Db,User
 
 router = APIRouter(prefix="/batches",tags=["batches"])
@@ -14,19 +15,19 @@ router = APIRouter(prefix="/batches",tags=["batches"])
 class Preview(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: dict
-    image_ids: list[StrictInt] | None = Field(default=None,min_length=1,max_length=10000)
+    image_ids: list[BodyIdentifier] | None = Field(default=None,min_length=1,max_length=10000)
     query: dict | None = None
     request_key: str | None = Field(default=None,min_length=1,max_length=128)
 
 
 class Confirm(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    confirm: bool = False
+    confirm: StrictBool = False
 
 
 class Execute(Confirm):
-    retry: bool = False
-    background: bool = False
+    retry: StrictBool = False
+    background: StrictBool = False
 
 
 def _confirm(body):
@@ -41,12 +42,12 @@ def preview(body: Preview,conn: Db,user: User):
 
 
 @router.get("")
-def list_batches(conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(50,ge=1,le=100)):
+def list_batches(conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(50,ge=1,le=100)):
     return batches.list_batches(conn,AccessContext(user["id"]),offset=offset,limit=limit)
 
 
 @router.get("/{batch_id}")
-def get(batch_id: str,conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(200,ge=1,le=1000)):
+def get(batch_id: str,conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(200,ge=1,le=1000)):
     return batches.get(conn,AccessContext(user["id"]),batch_id,offset=offset,limit=limit)
 
 

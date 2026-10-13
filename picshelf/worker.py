@@ -17,8 +17,15 @@ from .errors import ServiceError
 
 def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
     stop = threading.Event()
-    signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    received_signal = 0
+
+    def interrupt(signum, _frame):
+        nonlocal received_signal
+        received_signal = signum
+        stop.set()
+
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGINT, interrupt)
     idle_since, delay = time.monotonic(), .1
 
     def should_stop():
@@ -32,7 +39,7 @@ def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
                 return 1
             worked = False
         if once:
-            return 0
+            return 128 + received_signal if received_signal else 0
         if worked:
             idle_since, delay = time.monotonic(), .1
         else:
@@ -40,7 +47,7 @@ def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
                 return 0
             stop.wait(delay)
             delay = min(2, delay * 1.5)
-    return 0
+    return 128 + received_signal if received_signal else 0
 
 
 class WorkerManager:

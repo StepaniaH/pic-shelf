@@ -42,9 +42,8 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 def _conn(cfg: Config) -> sqlite3.Connection:
     if not cfg.db_path.exists():
-        raise click.ClickException(
-            t("数据目录尚未初始化（找不到 {v0}）。先运行：picshelf init --admin <管理员名>", v0=cfg.db_path)
-        )
+        raise ServiceError("not_initialized", t("数据目录尚未初始化"),
+                           next_step=t("请先运行 picshelf init --admin <管理员名>"))
     conn = dbm.open_db(cfg.db_path)
     ctx = click.get_current_context(silent=True)
     if ctx is not None:
@@ -56,7 +55,7 @@ def _acting_user(conn: sqlite3.Connection, name: str | None = None) -> sqlite3.R
     if name:
         user = auth.get_user_by_username(conn, name)
         if user is None or user["disabled"]:
-            raise click.ClickException(t("用户不存在或已禁用：{name}", name=name))
+            raise ServiceError("user_not_found", t("用户不存在或已禁用：{name}", name=name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
         return user
     row = conn.execute(
         "SELECT * FROM users WHERE is_admin=1 AND disabled=0 ORDER BY id LIMIT 1"
@@ -109,7 +108,9 @@ def _read_password(password_stdin: bool, prompt: str, confirm: bool = False) -> 
         if not line:
             raise click.ClickException(t("从 stdin 读取密码失败"))
         return line
-    pw = click.prompt(prompt, hide_input=True, confirmation_prompt=confirm)
+    if not sys.stdin.isatty():
+        raise click.ClickException(t("非交互输入需要 --password-stdin（备份口令使用 --passphrase-stdin）"))
+    pw = click.prompt(prompt, hide_input=True, confirmation_prompt=confirm, err=True)
     return pw
 
 
@@ -128,15 +129,70 @@ class _I18nGroup(click.Group):
         _localize_cmd(self)
         super().format_help(ctx, formatter)
 
-    def invoke(self, ctx: click.Context):
+    def main(self, args=None, prog_name=None, complete_var=None, standalone_mode=True, **extra):
+        argv = list(sys.argv[1:] if args is None else args)
+        machine = _json_requested(self, argv)
         try:
-            return super().invoke(ctx)
+            result = super().main(argv, prog_name=prog_name, complete_var=complete_var,
+                                  standalone_mode=False, **extra)
+            if not standalone_mode:
+                return result
+            raise SystemExit(result if isinstance(result, int) else 0)
         except ServiceError as exc:
-            raise click.ClickException(f"[{exc.code}] {exc.detail} {exc.next_step}") from exc
+            failure, exit_code = exc, 1
+        except click.ClickException as exc:
+            exit_code = exc.exit_code
+            if not machine:
+                if not standalone_mode:
+                    raise
+                exc.show()
+                raise SystemExit(exit_code)
+            failure = ServiceError("invalid_arguments" if exit_code == 2 else "operation_failed",
+                                   exc.format_message(), next_step=t("请查看该命令的 --help 并检查参数后重试"))
+        except click.Abort as exc:
+            exit_code = 130 if isinstance(exc.__cause__, KeyboardInterrupt) else 1
+            failure = ServiceError("interrupted" if exit_code == 130 else "input_required",
+                                   t("操作已中断"), next_step=t("请查看当前状态后再决定是否重试"))
         except (ValueError, sqlite3.IntegrityError) as exc:
-            raise click.ClickException(t("操作未完成：{error}。请检查参数后重试。", error=exc)) from exc
-        except OSError as exc:
-            raise click.ClickException(t("文件操作失败：{error}。请检查路径与读写权限。", error=exc)) from exc
+            exit_code = 1
+            failure = ServiceError("invalid_arguments", t("操作未完成：{error}。请检查参数后重试。", error=exc),
+                                   next_step=t("请查看该命令的 --help 并检查参数后重试"))
+        except (OSError, sqlite3.Error, OverflowError):
+            exit_code = 1
+            failure = ServiceError("operation_failed", t("文件或数据库操作未完成"),
+                                   next_step=t("请检查数据目录、读写权限和可用空间后重试"))
+        except Exception:
+            exit_code = 1
+            failure = ServiceError("internal_error", t("服务未能完成请求"),
+                                   next_step=t("请重新读取当前状态；确认是否已保存后再试，持续失败时联系管理员"))
+        if machine:
+            click.echo(json.dumps(failure.as_dict(), ensure_ascii=False))
+        click.echo(f"[{failure.code}] {failure.detail} {failure.next_step}", err=True)
+        if not standalone_mode:
+            raise click.ClickException(failure.detail)
+        raise SystemExit(exit_code)
+
+
+def _json_requested(command, args):
+    """Inspect Click's parsed options without invoking callbacks or opening data."""
+    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources"}
+    json_commands = {"organize", "rebuild", "import-status", "import-execute", "import-cancel"}
+    path = []
+    machine = False
+    while command is not None:
+        ctx = click.Context(command, resilient_parsing=True)
+        options, remaining, _ = command.make_parser(ctx).parse_args(list(args))
+        machine = machine or bool(options.get("as_json"))
+        if path == ["scan"] and options.get("background"):
+            machine = True
+        if path and (path[0] in json_groups or path[0] in json_commands or path == ["library", "configure"]):
+            machine = True
+        if not isinstance(command, click.Group) or not remaining:
+            break
+        name, *args = remaining
+        path.append(name)
+        command = command.commands.get(name)
+    return machine
 
 
 def _localize_cmd(cmd: click.Command) -> None:
@@ -260,7 +316,7 @@ def source_allow(cfg, root, allow_move):
 
 
 @import_sources.command("revoke")
-@click.argument("root_id", type=int)
+@click.argument("root_id", type=click.IntRange(1, 2**63-1))
 @click.pass_obj
 def source_revoke(cfg, root_id):
     conn = _conn(cfg)
@@ -290,7 +346,7 @@ def batch_preview(cfg,image_ids,action,query_json,request_key,user):
         operation = json.loads(action)
         query = json.loads(query_json) if query_json is not None else None
     except ValueError as exc:
-        raise click.ClickException(t("批量操作或查询 JSON 无效")) from exc
+        raise click.UsageError(t("批量操作或查询 JSON 无效")) from exc
     result = batches.preview(conn,_batch_access(conn,user),operation,image_ids=list(image_ids) if image_ids else None,
                              query=query,request_key=request_key)
     click.echo(json.dumps(result,ensure_ascii=False))
@@ -299,7 +355,7 @@ def batch_preview(cfg,image_ids,action,query_json,request_key,user):
 @batch_cmd.command("show")
 @click.argument("batch_id")
 @click.option("--user",default=None)
-@click.option("--offset",default=0,type=click.IntRange(min=0))
+@click.option("--offset",default=0,type=click.IntRange(min=0, max=2**63-1))
 @click.option("--limit",default=200,type=click.IntRange(1,1000))
 @click.pass_obj
 def batch_show(cfg,batch_id,user,offset,limit):
@@ -309,7 +365,7 @@ def batch_show(cfg,batch_id,user,offset,limit):
 
 @batch_cmd.command("list")
 @click.option("--user",default=None)
-@click.option("--offset",default=0,type=click.IntRange(min=0))
+@click.option("--offset",default=0,type=click.IntRange(min=0, max=2**63-1))
 @click.pass_obj
 def batch_list(cfg,user,offset):
     conn = _conn(cfg)
@@ -324,11 +380,13 @@ def batch_list(cfg,user,offset):
 @click.option("--user",default=None)
 @click.pass_obj
 def batch_execute(cfg,batch_id,yes,background,retry,user):
-    if not yes:raise click.ClickException(t("请先查看批次，再使用 --yes 确认执行"))
+    if not yes:raise ServiceError("confirmation_required", t("请先查看批次，再使用 --yes 确认执行"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn = _conn(cfg)
     access = _batch_access(conn,user)
     result = batches.queue(conn,access,batch_id,retry=retry) if background else batches.execute(conn,cfg,access,batch_id,retry=retry)
     click.echo(json.dumps(result,ensure_ascii=False))
+    if result['state'] not in ('succeeded', 'queued'):
+        raise click.exceptions.Exit(1)
 
 
 @batch_cmd.command("cancel")
@@ -346,9 +404,12 @@ def batch_cancel(cfg,batch_id,user):
 @click.option("--user",default=None)
 @click.pass_obj
 def batch_undo(cfg,batch_id,yes,user):
-    if not yes:raise click.ClickException(t("请先查看批次，再使用 --yes 确认撤销"))
+    if not yes:raise ServiceError("confirmation_required", t("请先查看批次，再使用 --yes 确认撤销"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn = _conn(cfg)
-    click.echo(json.dumps(batches.undo(conn,cfg,_batch_access(conn,user),batch_id),ensure_ascii=False))
+    result = batches.undo(conn,cfg,_batch_access(conn,user),batch_id)
+    click.echo(json.dumps(result,ensure_ascii=False))
+    if result['state'] != 'undone':
+        raise click.exceptions.Exit(1)
 
 
 @library.command("add")
@@ -374,7 +435,7 @@ def library_add(cfg: Config, name: str, path: str, description: str | None, make
         lib_id = libsvc.create_library(conn, name, str(root), description, mode=mode,
                                       default_import_mode=default_import_mode)
     except sqlite3.IntegrityError:
-        raise click.ClickException(t("库名已存在：{name}", name=name))
+        raise ServiceError("state_conflict", t("库名已存在：{name}", name=name), status=409, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     click.echo(t("已注册库 #{lib_id} {name} → {root}", lib_id=lib_id, name=name, root=root))
     click.echo(t("下一步：picshelf scan {name}", name=name))
 
@@ -389,7 +450,7 @@ def library_configure(cfg: Config, library_name: str, mode: str | None, default_
     conn = _conn(cfg)
     library = libsvc.find_library(conn, library_name)
     if library is None:
-        raise click.ClickException(t("库不存在"))
+        raise ServiceError("library_not_found", t("库不存在"), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     changes = {key: value for key, value in {"mode": mode, "default_import_mode": default_import_mode}.items() if value is not None}
     result = libsvc.update_library(conn, cfg, AccessContext(_acting_user(conn)["id"], local_admin=True), library["id"], **changes)
     click.echo(json.dumps(result, ensure_ascii=False))
@@ -423,7 +484,7 @@ def scan(cfg: Config, library_name: str, full: bool, background: bool, as_json: 
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
-        raise click.ClickException(t("找不到库：{library_name}", library_name=library_name))
+        raise ServiceError("library_not_found", t("找不到库：{library_name}", library_name=library_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     from . import jobs
     administrator = conn.execute("SELECT id FROM users WHERE is_admin=1 AND disabled=0 ORDER BY id LIMIT 1").fetchone()
     if administrator is None and not background:
@@ -479,7 +540,7 @@ def rebuild(cfg: Config, library_name: str, outdated_only: bool, background: boo
     conn = _conn(cfg)
     library = libsvc.find_library(conn, library_name)
     if library is None:
-        raise click.ClickException(t("找不到库：{library_name}", library_name=library_name))
+        raise ServiceError("library_not_found", t("找不到库：{library_name}", library_name=library_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     access = AccessContext(_acting_user(conn)["id"], local_admin=True)
     queued = jobs.submit(conn, access, "rebuild", library["id"], outdated_only=outdated_only)
     result = queued if background else jobs.wait(cfg, access, queued["id"])
@@ -519,14 +580,14 @@ def _base_where(conn, user, opts) -> tuple[list[str], dict]:
 @main.command("ls")
 @click.option("--query", "-q", default="", help="检索表达式")
 @click.option("--library", default=None, help="库名或 ID")
-@click.option("--album", default=None, type=click.IntRange(min=1), help="专辑 ID")
-@click.option("--artist", default=None, type=click.IntRange(min=1), help="艺术家 ID")
+@click.option("--album", default=None, type=click.IntRange(min=1, max=2**63-1), help="专辑 ID")
+@click.option("--artist", default=None, type=click.IntRange(min=1, max=2**63-1), help="艺术家 ID")
 @click.option("--tag", default=None, help="标签全名")
 @click.option("--min-rating", default=None, type=click.IntRange(0, 10), help="我的评分下限")
 @click.option("--favorites", is_flag=True, help="仅收藏")
 @click.option("--sort", default="newest", type=click.Choice(list(search.SORTS)))
 @click.option("-n", "--limit", default=50, type=click.IntRange(0, 10000), show_default=True)
-@click.option("--offset", default=0, type=click.IntRange(min=0), show_default=True, help="跳过的结果数量")
+@click.option("--offset", default=0, type=click.IntRange(min=0, max=2**63-1), show_default=True, help="跳过的结果数量")
 @click.option("--user", "user_name", default=None, help="以哪个用户视角（默认首个管理员）")
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
@@ -537,7 +598,7 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
     if library:
         lib = libsvc.find_library(conn, library)
         if lib is None:
-            raise click.ClickException(t("找不到库：{library}", library=library))
+            raise ServiceError("library_not_found", t("找不到库：{library}", library=library), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
         library = lib["id"]
     res = catalog.query_images(conn, AccessContext(user["id"]), catalog.ImageQuery(
         query=query, sort=sort, limit=limit, offset=offset, library_id=library,
@@ -577,7 +638,7 @@ def queries_group():
 def query_save(cfg,name,query,sort,kind,display,user):
     conn=_conn(cfg)
     try: preferences=json.loads(display)
-    except ValueError: raise click.ClickException(t("JSON 格式无效，请检查输入"))
+    except ValueError: raise click.UsageError(t("JSON 格式无效，请检查输入"))
     value=saved_queries.create(conn,AccessContext(_acting_user(conn,user)['id']),
                               name=name,query=query,sort=sort,kind=kind,display=preferences)
     click.echo(json.dumps(value,ensure_ascii=False,indent=2))
@@ -585,7 +646,7 @@ def query_save(cfg,name,query,sort,kind,display,user):
 
 @queries_group.command('list')
 @click.option('--user',default=None)
-@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.option('--offset',default=0,type=click.IntRange(min=0, max=2**63-1))
 @click.pass_obj
 def query_list(cfg,user,offset):
     conn=_conn(cfg)
@@ -593,7 +654,7 @@ def query_list(cfg,user,offset):
 
 
 @queries_group.command('show')
-@click.argument('query_id',type=click.IntRange(min=1))
+@click.argument('query_id',type=click.IntRange(min=1, max=2**63-1))
 @click.option('--user',default=None)
 @click.pass_obj
 def query_show(cfg,query_id,user):
@@ -602,10 +663,10 @@ def query_show(cfg,query_id,user):
 
 
 @queries_group.command('run')
-@click.argument('query_id',type=click.IntRange(min=1))
+@click.argument('query_id',type=click.IntRange(min=1, max=2**63-1))
 @click.option('--user',default=None)
 @click.option('--limit',default=60,type=click.IntRange(0,10000))
-@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.option('--offset',default=0,type=click.IntRange(min=0, max=2**63-1))
 @click.pass_obj
 def query_run(cfg,query_id,user,limit,offset):
     conn=_conn(cfg)
@@ -613,23 +674,23 @@ def query_run(cfg,query_id,user,limit,offset):
 
 
 @queries_group.command('edit')
-@click.argument('query_id',type=click.IntRange(min=1))
-@click.option('--version',required=True,type=click.IntRange(min=1))
+@click.argument('query_id',type=click.IntRange(min=1, max=2**63-1))
+@click.option('--version',required=True,type=click.IntRange(min=1, max=2**63-1))
 @click.option('--changes',required=True,help='要修改的规则字段 JSON')
 @click.option('--user',default=None)
 @click.pass_obj
 def query_edit(cfg,query_id,version,changes,user):
     conn=_conn(cfg)
     try: fields=json.loads(changes)
-    except ValueError: raise click.ClickException(t("JSON 格式无效，请检查输入"))
+    except ValueError: raise click.UsageError(t("JSON 格式无效，请检查输入"))
     if not isinstance(fields,dict) or 'version' in fields:
-        raise click.ClickException(t("更新字段或版本无效，请重新打开查询编辑"))
+        raise click.UsageError(t("更新字段或版本无效，请重新打开查询编辑"))
     click.echo(json.dumps(saved_queries.update(conn,AccessContext(_acting_user(conn,user)['id']),query_id,
                                               version=version,**fields),ensure_ascii=False,indent=2))
 
 
 @queries_group.command('export')
-@click.argument('query_id',type=click.IntRange(min=1))
+@click.argument('query_id',type=click.IntRange(min=1, max=2**63-1))
 @click.option('--user',default=None)
 @click.pass_obj
 def query_export(cfg,query_id,user):
@@ -638,7 +699,7 @@ def query_export(cfg,query_id,user):
 
 
 @main.command()
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.option("--json", "as_json", is_flag=True)
 @click.option("--path", "print_path", is_flag=True, help="只输出文件绝对路径（脚本用）")
 @click.pass_obj
@@ -648,7 +709,7 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
     user = _acting_user(conn)
     detail = search.get_image(conn, image_id, user["id"], auth.visible_library_ids(conn, user))
     if detail is None:
-        raise click.ClickException(t("图片不存在：#{image_id}", image_id=image_id))
+        raise ServiceError("image_not_found", t("图片不存在：#{image_id}", image_id=image_id), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     lib_row = conn.execute("SELECT root_path FROM libraries WHERE id=?", (detail["library_id"],)).fetchone()
     abspath = Path(lib_row["root_path"]) / detail["rel_path"] if lib_row else Path(detail["rel_path"])
     if print_path:
@@ -678,7 +739,7 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
 # ---------------------------------------------------------------- 交互
 
 @main.command()
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("value", type=int)
 @click.option("--user", "user_name", default=None)
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
@@ -687,13 +748,7 @@ def rate(cfg: Config, image_id: int, value: int, user_name: str | None, as_json:
     """给图片评分（0–10）。"""
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
-    try:
-        summary = catalog.rate_image(conn, AccessContext(user["id"], local_admin=True), image_id, value)
-    except ServiceError as exc:
-        if as_json:
-            click.echo(json.dumps(exc.as_dict(), ensure_ascii=False))
-            raise click.exceptions.Exit(1)
-        raise click.ClickException(f"[{exc.code}] {exc.detail} {exc.next_step}") from exc
+    summary = catalog.rate_image(conn, AccessContext(user["id"], local_admin=True), image_id, value)
     if as_json:
         click.echo(json.dumps(summary, ensure_ascii=False))
         return
@@ -701,7 +756,7 @@ def rate(cfg: Config, image_id: int, value: int, user_name: str | None, as_json:
 
 
 @main.command()
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.option("--off", is_flag=True, help="取消收藏")
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
@@ -719,7 +774,7 @@ def tag():
 
 
 @tag.command("add")
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("names", nargs=-1, required=True)
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
@@ -732,7 +787,7 @@ def tag_add(cfg, image_id, names, user_name):
 
 
 @tag.command("rm")
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("names", nargs=-1, required=True)
 @click.pass_obj
 def tag_rm(cfg, image_id, names):
@@ -754,7 +809,7 @@ def tag_list(cfg, query, limit):
 
 
 @main.command()
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("body")
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
@@ -767,7 +822,7 @@ def comment(cfg, image_id, body, user_name):
 
 
 @main.command()
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("body")
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
@@ -782,7 +837,7 @@ def note(cfg, image_id, body, user_name):
 # ---------------------------------------------------------------- 艺术家
 
 @main.command("organize")
-@click.argument("image_ids", type=click.IntRange(min=1), nargs=-1, required=True)
+@click.argument("image_ids", type=click.IntRange(min=1, max=2**63-1), nargs=-1, required=True)
 @click.option("--state", type=click.Choice(["inbox", "done"]), required=True)
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
@@ -799,7 +854,7 @@ def metadata_commands():
 
 
 @metadata_commands.command("show")
-@click.argument("image_id", type=click.IntRange(min=1))
+@click.argument("image_id", type=click.IntRange(min=1, max=2**63-1))
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
 def metadata_show(cfg, image_id, user_name):
@@ -810,7 +865,7 @@ def metadata_show(cfg, image_id, user_name):
 
 
 @metadata_commands.command("source")
-@click.argument("image_id", type=click.IntRange(min=1))
+@click.argument("image_id", type=click.IntRange(min=1, max=2**63-1))
 @click.option("--original-filename", default=None)
 @click.option("--collected-at", default=None)
 @click.option("--created-time", default=None)
@@ -826,7 +881,7 @@ def metadata_source(cfg, image_id, **fields):
 
 @metadata_commands.command("alias-preview")
 @click.argument("kind", type=click.Choice(["tag", "artist"]))
-@click.argument("entity_id", type=click.IntRange(min=1))
+@click.argument("entity_id", type=click.IntRange(min=1, max=2**63-1))
 @click.argument("alias")
 @click.pass_obj
 def alias_preview(cfg, kind, entity_id, alias):
@@ -838,9 +893,9 @@ def alias_preview(cfg, kind, entity_id, alias):
 
 @metadata_commands.command("merge-preview")
 @click.argument("kind", type=click.Choice(["tag", "artist"]))
-@click.argument("source_id", type=click.IntRange(min=1))
-@click.argument("target_id", type=click.IntRange(min=1))
-@click.argument("image_ids", type=click.IntRange(min=1), nargs=-1, required=True)
+@click.argument("source_id", type=click.IntRange(min=1, max=2**63-1))
+@click.argument("target_id", type=click.IntRange(min=1, max=2**63-1))
+@click.argument("image_ids", type=click.IntRange(min=1, max=2**63-1), nargs=-1, required=True)
 @click.pass_obj
 def merge_preview(cfg, kind, source_id, target_id, image_ids):
     """预演转移所选图片的标签或艺术家关联，保留来源实体。"""
@@ -856,7 +911,7 @@ def merge_preview(cfg, kind, source_id, target_id, image_ids):
 def metadata_execute(cfg, plan_id, yes):
     """确认执行已保存的元数据预演。"""
     if not yes:
-        raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
+        raise ServiceError("confirmation_required", t("结构化执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn = _conn(cfg)
     result = entity_edits.execute(conn, AccessContext(_acting_user(conn)["id"]), plan_id)
     click.echo(json.dumps(result, ensure_ascii=False))
@@ -890,27 +945,27 @@ def artist_list(cfg, query):
 
 
 @artist.command("link")
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("artist_name")
 @click.pass_obj
 def artist_link(cfg, image_id, artist_name):
     conn = _conn(cfg)
     artist_id = catalog_names.resolve(conn, "artist", artist_name)
     if artist_id is None:
-        raise click.ClickException(t("艺术家不存在：{artist_name}（先 artist add）", artist_name=artist_name))
+        raise ServiceError("artist_not_found", t("艺术家不存在：{artist_name}（先 artist add）", artist_name=artist_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     ops.link_artist(conn, image_id, artist_id, True)
     click.echo(f"#{image_id} ← {artist_name}")
 
 
 @artist.command("unlink")
-@click.argument("image_id", type=int)
+@click.argument("image_id", type=click.IntRange(1, 2**63-1))
 @click.argument("artist_name")
 @click.pass_obj
 def artist_unlink(cfg, image_id, artist_name):
     conn = _conn(cfg)
     artist_id = catalog_names.resolve(conn, "artist", artist_name)
     if artist_id is None:
-        raise click.ClickException(t("艺术家不存在：{artist_name}", artist_name=artist_name))
+        raise ServiceError("artist_not_found", t("艺术家不存在：{artist_name}", artist_name=artist_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     ops.link_artist(conn, image_id, artist_id, False)
     click.echo(t("#{image_id} 已取消关联 {artist_name}", image_id=image_id, artist_name=artist_name))
 
@@ -929,7 +984,7 @@ def _play_context(cfg,user):
 
 def _play_spec(text):
     try:return json.loads(text)
-    except ValueError:raise click.ClickException(t('JSON 格式无效，请检查输入'))
+    except ValueError:raise click.UsageError(t('JSON 格式无效，请检查输入'))
 
 
 @play_rules_group.command('save')
@@ -943,8 +998,8 @@ def play_rule_save(cfg,name,spec,user):
 
 
 @play_rules_group.command('edit')
-@click.argument('rule_id',type=click.IntRange(min=1))
-@click.option('--version',required=True,type=click.IntRange(min=1))
+@click.argument('rule_id',type=click.IntRange(min=1, max=2**63-1))
+@click.option('--version',required=True,type=click.IntRange(min=1, max=2**63-1))
 @click.option('--name',required=True)
 @click.option('--spec',required=True,help='播放配置 JSON')
 @click.option('--user',default=None)
@@ -956,7 +1011,7 @@ def play_rule_edit(cfg,rule_id,version,name,spec,user):
 
 @play_rules_group.command('list')
 @click.option('--user',default=None)
-@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.option('--offset',default=0,type=click.IntRange(min=0, max=2**63-1))
 @click.pass_obj
 def play_rule_list(cfg,user,offset):
     conn,access=_play_context(cfg,user)
@@ -965,7 +1020,7 @@ def play_rule_list(cfg,user,offset):
 
 def _rule_command(name,operation):
     @click.command(name)
-    @click.argument('rule_id',type=click.IntRange(min=1))
+    @click.argument('rule_id',type=click.IntRange(min=1, max=2**63-1))
     @click.option('--user',default=None)
     @click.pass_obj
     def command(cfg,rule_id,user):
@@ -997,7 +1052,7 @@ def play_session_show(cfg,token,user):
 @click.argument('action',type=click.Choice(['next','prev','goto','pause','resume','reshuffle']))
 @click.option('--position',type=click.IntRange(0,9999),default=None,help='从 0 起的播放位置')
 @click.option('--request-key',default=None)
-@click.option('--expected-version',type=click.IntRange(min=0),default=None)
+@click.option('--expected-version',type=click.IntRange(min=0, max=2**63-1),default=None)
 @click.option('--user',default=None)
 @click.pass_obj
 def play_session_control(cfg,token,action,position,request_key,expected_version,user):
@@ -1009,8 +1064,8 @@ def play_session_control(cfg,token,action,position,request_key,expected_version,
 
 @main.command()
 @click.option("--library", default=None, help="库名或 ID")
-@click.option("--album", default=None, type=click.IntRange(min=1), help="专辑 ID")
-@click.option("--artist", default=None, type=click.IntRange(min=1), help="艺术家 ID")
+@click.option("--album", default=None, type=click.IntRange(min=1, max=2**63-1), help="专辑 ID")
+@click.option("--artist", default=None, type=click.IntRange(min=1, max=2**63-1), help="艺术家 ID")
 @click.option("--tag", default=None, help="标签全名")
 @click.option("--query", "-q", default="", help="检索表达式")
 @click.option("--favorites", is_flag=True)
@@ -1025,13 +1080,15 @@ def play_session_control(cfg,token,action,position,request_key,expected_version,
 def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
              order, interval, count, loop, player, user_name):
     """播放：服务端生成队列（跨专辑/按艺术家/标签/评分），交给 mpv / 终端 / 仅列表。"""
+    if player == "terminal" and (not sys.stdin.isatty() or not sys.stdout.isatty()):
+        raise click.ClickException(t("终端播放需要交互终端；管道请使用 --player list"))
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     allowed = auth.visible_library_ids(conn, user)
     if library:
         lib = libsvc.find_library(conn, library)
         if lib is None:
-            raise click.ClickException(t("找不到库：{library}", library=library))
+            raise ServiceError("library_not_found", t("找不到库：{library}", library=library), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
         library = lib["id"]
     spec = {
         "source": {
@@ -1058,7 +1115,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         ).fetchone()
         if row:
             paths.append(Path(row["root_path"]) / row["rel_path"])
-    click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1=t('，循环') if loop else ''))
+    click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1=t('，循环') if loop else ''), err=True)
     if session['truncated']:
         click.echo(t('匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限',matched=session['matched_total'],total=session['total']),err=True)
 
@@ -1097,8 +1154,8 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
                             idx = 0
                         else:
                             break
-        except (KeyboardInterrupt, EOFError):
-            click.echo("\n" + t("已退出播放"))
+        except EOFError:
+            click.echo("\n" + t("已退出播放"), err=True)
         return
 
     # mpv 模式
@@ -1287,12 +1344,14 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
 def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
                rename: bool, do_apply: bool, yes: bool, as_json: bool):
     """把外部目录导入托管的库：预演优先，--apply 执行，完成后自动扫描入库。"""
+    if do_apply and not yes and not sys.stdin.isatty():
+        raise ServiceError("confirmation_required", t("非交互执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     from . import import_plans
 
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
-        raise click.ClickException(t("找不到库：{library_name}（先运行 picshelf library add）", library_name=library_name))
+        raise ServiceError("library_not_found", t("找不到库：{library_name}（先运行 picshelf library add）", library_name=library_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     try:
         access = AccessContext(_acting_user(conn)["id"], local_admin=True)
         plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename)
@@ -1305,7 +1364,7 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
             click.echo(json.dumps(plan, ensure_ascii=False, indent=2))
             return
         if not yes:
-            raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
+            raise ServiceError("confirmation_required", t("结构化执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
         result = import_plans.execute_plan(conn, cfg, access, plan["plan_id"])
         click.echo(json.dumps(result, ensure_ascii=False, indent=2))
         if result["state"] != "succeeded":
@@ -1335,10 +1394,10 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
         return
     if not yes:
         if mode == "move":
-            if not click.confirm(t("确认把 {new_n} 个文件【移动】进库？原位置将不再保留（建议先备份）", new_n=new_n)):
+            if not click.confirm(t("确认把 {new_n} 个文件【移动】进库？原位置将不再保留（建议先备份）", new_n=new_n), err=True):
                 raise click.ClickException(t("已取消"))
         else:
-            if not click.confirm(t("确认导入 {new_n} 个文件？", new_n=new_n)):
+            if not click.confirm(t("确认导入 {new_n} 个文件？", new_n=new_n), err=True):
                 raise click.ClickException(t("已取消"))
 
     result = import_plans.execute_plan(conn, cfg, access, plan["plan_id"])
@@ -1359,7 +1418,7 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
 
 @main.command("import-status")
 @click.argument("plan_id")
-@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--offset", default=0, type=click.IntRange(min=0, max=2**63-1))
 @click.option("--limit", default=300, type=click.IntRange(1, 1000))
 @click.pass_obj
 def import_status(cfg: Config, plan_id: str, offset: int, limit: int):
@@ -1387,8 +1446,8 @@ def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: b
         plan = import_plans.get_plan(conn, access, plan_id)
         if not yes:
             if as_json or not sys.stdin.isatty():
-                raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
-            if not click.confirm(t("确认执行计划 {plan_id}（模式：{mode}）？", plan_id=plan_id, mode=plan["mode"])):
+                raise ServiceError("confirmation_required", t("结构化执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
+            if not click.confirm(t("确认执行计划 {plan_id}（模式：{mode}）？", plan_id=plan_id, mode=plan["mode"]), err=True):
                 raise click.ClickException(t("已取消"))
         from . import jobs
         queued = jobs.submit(conn, access, "import", plan["library"]["id"],
@@ -1440,7 +1499,7 @@ def job_group():
 
 
 @job_group.command("list")
-@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--offset", default=0, type=click.IntRange(min=0, max=2**63-1))
 @click.pass_obj
 def job_list(cfg: Config, offset: int):
     from . import jobs
@@ -1451,7 +1510,7 @@ def job_list(cfg: Config, offset: int):
 
 @job_group.command("status")
 @click.argument("job_id")
-@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--offset", default=0, type=click.IntRange(min=0, max=2**63-1))
 @click.option("--limit", default=100, type=click.IntRange(1, 1000))
 @click.pass_obj
 def job_status(cfg: Config, job_id: str, offset: int, limit: int):
@@ -1501,7 +1560,7 @@ def users():
 def users_add(cfg, username, admin, password_stdin):
     conn = _conn(cfg)
     if auth.get_user_by_username(conn, username):
-        raise click.ClickException(t("用户已存在：{username}", username=username))
+        raise ServiceError("state_conflict", t("用户已存在：{username}", username=username), status=409, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     pw = _read_password(password_stdin, t("为 {username} 设置密码", username=username), confirm=True)
     uid = auth.create_user(conn, username, pw, is_admin=admin)
     click.echo(t("已创建用户 #{uid} {username}{v0}", uid=uid, username=username, v0=t('（管理员）') if admin else ''))
@@ -1533,7 +1592,7 @@ def users_passwd(cfg, username, password_stdin):
     conn = _conn(cfg)
     user = auth.get_user_by_username(conn, username)
     if user is None:
-        raise click.ClickException(t("用户不存在：{username}", username=username))
+        raise ServiceError("user_not_found", t("用户不存在：{username}", username=username), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     pw = _read_password(password_stdin, t("为 {username} 设置新密码", username=username), confirm=True)
     auth.set_password(conn, user["id"], pw)
     conn.commit()
@@ -1572,7 +1631,7 @@ def groups_add(cfg, name, caps, description):
             (name, description, json.dumps(cap_list), dbm.utcnow()),
         )
     except sqlite3.IntegrityError:
-        raise click.ClickException(t("组已存在：{name}", name=name))
+        raise ServiceError("state_conflict", t("组已存在：{name}", name=name), status=409, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn.commit()
     click.echo(t("已创建组 #{v0} {name}（{v1}）", v0=cur.lastrowid, name=name, v1='、'.join(cap_list)))
 
@@ -1587,9 +1646,9 @@ def groups_grant(cfg, group_name, library_name, access):
     g = conn.execute("SELECT id FROM groups WHERE name=?", (group_name,)).fetchone()
     lib = libsvc.find_library(conn, library_name)
     if g is None:
-        raise click.ClickException(t("组不存在：{group_name}", group_name=group_name))
+        raise ServiceError("group_not_found", t("组不存在：{group_name}", group_name=group_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     if lib is None:
-        raise click.ClickException(t("库不存在：{library_name}", library_name=library_name))
+        raise ServiceError("library_not_found", t("库不存在：{library_name}", library_name=library_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn.execute(
         "INSERT INTO library_grants(group_id, library_id, access) VALUES(?,?,?) "
         "ON CONFLICT(group_id, library_id) DO UPDATE SET access=excluded.access",
@@ -1608,7 +1667,7 @@ def groups_revoke(cfg, group_name, library_name):
     g = conn.execute("SELECT id FROM groups WHERE name=?", (group_name,)).fetchone()
     lib = libsvc.find_library(conn, library_name)
     if g is None or lib is None:
-        raise click.ClickException(t("组或库不存在"))
+        raise ServiceError("library_not_found", t("组或库不存在"), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     conn.execute("DELETE FROM library_grants WHERE group_id=? AND library_id=?", (g["id"], lib["id"]))
     conn.commit()
     click.echo(t("已移除组 {group_name} 对库 {v0} 的授权", group_name=group_name, v0=lib['name']))
@@ -1631,6 +1690,8 @@ def stats(cfg: Config):
 @click.pass_obj
 def tui(cfg: Config):
     """启动终端界面（TUI）。"""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise click.ClickException(t("TUI 需要交互终端；管道请使用 ls --json"))
     if not cfg.db_path.exists():
         raise click.ClickException(t("尚未初始化。先运行：picshelf init --admin <管理员名>"))
     from .tui import run_tui

@@ -69,6 +69,75 @@ an out-of-range rating has code `invalid_rating`; a missing image has code
 `image_not_found`. The ordinary text output remains available without `--json`.
 Local administrative rating operations can select the rating owner with `--user`.
 
+## CLI and HTTP contracts
+
+Put global `--data` and `--lang zh|en` options before the command. `--data`
+overrides `PICSHELF_DATA`; it does not change library roots. `search` remains an
+alias of `ls`. Use `--help` on the selected command to see its supported options.
+
+`ls`/`search`, `show`, `rate`, `scan` and `import` support `--json`. The `batch`,
+`queries`, `play-rules`, `play-sessions`, `job`, `metadata` and `import-sources`
+groups, plus `organize`, `rebuild`, `library configure`, `import-status`,
+`import-execute` and `import-cancel`, produce JSON by default. Errors in these
+modes are also JSON on stdout; readable error recovery, prompts and progress use stderr. `--help` always
+produces help text. Other commands retain their human-readable output.
+`play --player list` writes one original-file path per stdout line and its queue
+summary to stderr (filenames containing newlines are not an unambiguous record
+format; use image IDs from JSON search for arbitrary filenames).
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Command succeeded; background submission was accepted; status was read |
+| 1 | Operation failed, was cancelled, or completed only partly, including undo conflicts |
+| 2 | Command syntax, option type/range, JSON input or search expression is invalid |
+| 130 | Interrupted by Ctrl-C; inspect the saved job or batch before retrying |
+| 143 | Worker stopped by SIGTERM |
+
+A successful status command can report a failed job: inspect `state`. A successful
+background submission does not mean the work has finished. Synchronous execution
+returns nonzero for partial work and retains its structured per-item result.
+Business input checks retain exit 1, such as `rate 12 11 --json` with
+`invalid_rating`. Machine keys, IDs, enum values and error codes do not depend on
+language; `detail` and `next_step` can change language. Do not parse those strings.
+
+Non-interactive commands never prompt for confirmation or a password. Inspect an
+import preview before executing with `--yes`; batch execution and undo also
+require `--yes`. Use `--password-stdin` for account passwords and
+`--passphrase-stdin` for backup passphrases, passing secrets through a protected
+input stream, not command-line arguments. Interactive prompts use stderr and
+masked password input. Terminal playback requires a TTY; pipelines can use
+`--player list`. A refused non-interactive confirmation does not execute the work.
+
+The compatible HTTP entry point remains `/api/v1`. `/api/docs` and
+`/api/openapi.json` describe input types and bounds. Numeric IDs are positive
+signed 64-bit integers; offsets range from 0 to 9223372036854775807. JSON boolean
+fields require `true`/`false`; they do not accept strings or numbers. JSON IDs and
+ratings require integers, not booleans, fractional numbers or numeric strings.
+Image pages allow `limit=0..10000`; job/batch/query limits are endpoint-specific.
+Unsupported sorting and out-of-range HTTP parameters return 422. Search grammar
+errors retain the existing 200 response with empty `items`, `errors` and
+`error_codes`. Result ordering and live pagination are described below.
+
+An error retains its existing `detail` field (validation errors retain an array)
+and includes `error: {code, retryable, next_step, objects}`. Status 401 means sign
+in; 403 means insufficient capability; 404 hides absent or inaccessible objects;
+409 means changed state; 410 means an expired plan. Object-specific service codes
+remain available. Framework errors use `authentication_required`,
+`permission_denied`, `not_found`, `state_conflict` or `invalid_arguments`.
+Unknown failures use `internal_error`, without raw exception text. Check the
+current state before retrying an uncertain write; only playback navigation and
+operations explicitly supporting request keys provide retry deduplication.
+
+Rating `0` is a real rating; `null` clears it. Existing image summaries use `-1`
+for an unrated `my_rating`, while `avg_rating` uses `null` when no votes exist.
+Dates are UTC ISO 8601 strings; search accepts ISO dates and its documented
+relative-date forms. Fixed import plans, batches and playback queues preserve
+their target IDs; saved searches are evaluated against current data and access.
+
+These stream and interaction conventions follow the
+[Command Line Interface Guidelines](https://clig.dev/) while retaining the
+existing command and response formats.
+
 ## Library purpose and first use
 
 Explicit `--data` takes precedence over `PICSHELF_DATA`. A source checkout keeps

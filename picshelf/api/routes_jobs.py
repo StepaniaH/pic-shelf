@@ -1,11 +1,12 @@
 """Additive asynchronous endpoints; existing synchronous routes stay compatible."""
 from fastapi import APIRouter, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import StrictBool, BaseModel, ConfigDict, Field
 
 from .. import import_plans, jobs
 from ..access import AccessContext
 from ..errors import ServiceError
 from ..i18n import t
+from .types import Identifier, MAX_INTEGER
 from .deps import Db, User
 
 router = APIRouter(tags=["jobs"])
@@ -14,18 +15,18 @@ router = APIRouter(tags=["jobs"])
 class SubmitJob(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_key: str = Field(min_length=1, max_length=128)
-    full: bool = False
-    outdated_only: bool = False
+    full: StrictBool = False
+    outdated_only: StrictBool = False
 
 
 class SubmitImport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_key: str = Field(min_length=1, max_length=128)
-    confirm: bool = False
+    confirm: StrictBool = False
 
 
 @router.post("/libraries/{library_id}/scan-jobs", status_code=202)
-def submit_scan(library_id: int, body: SubmitJob, request: Request, conn: Db, user: User):
+def submit_scan(library_id: Identifier, body: SubmitJob, request: Request, conn: Db, user: User):
     value = jobs.submit(conn, AccessContext(user["id"]), "scan", library_id,
                          request_key=body.request_key, full=body.full, outdated_only=body.outdated_only)
     request.app.state.workers.start()
@@ -33,7 +34,7 @@ def submit_scan(library_id: int, body: SubmitJob, request: Request, conn: Db, us
 
 
 @router.post("/libraries/{library_id}/rebuild-jobs", status_code=202)
-def submit_rebuild(library_id: int, body: SubmitJob, request: Request, conn: Db, user: User):
+def submit_rebuild(library_id: Identifier, body: SubmitJob, request: Request, conn: Db, user: User):
     value = jobs.submit(conn, AccessContext(user["id"]), "rebuild", library_id,
                          request_key=body.request_key, outdated_only=body.outdated_only)
     request.app.state.workers.start()
@@ -53,12 +54,12 @@ def submit_import(plan_id: str, body: SubmitImport, request: Request, conn: Db, 
 
 
 @router.get("/jobs")
-def list_jobs(conn: Db, user: User, offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+def list_jobs(conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(50, ge=1, le=100)):
     return jobs.list_jobs(conn, AccessContext(user["id"]), offset=offset, limit=limit)
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, conn: Db, user: User, offset: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
+def get_job(job_id: str, conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(100, ge=1, le=1000)):
     return jobs.get_job(conn, AccessContext(user["id"]), job_id, offset=offset, limit=limit)
 
 

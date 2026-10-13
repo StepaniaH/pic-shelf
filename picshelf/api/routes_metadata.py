@@ -2,12 +2,13 @@
 from typing import Literal
 
 from fastapi import APIRouter
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import StrictBool, BaseModel, ConfigDict, Field, StrictInt
 
 from .. import entity_edits, metadata
 from ..access import AccessContext
 from ..errors import ServiceError
 from ..i18n import t
+from .types import Identifier, BodyIdentifier
 from .deps import Db, User
 
 router = APIRouter(tags=["metadata"])
@@ -18,7 +19,7 @@ class StrictBody(BaseModel):
 
 
 class WorkflowBody(StrictBody):
-    image_ids: list[StrictInt] = Field(min_length=1, max_length=1000)
+    image_ids: list[BodyIdentifier] = Field(min_length=1, max_length=1000)
     state: Literal["inbox", "done"]
 
 
@@ -37,7 +38,7 @@ class ClaimBody(StrictBody):
 
 
 @router.get("/images/{image_id}/metadata")
-def image_metadata(image_id: int, conn: Db, user: User):
+def image_metadata(image_id: Identifier, conn: Db, user: User):
     return metadata.get(conn, AccessContext(user["id"]), image_id)
 
 
@@ -47,35 +48,35 @@ def mark_workflow(body: WorkflowBody, conn: Db, user: User):
 
 
 @router.post("/images/{image_id}/sources")
-def add_source(image_id: int, body: SourceBody, conn: Db, user: User):
+def add_source(image_id: Identifier, body: SourceBody, conn: Db, user: User):
     return metadata.add_source(conn, AccessContext(user["id"]), image_id, **body.model_dump())
 
 
 @router.post("/images/{image_id}/tag-claims")
-def add_claim(image_id: int, body: ClaimBody, conn: Db, user: User):
+def add_claim(image_id: Identifier, body: ClaimBody, conn: Db, user: User):
     return metadata.add_tag_claim(conn, AccessContext(user["id"]), image_id, **body.model_dump())
 
 
 @router.post("/tag-claims/{claim_id}/confirm")
-def confirm_claim(claim_id: int, conn: Db, user: User):
+def confirm_claim(claim_id: Identifier, conn: Db, user: User):
     return metadata.confirm_tag_claim(conn, AccessContext(user["id"]), claim_id)
 
 
 class AliasBody(StrictBody):
     kind: Literal["tag", "artist"]
-    entity_id: StrictInt
+    entity_id: BodyIdentifier
     alias: str = Field(min_length=1, max_length=300)
 
 
 class MergeBody(StrictBody):
     kind: Literal["tag", "artist"]
-    source_id: StrictInt
-    target_id: StrictInt
-    image_ids: list[StrictInt] = Field(min_length=1, max_length=1000)
+    source_id: BodyIdentifier
+    target_id: BodyIdentifier
+    image_ids: list[BodyIdentifier] = Field(min_length=1, max_length=1000)
 
 
 class ConfirmBody(StrictBody):
-    confirm: bool = False
+    confirm: StrictBool = False
 
 
 @router.post("/metadata/aliases/preview")

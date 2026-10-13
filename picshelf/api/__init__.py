@@ -9,6 +9,7 @@ from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException
 
 from .. import __version__, auth
 from ..config import Config
@@ -60,8 +61,22 @@ def create_app(cfg: Config) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request, exc):
         # Validation inputs may contain passwords, tokens or private paths.
-        return JSONResponse(status_code=422, content={"detail": [
-            {key: error[key] for key in ("type", "loc", "msg")} for error in exc.errors()]})
+        body = ServiceError("invalid_arguments", t("请求参数无效"), status=422,
+                            next_step=t("请按接口说明检查字段类型和范围后重试")).as_dict()
+        body["detail"] = [{key: error[key] for key in ("type", "loc", "msg")} for error in exc.errors()]
+        return JSONResponse(status_code=422, content=body)
+
+    @app.exception_handler(HTTPException)
+    async def _http_error(request, exc):
+        codes = {400: "invalid_arguments", 401: "authentication_required", 403: "permission_denied",
+                 404: "not_found", 405: "method_not_allowed", 409: "state_conflict", 410: "plan_expired",
+                 413: "request_too_large", 422: "invalid_arguments", 429: "rate_limited"}
+        steps = {401: "请先登录后重试", 403: "请联系管理员检查权限", 404: "请刷新列表并检查目标是否仍可访问",
+                 409: "请重新读取当前状态后再试", 410: "请重新创建预演计划", 429: "请稍后重试"}
+        body = ServiceError(codes.get(exc.status_code, "request_failed"), exc.detail,
+                            status=exc.status_code, retryable=exc.status_code == 429,
+                            next_step=t(steps.get(exc.status_code, "请按接口说明检查字段类型和范围后重试"))).as_dict()
+        return JSONResponse(status_code=exc.status_code, content=body, headers=exc.headers)
 
     @app.middleware("http")
     async def _lang_from_header(request, call_next):
@@ -88,6 +103,11 @@ def create_app(cfg: Config) -> FastAPI:
             response = await call_next(request)
         except ServiceError as exc:
             response = await _service_error(request, exc)
+        except Exception:
+            # Never return exception text: it can include private paths or inputs.
+            response = await _service_error(request, ServiceError(
+                "internal_error", t("服务未能完成请求"), status=500,
+                next_step=t("请重新读取当前状态；确认是否已保存后再试，持续失败时联系管理员")))
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"

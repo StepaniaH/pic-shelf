@@ -5,11 +5,12 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import StrictInt, StrictBool, BaseModel, Field
 
 from .. import auth, catalog, names, ops
 from ..i18n import t
 from ..access import AccessContext
+from .types import Identifier, BodyIdentifier
 from .deps import Db, User, ensure_catalog_access, image_and_access, require_cap
 
 router = APIRouter(tags=["interact"])
@@ -23,20 +24,20 @@ Noter = Annotated[sqlite3.Row, Depends(require_cap("note"))]
 # ---------------------------------------------------------------- 评分 / 收藏
 
 class RatingBody(BaseModel):
-    value: int | None = None
+    value: StrictInt | None = Field(default=None, json_schema_extra={"minimum": 0, "maximum": 10})
 
 
 @router.post("/images/{image_id}/rating")
-def set_rating(image_id: int, body: RatingBody, conn: Db, user: Rater):
+def set_rating(image_id: Identifier, body: RatingBody, conn: Db, user: Rater):
     return catalog.rate_image(conn, AccessContext(user["id"]), image_id, body.value)
 
 
 class FavoriteBody(BaseModel):
-    on: bool | None = None
+    on: StrictBool | None = None
 
 
 @router.post("/images/{image_id}/favorite")
-def set_favorite(image_id: int, body: FavoriteBody, conn: Db, user: Rater):
+def set_favorite(image_id: Identifier, body: FavoriteBody, conn: Db, user: Rater):
     image_and_access(conn, user, image_id)
     return {"favorite": ops.set_favorite(conn, image_id, user["id"], body.on)}
 
@@ -48,7 +49,7 @@ class TagsBody(BaseModel):
 
 
 @router.post("/images/{image_id}/tags")
-def add_tags(image_id: int, body: TagsBody, conn: Db, user: TagEditor):
+def add_tags(image_id: Identifier, body: TagsBody, conn: Db, user: TagEditor):
     image_and_access(conn, user, image_id, "edit")
     for name in body.names:
         existing = names.resolve(conn, "tag", name)
@@ -58,7 +59,7 @@ def add_tags(image_id: int, body: TagsBody, conn: Db, user: TagEditor):
 
 
 @router.delete("/images/{image_id}/tags/{tag}")
-def remove_tag(image_id: int, tag: str, conn: Db, user: TagEditor):
+def remove_tag(image_id: Identifier, tag: str, conn: Db, user: TagEditor):
     image_and_access(conn, user, image_id, "edit")
     return {"removed": ops.remove_tags(conn, image_id, [tag])}
 
@@ -66,12 +67,12 @@ def remove_tag(image_id: int, tag: str, conn: Db, user: TagEditor):
 # ---------------------------------------------------------------- 艺术家关联
 
 class LinkArtistBody(BaseModel):
-    artist_id: int
-    on: bool = True
+    artist_id: BodyIdentifier
+    on: StrictBool = True
 
 
 @router.post("/images/{image_id}/artists")
-def link_artist(image_id: int, body: LinkArtistBody, conn: Db, user: TagEditor):
+def link_artist(image_id: Identifier, body: LinkArtistBody, conn: Db, user: TagEditor):
     image_and_access(conn, user, image_id, "edit")
     ensure_catalog_access(conn, user, "artist", body.artist_id)
     try:
@@ -94,13 +95,13 @@ class CommentBody(BaseModel):
 
 
 @router.get("/images/{image_id}/comments")
-def list_comments(image_id: int, conn: Db, user: User):
+def list_comments(image_id: Identifier, conn: Db, user: User):
     image_and_access(conn, user, image_id)
     return ops.list_comments(conn, image_id)
 
 
 @router.post("/images/{image_id}/comments")
-def add_comment(image_id: int, body: CommentBody, conn: Db, user: Commenter):
+def add_comment(image_id: Identifier, body: CommentBody, conn: Db, user: Commenter):
     image_and_access(conn, user, image_id)
     try:
         return ops.add_comment(conn, image_id, user["id"], body.body)
@@ -109,7 +110,7 @@ def add_comment(image_id: int, body: CommentBody, conn: Db, user: Commenter):
 
 
 @router.delete("/comments/{comment_id}")
-def delete_comment(comment_id: int, conn: Db, user: Commenter):
+def delete_comment(comment_id: Identifier, conn: Db, user: Commenter):
     row = conn.execute("SELECT image_id FROM comments WHERE id=?", (comment_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))
@@ -131,13 +132,13 @@ class NoteBody(BaseModel):
 
 
 @router.get("/images/{image_id}/notes")
-def list_notes(image_id: int, conn: Db, user: User):
+def list_notes(image_id: Identifier, conn: Db, user: User):
     image_and_access(conn, user, image_id)
     return ops.list_notes(conn, image_id)
 
 
 @router.post("/images/{image_id}/notes")
-def add_note(image_id: int, body: NoteBody, conn: Db, user: Noter):
+def add_note(image_id: Identifier, body: NoteBody, conn: Db, user: Noter):
     image_and_access(conn, user, image_id)
     try:
         return ops.add_note(conn, image_id, user["id"], body.body, body.geometry)
@@ -146,7 +147,7 @@ def add_note(image_id: int, body: NoteBody, conn: Db, user: Noter):
 
 
 @router.delete("/notes/{note_id}")
-def delete_note(note_id: int, conn: Db, user: Noter):
+def delete_note(note_id: Identifier, conn: Db, user: Noter):
     row = conn.execute("SELECT image_id FROM notes WHERE id=?", (note_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("条目不存在或无权访问"))

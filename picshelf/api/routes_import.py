@@ -7,10 +7,11 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import StrictBool, BaseModel, ConfigDict
 
 from .. import import_plans
 from ..access import AccessContext
+from .types import Identifier, BodyIdentifier, MAX_INTEGER
 from .deps import Db, User, ensure_library_access
 from ..i18n import t
 
@@ -18,16 +19,16 @@ router = APIRouter(prefix="/import", tags=["import"])
 
 class ImportBody(BaseModel):
     source_dir: str
-    library_id: int
+    library_id: BodyIdentifier
     mode: Literal["hardlink", "copy", "move"] | None = None
-    rename: bool = True
+    rename: StrictBool = True
 
 
 class ExecuteBody(ImportBody):
-    confirm: bool = False
+    confirm: StrictBool = False
 
 
-def _target_library(conn, user, library_id: int):
+def _target_library(conn, user, library_id: Identifier):
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
         raise HTTPException(status_code=404, detail=t("库不存在"))
@@ -61,12 +62,12 @@ def execute_import(body: ExecuteBody, request: Request, conn: Db, user: User):
 
 class ConfirmPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    confirm: bool = False
-    retry: bool = False
+    confirm: StrictBool = False
+    retry: StrictBool = False
 
 
 @router.get("/plans/{plan_id}")
-def get_plan(plan_id: str, conn: Db, user: User, offset: int = Query(0, ge=0),
+def get_plan(plan_id: str, conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER),
              limit: int = Query(300, ge=1, le=1000)):
     return import_plans.get_plan(conn, AccessContext(user["id"]), plan_id, offset=offset, limit=limit)
 

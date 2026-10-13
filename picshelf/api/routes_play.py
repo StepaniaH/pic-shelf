@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from .. import auth, play, play_rules, search
 from ..access import AccessContext
+from .types import Identifier, BodyIdentifier, MAX_INTEGER
 from .deps import Db, User, serialize_image
 
 router=APIRouter(tags=['play'])
@@ -11,9 +12,9 @@ router=APIRouter(tags=['play'])
 
 class PlaySource(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    library_id: StrictInt | None = None
-    album_id: StrictInt | None = None
-    artist_id: StrictInt | None = None
+    library_id: BodyIdentifier | None = None
+    album_id: BodyIdentifier | None = None
+    artist_id: BodyIdentifier | None = None
     tag: str | None = None
     favorites: StrictBool = False
     rating_min: StrictInt | None = None
@@ -121,7 +122,7 @@ def reshuffle(token: str,conn: Db,user: User,body: RequestKey | None = None):
 
 
 @router.get('/play/sessions/{token}/items')
-def session_items(token: str,conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(20,ge=0,le=100)):
+def session_items(token: str,conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(20,ge=0,le=100)):
     session=_session_or_404(conn,token,user)
     ids=play.queue_items(conn,session['id'],offset=offset,limit=limit)
     allowed=auth.visible_library_ids(conn,user)
@@ -137,7 +138,7 @@ def delete_session(token: str,conn: Db,user: User):
 
 
 @router.get('/play/rules')
-def list_rules(conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(100,ge=1,le=100)):
+def list_rules(conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(100,ge=1,le=100)):
     return play_rules.list_rules(conn,AccessContext(user['id']),offset=offset,limit=limit)
 
 
@@ -147,20 +148,20 @@ def create_rule(body: RuleBody,conn: Db,user: User):
 
 
 @router.get('/play/rules/{rule_id}')
-def get_rule(rule_id: int,conn: Db,user: User):
+def get_rule(rule_id: Identifier,conn: Db,user: User):
     return play_rules.get(conn,AccessContext(user['id']),rule_id)
 
 
 @router.patch('/play/rules/{rule_id}')
-def edit_rule(rule_id: int,body: RuleEdit,conn: Db,user: User):
+def edit_rule(rule_id: Identifier,body: RuleEdit,conn: Db,user: User):
     return play_rules.update(conn,AccessContext(user['id']),rule_id,**body.model_dump())
 
 
 @router.post('/play/rules/{rule_id}/start')
-def start_rule(rule_id: int,conn: Db,user: User):
+def start_rule(rule_id: Identifier,conn: Db,user: User):
     return _attach_image(conn,play_rules.start(conn,AccessContext(user['id']),rule_id),user)
 
 
 @router.get('/play/rules/{rule_id}/export')
-def export_rule(rule_id: int,conn: Db,user: User):
+def export_rule(rule_id: Identifier,conn: Db,user: User):
     return play_rules.export(conn,AccessContext(user['id']),rule_id)

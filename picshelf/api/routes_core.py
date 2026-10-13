@@ -8,11 +8,12 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import Field, StrictBool, BaseModel, ConfigDict
 
 from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, metadata, names, ops, search
 from ..access import AccessContext
 from ..errors import ServiceError
+from .types import Identifier, BodyIdentifier, Sort, ImageLimit, Offset
 from .deps import Db, User, ensure_catalog_access, ensure_library_access, image_and_access, require_cap, serialize_image
 from ..i18n import t
 
@@ -73,7 +74,7 @@ def create_library(body: LibraryBody, conn: Db, user: User):
 
 
 @router.get("/libraries/{library_id}")
-def get_library(library_id: int, conn: Db, user: User):
+def get_library(library_id: Identifier, conn: Db, user: User):
     ensure_library_access(conn, user, library_id)
     lib = libsvc.get_library(conn, library_id)
     if lib is None:
@@ -87,14 +88,14 @@ def get_library(library_id: int, conn: Db, user: User):
 
 
 @router.patch("/libraries/{library_id}")
-def patch_library(library_id: int, body: LibraryPatch, request: Request, conn: Db, user: User):
+def patch_library(library_id: Identifier, body: LibraryPatch, request: Request, conn: Db, user: User):
     ensure_library_access(conn, user, library_id, minimum="manage")
     return libsvc.update_library(conn, request.app.state.cfg, AccessContext(user["id"]), library_id,
                                  **body.model_dump(exclude_unset=True))
 
 
 @router.post("/libraries/{library_id}/scan")
-def scan_library(library_id: int, request: Request, conn: Db, user: User):
+def scan_library(library_id: Identifier, request: Request, conn: Db, user: User):
     ensure_library_access(conn, user, library_id, minimum="manage")
     cfg = request.app.state.cfg
     try:
@@ -105,7 +106,7 @@ def scan_library(library_id: int, request: Request, conn: Db, user: User):
 
 
 @router.get("/scans")
-def list_scans(conn: Db, user: User, library_id: int | None = None, limit: int = 20):
+def list_scans(conn: Db, user: User, library_id: Identifier | None = None, limit: int = Query(20,ge=1,le=100)):
     allowed = auth.visible_library_ids(conn, user)
     sql = "SELECT * FROM scans WHERE 1=1"
     params: list = []
@@ -128,7 +129,7 @@ def list_scans(conn: Db, user: User, library_id: int | None = None, limit: int =
 
 class AlbumBody(BaseModel):
     name: str
-    library_id: int
+    library_id: BodyIdentifier
     category: str | None = None
     description: str | None = None
 
@@ -137,15 +138,15 @@ class AlbumPatch(BaseModel):
     name: str | None = None
     category: str | None = None
     description: str | None = None
-    cover_image_id: int | None = None
+    cover_image_id: BodyIdentifier | None = None
 
 
 class IdList(BaseModel):
-    image_ids: list[int]
+    image_ids: list[BodyIdentifier] = Field(max_length=10000)
 
 
 @router.get("/albums")
-def list_albums(conn: Db, user: User, library_id: int | None = None, kind: str | None = None):
+def list_albums(conn: Db, user: User, library_id: Identifier | None = None, kind: str | None = None):
     allowed = auth.visible_library_ids(conn, user)
     if library_id is not None:
         ensure_library_access(conn, user, library_id)
@@ -157,14 +158,17 @@ def create_album(body: AlbumBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
     ensure_library_access(conn, user, body.library_id, minimum="edit")
-    return ops.create_album(
-        conn, body.name, library_id=body.library_id,
-        category=body.category, description=body.description,
-    )
+    try:
+        return ops.create_album(
+            conn, body.name, library_id=body.library_id,
+            category=body.category, description=body.description,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/albums/{album_id}")
-def get_album(album_id: int, conn: Db, user: User):
+def get_album(album_id: Identifier, conn: Db, user: User):
     AccessContext(user["id"]).require_album(conn, album_id)
     album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
@@ -175,7 +179,7 @@ def get_album(album_id: int, conn: Db, user: User):
 
 
 @router.patch("/albums/{album_id}")
-def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
+def patch_album(album_id: Identifier, body: AlbumPatch, conn: Db, user: User):
     AccessContext(user["id"]).require_album(conn, album_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
@@ -196,8 +200,8 @@ def patch_album(album_id: int, body: AlbumPatch, conn: Db, user: User):
 
 
 @router.get("/albums/{album_id}/images")
-def album_images(album_id: int, conn: Db, user: User,
-                 sort: str = "path", limit: int = 60, offset: int = 0):
+def album_images(album_id: Identifier, conn: Db, user: User,
+                 sort: Sort = "path", limit: ImageLimit = 60, offset: Offset = 0):
     AccessContext(user["id"]).require_album(conn, album_id)
     album = ops.get_album(conn, album_id, auth.visible_library_ids(conn, user))
     if album is None:
@@ -216,7 +220,7 @@ def album_images(album_id: int, conn: Db, user: User,
 
 
 @router.post("/albums/{album_id}/images")
-def album_add(album_id: int, body: IdList, conn: Db, user: User):
+def album_add(album_id: Identifier, body: IdList, conn: Db, user: User):
     AccessContext(user["id"]).require_album(conn, album_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
@@ -235,7 +239,7 @@ def album_add(album_id: int, body: IdList, conn: Db, user: User):
 
 
 @router.delete("/albums/{album_id}/images/{image_id}")
-def album_remove(album_id: int, image_id: int, conn: Db, user: User):
+def album_remove(album_id: Identifier, image_id: Identifier, conn: Db, user: User):
     AccessContext(user["id"]).require_album(conn, album_id, "edit")
     image_and_access(conn, user, image_id, "edit")
     if not auth.has_cap(conn, user, "tag_edit"):
@@ -257,10 +261,10 @@ def album_remove(album_id: int, image_id: int, conn: Db, user: User):
 @router.get("/images")
 def list_images(
     conn: Db, user: User,
-    q: str = "", sort: str = "newest", limit: int = 60, offset: int = 0,
-    library_id: int | None = None, album_id: int | None = None,
-    artist_id: int | None = None, tag: str | None = None,
-    favorites: bool = False, rating_min: int | None = None, workflow: Literal["inbox","done"] | None = None,
+    q: str = "", sort: Sort = "newest", limit: ImageLimit = 60, offset: Offset = 0,
+    library_id: BodyIdentifier | None = None, album_id: Identifier | None = None,
+    artist_id: BodyIdentifier | None = None, tag: str | None = None,
+    favorites: StrictBool = False, rating_min: int | None = Query(None,ge=0,le=10), workflow: Literal["inbox","done"] | None = None,
 ):
     if library_id is not None:
         ensure_library_access(conn, user, library_id)
@@ -273,7 +277,7 @@ def list_images(
 
 
 @router.get("/images/{image_id}")
-def image_detail(image_id: int, conn: Db, user: User):
+def image_detail(image_id: Identifier, conn: Db, user: User):
     image_and_access(conn, user, image_id)
     detail = search.get_image(conn, image_id, user["id"], auth.visible_library_ids(conn, user))
     if detail is None:
@@ -299,7 +303,7 @@ def _serve_file(cfg, path: Path, media_type: str, etag: str, download_name: str 
 
 
 @router.get("/media/{kind}/{image_id}")
-def media(kind: str, image_id: int, request: Request, conn: Db, user: User, download: int = 0):
+def media(kind: str, image_id: Identifier, request: Request, conn: Db, user: User, download: int = 0):
     if kind not in ("thumb", "preview", "original"):
         raise HTTPException(status_code=404, detail=t("未知媒体类型"))
     row = image_and_access(conn, user, image_id)
@@ -346,7 +350,7 @@ class TagPatch(BaseModel):
 
 
 @router.get("/tags")
-def list_tags(conn: Db, user: User, q: str | None = None, limit: int = 50):
+def list_tags(conn: Db, user: User, q: str | None = None, limit: int = Query(50,ge=1,le=500)):
     return ops.list_tags(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
@@ -366,7 +370,7 @@ def create_tag(body: TagBody, conn: Db, user: User):
 
 
 @router.patch("/tags/{tag_id}")
-def rename_tag(tag_id: int, body: TagPatch, conn: Db, user: User):
+def rename_tag(tag_id: Identifier, body: TagPatch, conn: Db, user: User):
     AccessContext(user["id"]).require_capability(conn, "admin")
     ensure_catalog_access(conn, user, "tag", tag_id)
     try:
@@ -392,7 +396,7 @@ class ArtistPatch(BaseModel):
 
 
 @router.get("/artists")
-def list_artists(conn: Db, user: User, q: str | None = None, limit: int = 100):
+def list_artists(conn: Db, user: User, q: str | None = None, limit: int = Query(100,ge=1,le=500)):
     return ops.list_artists(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
@@ -412,7 +416,7 @@ def create_artist(body: ArtistBody, conn: Db, user: User):
 
 
 @router.get("/artists/{artist_id}")
-def get_artist(artist_id: int, conn: Db, user: User):
+def get_artist(artist_id: Identifier, conn: Db, user: User):
     try:
         return ops.get_artist(conn, artist_id, auth.visible_library_ids(conn, user))
     except ValueError as exc:
@@ -420,7 +424,7 @@ def get_artist(artist_id: int, conn: Db, user: User):
 
 
 @router.patch("/artists/{artist_id}")
-def patch_artist(artist_id: int, body: ArtistPatch, conn: Db, user: User):
+def patch_artist(artist_id: Identifier, body: ArtistPatch, conn: Db, user: User):
     AccessContext(user["id"]).require_capability(conn, "admin")
     ensure_catalog_access(conn, user, "artist", artist_id)
     try:
@@ -434,8 +438,8 @@ def patch_artist(artist_id: int, body: ArtistPatch, conn: Db, user: User):
 
 
 @router.get("/artists/{artist_id}/images")
-def artist_images(artist_id: int, conn: Db, user: User,
-                  sort: str = "newest", limit: int = 60, offset: int = 0):
+def artist_images(artist_id: Identifier, conn: Db, user: User,
+                  sort: Sort = "newest", limit: ImageLimit = 60, offset: Offset = 0):
     try:
         ops.get_artist(conn, artist_id, auth.visible_library_ids(conn, user))
     except ValueError as exc:

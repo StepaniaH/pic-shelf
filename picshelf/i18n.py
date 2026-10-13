@@ -65,6 +65,28 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "TUI 需要交互终端；管道请使用 ls --json": "TUI requires an interactive terminal; use ls --json in a pipeline",
+    "请求参数无效": "Invalid request parameters",
+    "请按接口说明检查字段类型和范围后重试": "Check field types and ranges in the API reference before retrying",
+    "请先登录后重试": "Sign in before retrying",
+    "请联系管理员检查权限": "Ask an administrator to check your permissions",
+    "请刷新列表并检查目标是否仍可访问": "Refresh the list and check whether the target is still accessible",
+    "请重新读取当前状态后再试": "Read the current state again before retrying",
+    "请重新创建预演计划": "Create a new preview plan",
+    "请稍后重试": "Try again later",
+    "服务未能完成请求": "The service could not complete the request",
+    "请重新读取当前状态；确认是否已保存后再试，持续失败时联系管理员": "Read the current state to check whether the change was saved before retrying; contact an administrator if failures persist",
+    "数据目录尚未初始化": "The data directory is not initialized",
+    "请先运行 picshelf init --admin <管理员名>": "First run picshelf init --admin <username>",
+    "非交互输入需要 --password-stdin（备份口令使用 --passphrase-stdin）": "Non-interactive input requires --password-stdin (use --passphrase-stdin for backups)",
+    "请查看该命令的 --help 并检查参数后重试": "Check this command’s --help and arguments before retrying",
+    "操作已中断": "The operation was interrupted",
+    "请查看当前状态后再决定是否重试": "Check the current state before deciding whether to retry",
+    "文件或数据库操作未完成": "The file or database operation could not be completed",
+    "请检查数据目录、读写权限和可用空间后重试": "Check the data directory, read/write permissions and free space before retrying",
+    "终端播放需要交互终端；管道请使用 --player list": "Terminal playback requires an interactive terminal; use --player list in a pipeline",
+    "非交互执行需要 --yes；请先检查预演结果": "Non-interactive execution requires --yes; inspect the preview first",
+
     "后台任务与批次（Enter 查看逐项结果）": "Background jobs and batches (Enter for item results)",
     "列表：j/k 移动，[/] 翻页，/ 搜索，Esc 返回列表。\nx 选择当前图片（跨页保留），Ctrl+X 清空选择。\nr 评分（0–10；- 清除），f 收藏，t 添加标签（含空格的名称加引号）。\na 关联已有艺术家，l 加入手工专辑，w 标记 done / inbox；批量修改先预演确认。\nc 评论，n 笔记；b 导航，d 展开完整详情，p 切换可选图片预览。\ns 开始固定播放会话，←/→ 翻图，空格暂停/继续，Ctrl+P 暂停恢复最近会话。\nCtrl+S 扫描当前库；Ctrl+J 查看后台任务、取消、重试或撤销批次。\n搜索、输入弹窗与帮助会暂停播放；关闭弹窗后用空格继续。\ng 刷新，q 退出；输入框中的字母不会触发整理快捷键。\nF1 随时打开帮助，Esc 关闭。": "List: j/k move, [/] page, / search, Esc return to the list.\nx selects the current image across pages; Ctrl+X clears selection.\nr rates (0–10; - clears), f favorites, t adds tags (quote names containing spaces).\na links an existing artist, l adds to a manual album, w sets done / inbox; batches require preview confirmation.\nc comments, n adds notes; b navigation, d full details, p optional image preview.\ns starts a fixed playback session, arrows navigate, Space pauses/resumes, Ctrl+P reopens the latest session paused.\nCtrl+S scans the current library; Ctrl+J shows progress, cancel, retry and batch undo.\nSearch, prompts and help pause playback; use Space to resume after closing them.\ng refreshes, q quits; letters in input fields do not run organization shortcuts.\nF1 opens help anywhere; Esc closes it.",
     "第 {start}–{end} 张 / 共 {total} 张 · 已选 {selected} · F1 帮助": "Images {start}–{end} / {total} · Selected {selected} · F1 help",

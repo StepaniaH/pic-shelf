@@ -5,10 +5,11 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import StrictBool, BaseModel, Field
 
 from .. import auth, source_access
 from ..access import AccessContext
+from .types import Identifier, BodyIdentifier
 from .deps import Db, User, ensure_library_access, require_cap
 from ..i18n import t
 
@@ -19,7 +20,7 @@ Admin = Annotated[sqlite3.Row, Depends(require_cap("admin"))]
 
 class SourceRootBody(BaseModel):
     root_path: str = Field(min_length=1, max_length=4096)
-    allow_move: bool = False
+    allow_move: StrictBool = False
 
 
 @router.get("/import-sources")
@@ -33,7 +34,7 @@ def add_source(body: SourceRootBody, conn: Db, admin: Admin):
 
 
 @router.delete("/import-sources/{root_id}")
-def revoke_source(root_id: int, conn: Db, admin: Admin):
+def revoke_source(root_id: Identifier, conn: Db, admin: Admin):
     return source_access.revoke(conn, AccessContext(admin["id"]), root_id)
 
 
@@ -59,20 +60,20 @@ def _user_dict(conn, row) -> dict:
 class UserBody(BaseModel):
     username: str = Field(min_length=1, max_length=128)
     password: str = Field(min_length=6, max_length=1024)
-    is_admin: bool = False
+    is_admin: StrictBool = False
     display_name: str | None = None
     groups: list[str] | None = None
 
 
 class UserPatch(BaseModel):
-    is_admin: bool | None = None
-    disabled: bool | None = None
+    is_admin: StrictBool | None = None
+    disabled: StrictBool | None = None
     password: str | None = Field(default=None, min_length=6, max_length=1024)
     display_name: str | None = None
 
 
 class GroupsBody(BaseModel):
-    group_ids: list[int]
+    group_ids: list[BodyIdentifier]
 
 
 @router.get("/users")
@@ -102,7 +103,7 @@ def create_user(body: UserBody, conn: Db, admin: Admin):
 
 
 @router.patch("/users/{user_id}")
-def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
+def patch_user(user_id: Identifier, body: UserPatch, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("用户不存在"))
@@ -136,7 +137,7 @@ def patch_user(user_id: int, body: UserPatch, conn: Db, admin: Admin):
 
 
 @router.put("/users/{user_id}/groups")
-def set_user_groups(user_id: int, body: GroupsBody, conn: Db, admin: Admin):
+def set_user_groups(user_id: Identifier, body: GroupsBody, conn: Db, admin: Admin):
     row = conn.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("用户不存在"))
@@ -211,7 +212,7 @@ def create_group(body: GroupBody, conn: Db, admin: Admin):
 
 
 @router.patch("/groups/{group_id}")
-def patch_group(group_id: int, body: GroupPatch, conn: Db, admin: Admin):
+def patch_group(group_id: Identifier, body: GroupPatch, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("组不存在"))
@@ -234,7 +235,7 @@ def patch_group(group_id: int, body: GroupPatch, conn: Db, admin: Admin):
 
 
 @router.delete("/groups/{group_id}")
-def delete_group(group_id: int, conn: Db, admin: Admin):
+def delete_group(group_id: Identifier, conn: Db, admin: Admin):
     row = conn.execute("SELECT * FROM groups WHERE id=?", (group_id,)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail=t("组不存在"))
@@ -248,11 +249,11 @@ def delete_group(group_id: int, conn: Db, admin: Admin):
 # ---------------------------------------------------------------- 库授权
 
 class GrantBody(BaseModel):
-    group_id: int
+    group_id: BodyIdentifier
     access: str | None = None  # None = 移除授权
 
 
-def _ensure_can_manage_library(conn, user, library_id: int) -> None:
+def _ensure_can_manage_library(conn, user, library_id: Identifier) -> None:
     if user["is_admin"]:
         return
     if not auth.has_cap(conn, user, "manage_library"):
@@ -261,7 +262,7 @@ def _ensure_can_manage_library(conn, user, library_id: int) -> None:
 
 
 @router.get("/libraries/{library_id}/grants")
-def list_grants(library_id: int, conn: Db, user: User):
+def list_grants(library_id: Identifier, conn: Db, user: User):
     _ensure_can_manage_library(conn, user, library_id)
     rows = conn.execute(
         "SELECT lg.group_id, lg.access, g.name AS group_name FROM library_grants lg "
@@ -272,7 +273,7 @@ def list_grants(library_id: int, conn: Db, user: User):
 
 
 @router.put("/libraries/{library_id}/grants")
-def set_grant(library_id: int, body: GrantBody, conn: Db, user: User):
+def set_grant(library_id: Identifier, body: GrantBody, conn: Db, user: User):
     _ensure_can_manage_library(conn, user, library_id)
     if body.access is None:
         conn.execute(
