@@ -291,6 +291,11 @@ table.data th { color: var(--muted); font-weight: 500; }
 .paging-policy .hint { flex: 1 1 18rem; }
 .grid.compact { grid-template-columns: repeat(auto-fill, minmax(min(150px, 40vw), 1fr)); }
 .grid.hide-filenames .fname { display: none; }
+.play-query { display: grid; gap: .5rem; }
+.play-query textarea { width: 100%; resize: vertical; }
+#ss-name { width: 100%; }
+#ss-status { color: var(--warn); overflow-wrap: anywhere; }
+.slideshow-caption p { margin: .25rem 0; }
 .card-selection { position: absolute; z-index: 2; top: .4rem; left: .4rem; min-width: 44px; min-height: 44px; display: grid; place-items: center; padding: .4rem; border-radius: .4rem; background: rgba(0,0,0,.7); }
 .card-selection input { width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--accent); }
 .card:has([data-select-image]:checked) { outline: 2px solid var(--accent); outline-offset: 2px; }

@@ -23,7 +23,7 @@ from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
 from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
-from . import batches, entity_edits, metadata as metasvc, names as catalog_names, source_access, saved_queries
+from . import batches, entity_edits, metadata as metasvc, names as catalog_names, source_access, saved_queries, play_rules
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -917,6 +917,96 @@ def artist_unlink(cfg, image_id, artist_name):
 
 # ---------------------------------------------------------------- 播放
 
+@main.group('play-rules')
+def play_rules_group():
+    """保存和启动个人播放规则（JSON 输出）。"""
+
+
+def _play_context(cfg,user):
+    conn=_conn(cfg)
+    return conn,AccessContext(_acting_user(conn,user)['id'])
+
+
+def _play_spec(text):
+    try:return json.loads(text)
+    except ValueError:raise click.ClickException(t('JSON 格式无效，请检查输入'))
+
+
+@play_rules_group.command('save')
+@click.argument('name')
+@click.option('--spec',required=True,help='播放配置 JSON')
+@click.option('--user',default=None)
+@click.pass_obj
+def play_rule_save(cfg,name,spec,user):
+    conn,access=_play_context(cfg,user)
+    click.echo(json.dumps(play_rules.create(conn,access,name=name,spec=_play_spec(spec)),ensure_ascii=False,indent=2))
+
+
+@play_rules_group.command('edit')
+@click.argument('rule_id',type=click.IntRange(min=1))
+@click.option('--version',required=True,type=click.IntRange(min=1))
+@click.option('--name',required=True)
+@click.option('--spec',required=True,help='播放配置 JSON')
+@click.option('--user',default=None)
+@click.pass_obj
+def play_rule_edit(cfg,rule_id,version,name,spec,user):
+    conn,access=_play_context(cfg,user)
+    click.echo(json.dumps(play_rules.update(conn,access,rule_id,version=version,name=name,spec=_play_spec(spec)),ensure_ascii=False,indent=2))
+
+
+@play_rules_group.command('list')
+@click.option('--user',default=None)
+@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.pass_obj
+def play_rule_list(cfg,user,offset):
+    conn,access=_play_context(cfg,user)
+    click.echo(json.dumps(play_rules.list_rules(conn,access,offset=offset),ensure_ascii=False,indent=2))
+
+
+def _rule_command(name,operation):
+    @click.command(name)
+    @click.argument('rule_id',type=click.IntRange(min=1))
+    @click.option('--user',default=None)
+    @click.pass_obj
+    def command(cfg,rule_id,user):
+        conn,access=_play_context(cfg,user)
+        click.echo(json.dumps(operation(conn,access,rule_id),ensure_ascii=False,indent=2))
+    play_rules_group.add_command(command)
+
+
+for _command,_operation in (('show',play_rules.get),('start',play_rules.start),('export',play_rules.export)):
+    _rule_command(_command,_operation)
+
+
+@main.group('play-sessions')
+def play_sessions_group():
+    """恢复和控制播放会话（JSON 输出）。"""
+
+
+@play_sessions_group.command('show')
+@click.argument('token')
+@click.option('--user',default=None)
+@click.pass_obj
+def play_session_show(cfg,token,user):
+    conn,access=_play_context(cfg,user)
+    click.echo(json.dumps(play.session_state(conn,access,token),ensure_ascii=False,indent=2))
+
+
+@play_sessions_group.command('control')
+@click.argument('token')
+@click.argument('action',type=click.Choice(['next','prev','goto','pause','resume','reshuffle']))
+@click.option('--position',type=click.IntRange(0,9999),default=None,help='从 0 起的播放位置')
+@click.option('--request-key',default=None)
+@click.option('--expected-version',type=click.IntRange(min=0),default=None)
+@click.option('--user',default=None)
+@click.pass_obj
+def play_session_control(cfg,token,action,position,request_key,expected_version,user):
+    conn,access=_play_context(cfg,user)
+    paused=True if action=='pause' else False if action=='resume' else None
+    result=play.navigate(conn,access,token,'pause' if action=='resume' else action,position=position,
+                         paused=paused,request_key=request_key,expected_version=expected_version)
+    click.echo(json.dumps(result,ensure_ascii=False,indent=2))
+
 @main.command()
 @click.option("--library", default=None, help="库名或 ID")
 @click.option("--album", default=None, type=click.IntRange(min=1), help="专辑 ID")
@@ -956,7 +1046,7 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         "query": query, "order": order,
         "limit": int(count or 0), "interval": int(interval), "loop": bool(loop),
     }
-    session = play.create_session(conn, user["id"], allowed, spec)
+    session = play.create_for_user(conn, AccessContext(user['id']), spec)
     ids = play.queue_items(conn, session["session_id"], limit=10000)
     if not ids:
         raise click.ClickException(t("队列为空：没有符合条件的图片"))
@@ -969,6 +1059,8 @@ def play_cmd(cfg, library, album, artist, tag, query, favorites, min_rating,
         if row:
             paths.append(Path(row["root_path"]) / row["rel_path"])
     click.echo(t("队列 {v0} 张（顺序：{order}{v1}）", v0=len(paths), order=order, v1=t('，循环') if loop else ''))
+    if session['truncated']:
+        click.echo(t('匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限',matched=session['matched_total'],total=session['total']),err=True)
 
     if player == "list":
         for p in paths:

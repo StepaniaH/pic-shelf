@@ -1,212 +1,301 @@
-"""播放会话：把过滤条件物化为有序队列；提供 next / prev / goto / reshuffle。
-
-设计：服务端只负责「库感知队列」（跨专辑/按艺术家/tag/评分/收藏 + 顺序/乱序/定量/循环），
-实际渲染交给执行层（Web 幻灯片 / mpv / 终端渲染）。
-"""
+"""Permission-checked playback snapshots, navigation and explicit random modes."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
+import random
 import secrets
 import sqlite3
 
 from . import search
 from .db import utcnow
+from .errors import ServiceError
+from .i18n import t
+from .names import match_key
 
 MAX_QUEUE = 10000
+MAX_SEED = 2**53-1  # Exact in JSON clients using JavaScript numbers.
+ORDERS = ('sequential', 'shuffle', 'random', 'shuffle_each_round', 'sample')
 
 
-def _source_clauses(spec: dict) -> tuple[list[str], dict]:
-    src = spec.get("source") or {}
-    where: list[str] = []
-    params: dict = {}
-    if src.get("library_id"):
-        where.append("i.library_id = :src_library")
-        params["src_library"] = int(src["library_id"])
-    if src.get("album_id"):
-        where.append(
-            "EXISTS(SELECT 1 FROM album_images ai WHERE ai.image_id=i.id "
-            "AND ai.album_id = :src_album)"
-        )
-        params["src_album"] = int(src["album_id"])
-    if src.get("artist_id"):
-        where.append(
-            "EXISTS(SELECT 1 FROM image_artists ia WHERE ia.image_id=i.id "
-            "AND ia.artist_id = :src_artist)"
-        )
-        params["src_artist"] = int(src["artist_id"])
-    if src.get("tag"):
-        where.append(
-            "EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-            "WHERE it.image_id=i.id AND lower(tg.name)=lower(:src_tag))"
-        )
-        params["src_tag"] = src["tag"]
-    if src.get("favorites"):
-        where.append(
-            "EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)"
-        )
-    if src.get("rating_min") is not None:
-        where.append(
-            "COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id "
-            "AND r.user_id=:uid),0) >= :src_rating_min"
-        )
-        params["src_rating_min"] = float(src["rating_min"])
-    return where, params
+def _invalid():
+    return ServiceError('invalid_play_rule', t('播放配置无效，请检查模式、数量、间隔和显示选项'),
+                        next_step=t('请选择有效播放模式；间隔为 0–86400 秒，数量为非负整数'))
 
 
-def build_queue(
-    conn: sqlite3.Connection,
-    user_id: int,
-    allowed_library_ids: list[int] | None,
-    spec: dict,
-) -> list[int]:
-    order = spec.get("order", "sequential")
-    sort = {"sequential": "path", "shuffle": "random", "random": "random"}.get(order, "path")
-    limit = int(spec.get("limit") or 0)
-    limit = min(limit, MAX_QUEUE) if limit > 0 else MAX_QUEUE
-    where, params = _source_clauses(spec)
-    where.append('i.missing=0')
-    res = search.search_images(
-        conn, user_id, allowed_library_ids,
-        query=spec.get("query") or "",
-        sort=sort, limit=limit, offset=0,
-        extra_where=where or None, extra_params=params or None,
-    )
-    if res['errors']:
-        raise search.invalid_query(res['errors'])
-    return [int(it["id"]) for it in res["items"]]
+def validate_spec(spec):
+    if not isinstance(spec, dict) or set(spec) - {'source','query','sort','order','interval','limit','loop','size','captions','seed'}:
+        raise _invalid()
+    value = dict(source={},query='',sort='path',order='sequential',interval=0,limit=0,loop=False,size='fit',captions=True)
+    value.update(spec)
+    if (value['order'] not in ORDERS or value['sort'] not in tuple(k for k in search.SORTS if k != 'random')
+        or value['size'] not in ('fit','fill','original') or type(value['loop']) is not bool
+        or type(value['captions']) is not bool or type(value['interval']) is not int or not 0 <= value['interval'] <= 86400
+        or type(value['limit']) is not int or not 0 <= value['limit'] <= 1_000_000
+        or ('seed' in value and (type(value['seed']) is not int or not 0 <= value['seed'] <= MAX_SEED))):
+        raise _invalid()
+    src = value['source']
+    if not isinstance(src,dict) or set(src) - {'library_id','album_id','artist_id','tag','favorites','rating_min','workflow'}:
+        raise _invalid()
+    for field in ('library_id','album_id','artist_id'):
+        if src.get(field) is not None and (type(src[field]) is not int or not 1 <= src[field] <= 2**63-1): raise _invalid()
+    if (('favorites' in src and type(src['favorites']) is not bool)
+        or (src.get('rating_min') is not None and (type(src['rating_min']) is not int or not 0 <= src['rating_min'] <= 10))
+        or (src.get('tag') is not None and (not isinstance(src['tag'],str) or not 1 <= len(src['tag'].strip()) <= 300))
+        or (src.get('workflow') is not None and src['workflow'] not in ('inbox','done'))): raise _invalid()
+    parsed = search.parse(value['query'])
+    if parsed.errors: raise search.invalid_query(parsed.errors)
+    return value
 
 
-def create_session(
-    conn: sqlite3.Connection,
-    user_id: int,
-    allowed_library_ids: list[int] | None,
-    spec: dict,
-) -> dict:
-    items = build_queue(conn, user_id, allowed_library_ids, spec)
-    token = secrets.token_urlsafe(12)
-    cur = conn.execute(
-        "INSERT INTO play_sessions(token, user_id, spec, order_mode, interval, loop, cursor, created_at) "
-        "VALUES(?,?,?,?,?,?,?,?)",
-        (
-            token, user_id, json.dumps(spec, ensure_ascii=False),
-            spec.get("order", "sequential"),
-            int(spec.get("interval") or 0),
-            1 if spec.get("loop") else 0,
-            -1, utcnow(),
-        ),
-    )
-    session_id = int(cur.lastrowid)
-    conn.executemany(
-        "INSERT INTO play_items(session_id, position, image_id) VALUES(?,?,?)",
-        [(session_id, pos, iid) for pos, iid in enumerate(items)],
-    )
-    conn.commit()
-    return {
-        "session_id": session_id,
-        "token": token,
-        "total": len(items),
-        "order": spec.get("order", "sequential"),
-        "interval": int(spec.get("interval") or 0),
-        "loop": bool(spec.get("loop")),
-        "cursor": -1,
-    }
+@contextmanager
+def transaction(conn):
+    nested = conn.in_transaction
+    conn.execute('SAVEPOINT play_write' if nested else 'BEGIN IMMEDIATE')
+    try:
+        yield
+        conn.execute('RELEASE play_write') if nested else conn.commit()
+    except BaseException:
+        if nested:
+            conn.execute('ROLLBACK TO play_write'); conn.execute('RELEASE play_write')
+        else: conn.rollback()
+        raise
 
 
-def get_session_by_token(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
-    return conn.execute("SELECT * FROM play_sessions WHERE token=?", (token,)).fetchone()
+def check_source(conn, access, spec):
+    access.user(conn)
+    src = spec['source']
+    if src.get('library_id') is not None: access.require_library(conn,src['library_id'])
+    if src.get('album_id') is not None: access.require_album(conn,src['album_id'])
+    if src.get('artist_id') is not None: access.require_entity(conn,'artist',src['artist_id'])
 
 
-def _item_count(conn: sqlite3.Connection, session_id: int) -> int:
-    return int(
-        conn.execute(
-            "SELECT COUNT(*) AS n FROM play_items WHERE session_id=?", (session_id,)
-        ).fetchone()["n"]
-    )
+def _source_clauses(spec):
+    src = spec['source']; where, params = ['i.missing=0'], {}
+    if src.get('library_id') is not None:
+        where.append('i.library_id=:src_library');params['src_library']=src['library_id']
+    for field,table in (('album_id','album_images'),('artist_id','image_artists')):
+        if src.get(field) is not None:
+            where.append(f'EXISTS(SELECT 1 FROM {table} link WHERE link.image_id=i.id AND link.{field}=:src_{field})')
+            params[f'src_{field}']=src[field]
+    if src.get('tag'):
+        where.append('EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id WHERE it.image_id=i.id '
+                     'AND (picshelf_name_key(tg.name)=:src_tag OR EXISTS(SELECT 1 FROM tag_aliases a WHERE a.entity_id=tg.id AND a.match_key=:src_tag)))')
+        params['src_tag']=match_key(src['tag'])
+    if src.get('favorites'):
+        where.append('EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)')
+    if src.get('rating_min') is not None:
+        where.append('COALESCE((SELECT value FROM ratings WHERE image_id=i.id AND user_id=:uid),0)>=:src_rating')
+        params['src_rating']=src['rating_min']
+    if src.get('workflow') is not None:
+        where.append("COALESCE((SELECT state FROM image_workflow WHERE image_id=i.id AND user_id=:uid),'inbox')=:src_workflow")
+        params['src_workflow']=src['workflow']
+    return where,params
 
 
-def _cursor_item(conn: sqlite3.Connection, session_id: int, cursor: int) -> int | None:
-    row = conn.execute(
-        "SELECT image_id FROM play_items WHERE session_id=? AND position=?",
-        (session_id, cursor),
-    ).fetchone()
-    return int(row["image_id"]) if row else None
+def _choose(spec, candidates, cycle=0):
+    rng=random.Random(spec.get('seed',0)+cycle)
+    if spec['order']=='sample':
+        return rng.choices(candidates,k=min(spec['limit'] or len(candidates),MAX_QUEUE)) if candidates else []
+    result=list(candidates)
+    if spec['order']!='sequential':rng.shuffle(result)
+    return result
 
 
-def current(
-    conn: sqlite3.Connection,
-    session: sqlite3.Row,
-    user_id: int,
-    allowed_library_ids: list[int] | None,
-) -> dict:
-    total = _item_count(conn, session["id"])
-    return {"total": total, "cursor": int(session["cursor"]), "loop": bool(session["loop"])}
+def _snapshot(conn,user_id,allowed,spec):
+    extra,extra_params=_source_clauses(spec)
+    capacity=min(spec['limit'] or MAX_QUEUE,MAX_QUEUE) if spec['order']!='sample' else MAX_QUEUE
+    if spec['order']=='sequential':
+        result=search.search_images(conn,user_id,allowed,query=spec['query'],sort=spec['sort'],limit=capacity,
+                                     extra_where=extra,extra_params=extra_params)
+        candidates=[item['id'] for item in result['items']];total=result['total']
+    else:
+        # Reservoir sampling considers every match while holding at most 10000 IDs.
+        where,params=search.build_where(search.parse(spec['query']),user_id,allowed)
+        where+=' AND '+' AND '.join(extra);params.update(extra_params)
+        rng=random.Random(spec.get('seed',0)); candidates=[];total=0
+        for row in conn.execute('SELECT i.id FROM images i WHERE '+where+' ORDER BY i.id',params):
+            total+=1
+            if len(candidates)<capacity:candidates.append(row[0])
+            else:
+                slot=rng.randrange(total)
+                if slot<capacity:candidates[slot]=row[0]
+        candidates.sort()
+    items=_choose(spec,candidates)
+    truncated=(spec['limit']==0 or spec['limit']>MAX_QUEUE) and (total>MAX_QUEUE or (spec['order']=='sample' and spec['limit']>MAX_QUEUE and total>0))
+    candidate_limited=spec['order']=='sample' and total>MAX_QUEUE
+    warnings=(['queue_limit'] if truncated else [])+(['candidate_limit'] if candidate_limited else [])
+    info={'matched_total':total,'candidate_count':len(candidates),'queue_limit':MAX_QUEUE,
+          'requested_limit':spec['limit'],'truncated':truncated,'candidate_limited':candidate_limited,'warnings':warnings}
+    return items,candidates,info
 
 
-def step(
-    conn: sqlite3.Connection,
-    session: sqlite3.Row,
-    delta: int,
-) -> dict:
-    total = _item_count(conn, int(session["id"]))
-    if total == 0:
-        return {"done": True, "cursor": -1, "total": 0, "position": None}
-    cursor = int(session["cursor"])
-    loop = bool(session["loop"])
-    new_cursor = cursor + delta
-    done = False
-    if new_cursor < 0 or new_cursor >= total:
-        if loop:
-            new_cursor %= total
+def build_queue(conn,user_id,allowed_library_ids,spec):
+    spec=validate_spec(spec);spec.setdefault('seed',secrets.randbits(53))
+    with transaction(conn):
+        return _snapshot(conn,user_id,allowed_library_ids,spec)[0]
+
+
+def _store_items(conn,session_id,items,candidates):
+    conn.execute('DELETE FROM play_items WHERE session_id=?',(session_id,))
+    conn.execute('DELETE FROM play_candidates WHERE session_id=?',(session_id,))
+    conn.executemany('INSERT INTO play_items VALUES(?,?,?)',[(session_id,p,iid) for p,iid in enumerate(items)])
+    conn.executemany('INSERT INTO play_candidates SELECT ?,?,?,library_id FROM images WHERE id=?',
+                     [(session_id,p,iid,iid) for p,iid in enumerate(candidates)])
+
+
+def create_session(conn,user_id,allowed_library_ids,spec,*,access=None,rule_id=None):
+    spec=validate_spec(spec);spec.setdefault('seed',secrets.randbits(53))
+    with transaction(conn):
+        if access is not None:
+            check_source(conn,access,spec);allowed_library_ids=access.allowed_libraries(conn)
+        items,candidates,info=_snapshot(conn,user_id,allowed_library_ids,spec)
+        token=secrets.token_urlsafe(12)
+        session_id=conn.execute('INSERT INTO play_sessions(token,user_id,spec,order_mode,interval,loop,cursor,created_at,rule_id,snapshot_info) '
+            'VALUES(?,?,?,?,?,?,-1,?,?,?)',(token,user_id,json.dumps(spec,ensure_ascii=False),spec['order'],spec['interval'],int(spec['loop']),
+                                         utcnow(),rule_id,json.dumps(info))).lastrowid
+        _store_items(conn,session_id,items,candidates)
+    return _state(conn,get_session_by_token(conn,token))
+
+
+def create_for_user(conn,access,spec,*,rule_id=None):
+    return create_session(conn,access.user_id,None,spec,access=access,rule_id=rule_id)
+
+
+def get_session_by_token(conn,token):
+    return conn.execute('SELECT * FROM play_sessions WHERE token=?',(token,)).fetchone()
+
+
+def session_for(conn,access,token,*,check_scope=True):
+    user=access.user(conn);session=get_session_by_token(conn,token)
+    if session is None or (session['user_id']!=access.user_id and not (access.local_admin or user['is_admin'])):
+        raise ServiceError('play_session_not_found',t('播放会话不存在'),status=404,next_step=t('请重新打开播放规则或创建会话'))
+    if check_scope:
+        libraries=conn.execute('SELECT DISTINCT library_id FROM play_candidates WHERE session_id=? AND library_id IS NOT NULL '
+            'UNION SELECT i.library_id FROM play_items p JOIN images i ON i.id=p.image_id WHERE p.session_id=?',(session['id'],session['id']))
+        for row in libraries:
+            try:access.require_library(conn,row[0])
+            except ServiceError as exc:
+                raise ServiceError('play_scope_changed',t('播放队列的库权限已变化'),status=403,
+                                   next_step=t('请按当前权限重新创建播放会话')) from exc
+    return session
+
+
+def _item_count(conn,session_id):
+    return conn.execute('SELECT COUNT(*) FROM play_items WHERE session_id=?',(session_id,)).fetchone()[0]
+
+
+def _cursor_item(conn,session_id,cursor):
+    row=conn.execute('SELECT image_id FROM play_items WHERE session_id=? AND position=?',(session_id,cursor)).fetchone()
+    return row[0] if row else None
+
+
+def _state(conn,session):
+    total=_item_count(conn,session['id']);cursor=session['cursor'];iid=_cursor_item(conn,session['id'],cursor)
+    row=conn.execute('SELECT missing FROM images WHERE id=?',(iid,)).fetchone() if iid is not None else None
+    info={'matched_total':None,'candidate_count':total,'queue_limit':MAX_QUEUE,'requested_limit':None,
+          'truncated':None,'candidate_limited':None,'warnings':['legacy_scope_unknown']}
+    info.update(json.loads(session['snapshot_info']))
+    return {**info,'session_id':session['id'],'token':session['token'],
+            'spec':json.loads(session['spec']),'total':total,'cursor':cursor,'position':cursor+1 if cursor>=0 else 0,
+            'image_id':iid,'unavailable':'image_unavailable' if iid is not None and (row is None or row['missing']) else None,
+            'loop':bool(session['loop']),'interval':session['interval'],'order':session['order_mode'],
+            'paused':bool(session['paused']),'version':session['version'],'cycle':session['cycle'],'rule_id':session['rule_id']}
+
+
+def session_state(conn,access,token):
+    with transaction(conn):
+        return _state(conn,session_for(conn,access,token))
+
+
+def current(conn,session,user_id,allowed_library_ids):
+    return _state(conn,get_session_by_token(conn,session['token']))
+
+
+def _advance(conn,session,delta):
+    if type(delta) is not int or not -MAX_QUEUE<=delta<=MAX_QUEUE:raise _invalid()
+    with transaction(conn):
+        session=get_session_by_token(conn,session['token']);total=_item_count(conn,session['id'])
+        cursor=session['cursor'];target=cursor+delta;done=False
+        if total==0:
+            target=-1;done=True
+        elif session['loop']:
+            if delta>0 and target>=total and session['order_mode'] in ('shuffle_each_round','sample'):
+                cycle=session['cycle']+target//total
+                candidates=[r[0] for r in conn.execute('SELECT image_id FROM play_candidates WHERE session_id=? ORDER BY position',(session['id'],))]
+                items=_choose(json.loads(session['spec']),candidates,cycle)
+                conn.execute('DELETE FROM play_items WHERE session_id=?',(session['id'],))
+                conn.executemany('INSERT INTO play_items VALUES(?,?,?)',[(session['id'],p,iid) for p,iid in enumerate(items)])
+                conn.execute('UPDATE play_sessions SET cycle=? WHERE id=?',(cycle,session['id']))
+            target%=total
         else:
-            new_cursor = max(0, min(new_cursor, total - 1))
-            done = True
-    conn.execute(
-        "UPDATE play_sessions SET cursor=? WHERE id=?", (new_cursor, session["id"])
-    )
-    conn.commit()
-    return {
-        "done": done and new_cursor == cursor,
-        "cursor": new_cursor,
-        "total": total,
-        "position": new_cursor + 1,
-        "image_id": _cursor_item(conn, int(session["id"]), new_cursor),
-    }
+            bounded=max(0,min(target,total-1));done=bounded==cursor and target!=bounded;target=bounded
+        conn.execute('UPDATE play_sessions SET cursor=?,version=version+1,paused=CASE WHEN ? THEN 1 ELSE paused END WHERE id=?',
+                     (target,done,session['id']))
+        result=_state(conn,get_session_by_token(conn,session['token']));result['done']=done
+        return result
 
 
-def goto(conn: sqlite3.Connection, session: sqlite3.Row, position: int) -> dict:
-    total = _item_count(conn, int(session["id"]))
-    if total == 0:
-        return {"done": True, "cursor": -1, "total": 0, "image_id": None}
-    cursor = max(0, min(int(position), total - 1))
-    conn.execute("UPDATE play_sessions SET cursor=? WHERE id=?", (cursor, session["id"]))
-    conn.commit()
-    return {
-        "cursor": cursor, "total": total, "position": cursor + 1,
-        "image_id": _cursor_item(conn, int(session["id"]), cursor),
-    }
+def step(conn,session,delta):
+    return _advance(conn,session,delta)
 
 
-def reshuffle(
-    conn: sqlite3.Connection,
-    session: sqlite3.Row,
-    user_id: int,
-    allowed_library_ids: list[int] | None,
-) -> dict:
-    spec = json.loads(session["spec"])
-    items = build_queue(conn, user_id, allowed_library_ids, spec)
-    conn.execute("DELETE FROM play_items WHERE session_id=?", (session["id"],))
-    conn.executemany(
-        "INSERT INTO play_items(session_id, position, image_id) VALUES(?,?,?)",
-        [(session["id"], pos, iid) for pos, iid in enumerate(items)],
-    )
-    conn.execute("UPDATE play_sessions SET cursor=-1 WHERE id=?", (session["id"],))
-    conn.commit()
-    return {"total": len(items), "cursor": -1}
+def goto(conn,session,position):
+    if type(position) is not int or not 0<=position<MAX_QUEUE:raise _invalid()
+    with transaction(conn):
+        total=_item_count(conn,session['id']);cursor=min(position,total-1)
+        conn.execute('UPDATE play_sessions SET cursor=?,version=version+1 WHERE id=?',(cursor,session['id']))
+        result=_state(conn,get_session_by_token(conn,session['token']));result['done']=not total
+        return result
 
 
-def queue_items(conn: sqlite3.Connection, session_id: int, offset: int = 0, limit: int = 50) -> list[int]:
-    rows = conn.execute(
-        "SELECT image_id FROM play_items WHERE session_id=? ORDER BY position LIMIT ? OFFSET ?",
-        (session_id, max(0, limit), max(0, offset)),
-    ).fetchall()
-    return [int(r["image_id"]) for r in rows]
+def reshuffle(conn,session,user_id,allowed_library_ids):
+    spec=validate_spec(json.loads(session['spec']));spec['seed']=secrets.randbits(53)
+    with transaction(conn):
+        items,candidates,info=_snapshot(conn,user_id,allowed_library_ids,spec)
+        _store_items(conn,session['id'],items,candidates)
+        conn.execute('UPDATE play_sessions SET cursor=-1,cycle=0,version=version+1,spec=?,snapshot_info=? WHERE id=?',
+                     (json.dumps(spec,ensure_ascii=False),json.dumps(info),session['id']))
+    return _state(conn,get_session_by_token(conn,session['token']))
+
+
+def navigate(conn,access,token,action,*,position=None,step=1,paused=None,request_key=None,expected_version=None):
+    if action not in ('next','prev','goto','pause','reshuffle') or (request_key is not None and
+            (not isinstance(request_key,str) or not 1<=len(request_key)<=128)) or (expected_version is not None and
+            (type(expected_version) is not int or expected_version<0)):raise _invalid()
+    request=json.dumps(dict(action=action,position=position,step=step,paused=paused,expected_version=expected_version),sort_keys=True)
+    with transaction(conn):
+        session=session_for(conn,access,token)
+        previous=conn.execute('SELECT request,result FROM play_requests WHERE session_id=? AND request_key=?',(session['id'],request_key)).fetchone() if request_key else None
+        if previous:
+            if previous['request']!=request:
+                raise ServiceError('play_request_conflict',t('同一播放请求标识不能用于不同操作'),status=409,
+                                   next_step=t('请重新读取会话状态后使用新的请求标识'))
+            recorded=json.loads(previous['result'])
+            if recorded.get('image_id') is not None:
+                access.require_image(conn,recorded['image_id'],include_missing=True)
+            return recorded
+        if expected_version is not None and expected_version!=session['version']:
+            raise ServiceError('play_state_changed',t('播放状态已被其他操作更新'),status=409,
+                               next_step=t('请重新读取会话状态后继续'))
+        if action=='next':
+            if type(step) is not int or not 1<=step<=MAX_QUEUE:raise _invalid()
+            result=_advance(conn,session,step)
+        elif action=='prev':result=_advance(conn,session,-1)
+        elif action=='goto':result=goto(conn,session,position)
+        elif action=='reshuffle':
+            spec=validate_spec(json.loads(session['spec']));check_source(conn,access,spec)
+            result=reshuffle(conn,session,session['user_id'],access.allowed_libraries(conn))
+        else:
+            if type(paused) is not bool:raise _invalid()
+            conn.execute('UPDATE play_sessions SET paused=?,version=version+1 WHERE id=?',(int(paused),session['id']))
+            result=_state(conn,get_session_by_token(conn,token))
+        if request_key:
+            conn.execute('INSERT INTO play_requests VALUES(?,?,?,?)',(session['id'],request_key,request,json.dumps(result)))
+        return result
+
+
+def queue_items(conn,session_id,offset=0,limit=50):
+    rows=conn.execute('SELECT image_id FROM play_items WHERE session_id=? ORDER BY position LIMIT ? OFFSET ?',
+                      (session_id,max(0,limit),max(0,offset))).fetchall()
+    return [r[0] for r in rows]

@@ -349,7 +349,74 @@ Web navigation remains available on phone-sized screens. Image cards show the co
 
 The TUI shows the current range and total, with `[` / `]` to change pages and `b` to toggle navigation. Narrow terminals initially hide the navigation pane. Other shortcuts: `/` search, `j` / `k` move, `r` rate, `t` add tags, `f` favorite, `c` comment, `n` note, `p` preview, `g` refresh and `q` quit. `s` starts a slideshow; Space pauses and resumes it. Optional terminal previews use `chafa` or `img2txt` when installed.
 
-Playback queues are limited to 10,000 images. Both `shuffle` and `random` build a shuffled queue without replacement; looping repeats that queue. Reshuffling creates a new one. The Web slideshow pauses its timer while the tab is hidden.
+Playback queues are limited to 10,000 images. Both `shuffle` and `random` keep
+their original behavior: a shuffled queue without replacement, repeated on
+loop. `shuffle_each_round` shuffles the same selected members at each forward
+wrap. `sample` draws with replacement, so an image can appear several times;
+looping draws a fresh round from the same candidate snapshot. Previous/goto
+navigate within the current round. New images never enter a running snapshot.
+The explicit `reshuffle` action re-evaluates the stored query and source and
+resets the cursor; start a saved rule again to apply edits to that rule.
+
+Responses include `matched_total`, `total`, `candidate_count`, `queue_limit`,
+`truncated` and machine-readable `warnings`. A requested smaller count is an
+intentional selection. The 10,000-image queue cap reports `queue_limit` when it
+restricts the requested result. For `sample`, the candidate snapshot is also
+capped at 10,000: a uniform reservoir considers every match, and each draw is
+independent within that fixed reservoir. `candidate_limit` reports this case
+even when fewer draws were requested. Narrow the query for a complete desired
+candidate set. A `seed` integer (0 through 2^53−1, exact in JavaScript) makes an unchanged candidate
+set reproducible; forward rounds use seed + round. Random modes select from
+matches independently of the sequential sort option.
+
+The Web **Playback rules** page saves personal query/source, sort, mode, count,
+interval, loop, image size and caption settings. A session copies these settings
+and the selected IDs; later rule edits have no effect on it. Current image
+metadata and file availability are still checked when displayed. Rules never
+store media URLs. Export preserves the rule itself. The local CLI supports
+the same rules and session controls:
+
+```sh
+picshelf play-rules save 'Evening' --spec '{"query":"fav:","order":"shuffle_each_round","interval":5,"loop":true}'
+picshelf play-rules list
+picshelf play-rules show 1
+picshelf play-rules start 1
+picshelf play-sessions show <session-token>
+picshelf play-sessions control <session-token> next --request-key first --expected-version 0
+picshelf play-sessions control <session-token> pause
+picshelf play-sessions control <session-token> goto --position 0
+picshelf play-rules edit 1 --version 1 --name 'Evening' --spec '{"query":"fav:","interval":8}'
+picshelf play-rules export 1 > playback.json
+```
+
+Rule/session commands emit JSON and accept `--user NAME`. Counts range from
+0 (all, within the cap) to 1,000,000 requested items; intervals are whole seconds
+from 0 (manual) to 86,400. `sort` accepts non-random image sorts; `order` controls
+randomness. `size` is `fit`, `fill` or `original`; `captions` is a boolean.
+The existing `play --player mpv|terminal|list` entry remains available for its
+original three ordering modes and materialized playlist. The TUI's existing
+list auto-advance remains a list preview; persistent session controls are in
+Web and CLI.
+
+Web playback starts its timer after a successful image decode. It stops while
+loading, paused or hidden, and restarts with a full interval when visible. Manual
+navigation keeps the pause state. A missing/failed image pauses with retry and
+next-image controls, so an all-broken queue cannot spin endlessly. Pause and exit
+keeps the session. Resume reloads its persisted cursor and pauses first, including
+after a browser or connection failure; it never silently creates a new queue.
+The last session reference is kept per signed-in user in local browser storage;
+the reference alone does not authorize access. Current library permissions are
+required for reading and navigation. A revoked queue must be replaced with a
+new permitted session. No viewing-history or “recently unseen” query is recorded.
+
+HTTP adds `/api/v1/play/rules` with get/edit/start/export routes and
+`POST /api/v1/play/sessions/{token}/pause`. Navigation optionally accepts
+`request_key` and `expected_version`. The cursor change and retry result are one
+transaction: repeat the same key and payload after a connection failure. A
+different payload with that key conflicts; an outdated version with a new key
+requires reloading state. Legacy callers may omit both fields. Upgraded old
+sessions retain their queue and cursor; unknown original matching counts are
+reported as null with `legacy_scope_unknown`, rather than guessed.
 
 ## HTTP API
 

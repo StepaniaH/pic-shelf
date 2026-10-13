@@ -82,3 +82,28 @@ selected.clear();assert.deepEqual(selected.payload(source),{image_ids:[]});
 """
     result=subprocess.run([node,"--input-type=module","-e",script,module],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stderr
+
+
+def test_playback_clock_waits_for_display_and_pauses_without_duplicate_ticks():
+    node=shutil.which('node')
+    if not node:pytest.skip('Node.js is required for playback timer scenarios')
+    module=(Path(__file__).parents[1]/'picshelf/web/js/playback-clock.js').as_uri()
+    script="""
+const {PlaybackClock}=await import(process.argv[1]);
+const {strict:assert}=await import('node:assert');
+let now=0,serial=0;const timers=new Map(),ticks=[];
+const fake={setTimer:(fn,ms)=>{timers.set(++serial,{at:now+ms,fn});return serial;},clearTimer:id=>timers.delete(id)};
+function advance(ms){const end=now+ms;while(true){const next=[...timers].filter(([,v])=>v.at<=end).sort((a,b)=>a[1].at-b[1].at)[0];if(!next)break;now=next[1].at;timers.delete(next[0]);next[1].fn();}now=end;}
+const clock=new PlaybackClock(3,()=>ticks.push(now),fake);
+advance(10000);assert.deepEqual(ticks,[]);
+clock.update({ready:true});advance(1000);clock.update({hidden:true});advance(10000);
+assert.deepEqual(ticks,[]);clock.update({hidden:false});advance(2999);assert.deepEqual(ticks,[]);
+advance(1);assert.deepEqual(ticks,[24000]);advance(5000);assert.deepEqual(ticks,[24000]);
+clock.update({ready:true});clock.update({paused:true});advance(7000);assert.deepEqual(ticks,[24000]);
+clock.update({paused:false});advance(3000);assert.deepEqual(ticks,[24000,39000]);
+clock.update({ready:true});clock.close();advance(10000);assert.deepEqual(ticks,[24000,39000]);
+const manual=new PlaybackClock(0,()=>ticks.push('bad'),fake);manual.update({ready:true});advance(10000);
+assert.deepEqual(ticks,[24000,39000]);
+"""
+    result=subprocess.run([node,'--input-type=module','-e',script,module],capture_output=True,text=True,timeout=10)
+    assert result.returncode==0,result.stderr

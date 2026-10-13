@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -405,7 +405,33 @@ CREATE TABLE saved_queries (
 CREATE INDEX idx_saved_query_owner ON saved_queries(owner_id,updated_at,id);
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9}
+_SCHEMA_V10 = """
+CREATE TABLE play_rules (
+ id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, spec TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE INDEX idx_play_rule_owner ON play_rules(owner_id,updated_at,id);
+ALTER TABLE play_sessions ADD COLUMN rule_id INTEGER REFERENCES play_rules(id) ON DELETE SET NULL;
+ALTER TABLE play_sessions ADD COLUMN snapshot_info TEXT NOT NULL DEFAULT '{}';
+ALTER TABLE play_sessions ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE play_sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE play_sessions ADD COLUMN cycle INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE play_candidates (
+ session_id INTEGER NOT NULL REFERENCES play_sessions(id) ON DELETE CASCADE,
+ position INTEGER NOT NULL, image_id INTEGER NOT NULL, library_id INTEGER,
+ PRIMARY KEY(session_id,position)
+);
+INSERT INTO play_candidates SELECT p.session_id,p.position,p.image_id,i.library_id
+ FROM play_items p LEFT JOIN images i ON i.id=p.image_id;
+CREATE TABLE play_requests (
+ session_id INTEGER NOT NULL REFERENCES play_sessions(id) ON DELETE CASCADE,
+ request_key TEXT NOT NULL, request TEXT NOT NULL, result TEXT NOT NULL,
+ PRIMARY KEY(session_id,request_key)
+);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10}
 
 
 def utcnow() -> str:

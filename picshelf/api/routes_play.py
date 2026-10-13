@@ -1,182 +1,166 @@
-"""播放路由：会话创建与导航（队列由服务端生成，含 ACL）。"""
-from __future__ import annotations
+"""Playback rules and resumable, permission-checked snapshot navigation."""
+from fastapi import APIRouter, Query
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-
-from .. import auth, ops, play, search
+from .. import auth, play, play_rules, search
 from ..access import AccessContext
-from ..errors import ServiceError
-from .deps import Db, User, ensure_catalog_access, ensure_library_access, serialize_image
-from ..i18n import t
+from .deps import Db, User, serialize_image
 
-router = APIRouter(tags=["play"])
+router=APIRouter(tags=['play'])
 
 
 class PlaySource(BaseModel):
-    library_id: int | None = None
-    album_id: int | None = None
-    artist_id: int | None = None
+    model_config=ConfigDict(extra='forbid')
+    library_id: StrictInt | None = None
+    album_id: StrictInt | None = None
+    artist_id: StrictInt | None = None
     tag: str | None = None
-    favorites: bool = False
-    rating_min: int | None = None
+    favorites: StrictBool = False
+    rating_min: StrictInt | None = None
+    workflow: str | None = None
 
 
 class PlayBody(BaseModel):
-    source: PlaySource = PlaySource()
-    query: str = ""
-    order: str = "sequential"
-    interval: int = 0
-    limit: int = 0
-    loop: bool = False
+    model_config=ConfigDict(extra='forbid')
+    source: PlaySource = Field(default_factory=PlaySource)
+    query: str = ''
+    sort: str = 'path'
+    order: str = 'sequential'
+    interval: StrictInt = Field(default=0,ge=0,le=86400)
+    limit: StrictInt = Field(default=0,ge=0,le=1000000)
+    loop: StrictBool = False
+    size: str = 'fit'
+    captions: StrictBool = True
+    seed: StrictInt | None = Field(default=None,ge=0,le=play.MAX_SEED)
 
 
-class StepBody(BaseModel):
-    step: int = 1
+class RequestKey(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    request_key: str | None = Field(default=None,min_length=1,max_length=128)
+    expected_version: StrictInt | None = Field(default=None,ge=0)
 
 
-class GotoBody(BaseModel):
-    position: int = 0
+class StepBody(RequestKey):
+    step: StrictInt = Field(default=1,ge=1,le=10000)
 
 
-def _validate_source(conn, user, src: PlaySource, order: str) -> None:
-    if order not in ("sequential", "shuffle", "random"):
-        raise HTTPException(status_code=400, detail=t("order 必须是 sequential / shuffle / random"))
-    if src.library_id is not None:
-        ensure_library_access(conn, user, src.library_id)
-    if src.album_id is not None:
-        AccessContext(user["id"]).require_album(conn, src.album_id)
-    if src.artist_id is not None:
-        ensure_catalog_access(conn, user, "artist", src.artist_id)
-        try:
-            ops.get_artist(conn, src.artist_id)
-        except ValueError as exc:
-            raise HTTPException(status_code=404, detail=str(exc))
+class GotoBody(RequestKey):
+    position: StrictInt = Field(default=0,ge=0,le=9999)
 
 
-def _session_or_404(conn, token: str, user, *, check_scope=True) -> "play.sqlite3.Row":
-    session = play.get_session_by_token(conn, token)
-    if session is None or (int(session["user_id"]) != int(user["id"]) and not user["is_admin"]):
-        raise HTTPException(status_code=404, detail=t("播放会话不存在"))
-    if not check_scope:
-        return session
-    # A snapshot must not keep granting access after its library grant is lost.
-    # Refuse the old session; rebuilding it uses the caller's current scope.
-    for row in conn.execute("SELECT DISTINCT i.library_id FROM play_items pi JOIN images i ON i.id=pi.image_id "
-                            "WHERE pi.session_id=?", (session["id"],)):
-        try:
-            AccessContext(user["id"]).require_library(conn, row[0])
-        except ServiceError as exc:
-            raise ServiceError("play_scope_changed", t("播放队列的库权限已变化"), status=403,
-                               next_step=t("请按当前权限重新创建播放会话")) from exc
-    return session
+class PauseBody(RequestKey):
+    paused: StrictBool
 
 
-def _state(conn, session, user) -> dict:
-    allowed = auth.visible_library_ids(conn, user)
-    base = play.current(conn, session, int(user["id"]), allowed)
-    out = {
-        "token": session["token"],
-        "total": base["total"],
-        "cursor": base["cursor"],
-        "position": base["cursor"] + 1 if base["cursor"] >= 0 else 0,
-        "loop": bool(session["loop"]),
-        "interval": int(session["interval"]),
-        "order": session["order_mode"],
-        "image": None,
-    }
-    if base["cursor"] >= 0:
-        iid = play._cursor_item(conn, int(session["id"]), int(session["cursor"]))
-        if iid is not None:
-            detail = search.get_image(conn, iid, int(user["id"]), allowed)
-            if detail:
-                out["image"] = serialize_image(detail)
-    return out
+class RuleBody(BaseModel):
+    model_config=ConfigDict(extra='forbid')
+    name: str
+    spec: dict
 
 
-def _attach_image(conn, result: dict, user) -> dict:
-    allowed = auth.visible_library_ids(conn, user)
-    iid = result.get("image_id")
-    result["image"] = None
-    if iid is not None:
-        detail = search.get_image(conn, int(iid), int(user["id"]), allowed)
-        if detail:
-            result["image"] = serialize_image(detail)
+class RuleEdit(RuleBody):
+    version: StrictInt
+
+
+def _session_or_404(conn,token,user,*,check_scope=True):
+    return play.session_for(conn,AccessContext(user['id']),token,check_scope=check_scope)
+
+
+def _attach_image(conn,result,user):
+    result=dict(result);result['image']=None
+    if result.get('image_id') is not None:
+        detail=search.get_image(conn,result['image_id'],user['id'],auth.visible_library_ids(conn,user))
+        if detail:result['image']=serialize_image(detail)
         else:
-            result["image_id"] = None
+            result['image_id']=None;result['unavailable']='image_unavailable'
     return result
 
 
-@router.post("/play/sessions")
-def create_session(body: PlayBody, conn: Db, user: User):
-    _validate_source(conn, user, body.source, body.order)
-    spec = {
-        "source": body.source.model_dump(exclude_none=True),
-        "query": body.query,
-        "order": body.order,
-        "interval": max(0, int(body.interval)),
-        "limit": max(0, int(body.limit)),
-        "loop": bool(body.loop),
-    }
-    allowed = auth.visible_library_ids(conn, user)
-    session = play.create_session(conn, int(user["id"]), allowed, spec)
-    row = play.get_session_by_token(conn, session["token"])
-    return _state(conn, row, user)
+def _state(conn,session,user):
+    return _attach_image(conn,play.session_state(conn,AccessContext(user['id']),session['token']),user)
 
 
-@router.get("/play/sessions/{token}")
-def get_session(token: str, conn: Db, user: User):
-    session = _session_or_404(conn, token, user)
-    return _state(conn, session, user)
+@router.post('/play/sessions')
+def create_session(body: PlayBody,conn: Db,user: User):
+    result=play.create_for_user(conn,AccessContext(user['id']),body.model_dump(exclude_none=True))
+    return _attach_image(conn,result,user)
 
 
-@router.post("/play/sessions/{token}/next")
-def next_item(token: str, conn: Db, user: User, body: StepBody | None = None):
-    session = _session_or_404(conn, token, user)
-    step = body.step if body else 1
-    result = play.step(conn, session, step)
-    return _attach_image(conn, result, user)
+@router.get('/play/sessions/{token}')
+def get_session(token: str,conn: Db,user: User):
+    return _attach_image(conn,play.session_state(conn,AccessContext(user['id']),token),user)
 
 
-@router.post("/play/sessions/{token}/prev")
-def prev_item(token: str, conn: Db, user: User):
-    session = _session_or_404(conn, token, user)
-    result = play.step(conn, session, -1)
-    return _attach_image(conn, result, user)
+def _navigate(conn,user,token,action,body):
+    return _attach_image(conn,play.navigate(conn,AccessContext(user['id']),token,action,**body.model_dump()),user)
 
 
-@router.post("/play/sessions/{token}/goto")
-def goto_item(token: str, body: GotoBody, conn: Db, user: User):
-    session = _session_or_404(conn, token, user)
-    result = play.goto(conn, session, body.position)
-    return _attach_image(conn, result, user)
+@router.post('/play/sessions/{token}/next')
+def next_item(token: str,conn: Db,user: User,body: StepBody | None = None):
+    return _navigate(conn,user,token,'next',body or StepBody())
 
 
-@router.post("/play/sessions/{token}/reshuffle")
-def reshuffle(token: str, conn: Db, user: User):
-    session = _session_or_404(conn, token, user)
-    allowed = auth.visible_library_ids(conn, user)
-    play.reshuffle(conn, session, int(user["id"]), allowed)
-    session = play.get_session_by_token(conn, token)
-    return _state(conn, session, user)
+@router.post('/play/sessions/{token}/prev')
+def prev_item(token: str,conn: Db,user: User,body: RequestKey | None = None):
+    return _navigate(conn,user,token,'prev',body or RequestKey())
 
 
-@router.get("/play/sessions/{token}/items")
-def session_items(token: str, conn: Db, user: User, offset: int = 0, limit: int = 20):
-    session = _session_or_404(conn, token, user)
-    ids = play.queue_items(conn, int(session["id"]), offset=offset, limit=min(limit, 100))
-    allowed = auth.visible_library_ids(conn, user)
-    items = []
-    for iid in ids:
-        detail = search.get_image(conn, iid, int(user["id"]), allowed)
-        if detail:
-            items.append(serialize_image(detail))
-    return {"items": items, "offset": offset}
+@router.post('/play/sessions/{token}/goto')
+def goto_item(token: str,body: GotoBody,conn: Db,user: User):
+    return _navigate(conn,user,token,'goto',body)
 
 
-@router.delete("/play/sessions/{token}")
-def delete_session(token: str, conn: Db, user: User):
-    session = _session_or_404(conn, token, user, check_scope=False)
-    conn.execute("DELETE FROM play_sessions WHERE id=?", (session["id"],))
-    conn.commit()
-    return {"ok": True}
+@router.post('/play/sessions/{token}/pause')
+def pause(token: str,body: PauseBody,conn: Db,user: User):
+    return _navigate(conn,user,token,'pause',body)
+
+
+@router.post('/play/sessions/{token}/reshuffle')
+def reshuffle(token: str,conn: Db,user: User,body: RequestKey | None = None):
+    return _navigate(conn,user,token,'reshuffle',body or RequestKey())
+
+
+@router.get('/play/sessions/{token}/items')
+def session_items(token: str,conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(20,ge=0,le=100)):
+    session=_session_or_404(conn,token,user)
+    ids=play.queue_items(conn,session['id'],offset=offset,limit=limit)
+    allowed=auth.visible_library_ids(conn,user)
+    items=[serialize_image(detail) for iid in ids if (detail:=search.get_image(conn,iid,user['id'],allowed))]
+    return {'items':items,'offset':offset}
+
+
+@router.delete('/play/sessions/{token}')
+def delete_session(token: str,conn: Db,user: User):
+    session=_session_or_404(conn,token,user,check_scope=False)
+    conn.execute('DELETE FROM play_sessions WHERE id=?',(session['id'],));conn.commit()
+    return {'ok':True}
+
+
+@router.get('/play/rules')
+def list_rules(conn: Db,user: User,offset: int=Query(0,ge=0),limit: int=Query(100,ge=1,le=100)):
+    return play_rules.list_rules(conn,AccessContext(user['id']),offset=offset,limit=limit)
+
+
+@router.post('/play/rules')
+def create_rule(body: RuleBody,conn: Db,user: User):
+    return play_rules.create(conn,AccessContext(user['id']),**body.model_dump())
+
+
+@router.get('/play/rules/{rule_id}')
+def get_rule(rule_id: int,conn: Db,user: User):
+    return play_rules.get(conn,AccessContext(user['id']),rule_id)
+
+
+@router.patch('/play/rules/{rule_id}')
+def edit_rule(rule_id: int,body: RuleEdit,conn: Db,user: User):
+    return play_rules.update(conn,AccessContext(user['id']),rule_id,**body.model_dump())
+
+
+@router.post('/play/rules/{rule_id}/start')
+def start_rule(rule_id: int,conn: Db,user: User):
+    return _attach_image(conn,play_rules.start(conn,AccessContext(user['id']),rule_id),user)
+
+
+@router.get('/play/rules/{rule_id}/export')
+def export_rule(rule_id: int,conn: Db,user: User):
+    return play_rules.export(conn,AccessContext(user['id']),rule_id)

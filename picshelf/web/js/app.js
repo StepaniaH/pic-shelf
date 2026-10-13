@@ -6,6 +6,7 @@ import { t, getLocale, setLocale } from "./i18n.js";
 import { activateDialog } from "./dialog.js";
 import {renderBatchHistory} from "./batches.js";
 import {renderQueries, renderSavedQuery} from "./queries.js";
+import {renderPlayRules} from "./slideshow.js";
 
 export const state = { user: null, route: null };
 
@@ -207,6 +208,7 @@ async function route() {
       case "search": await views.renderSearch(target, r.params.get("q") || "", r.params.get("sort") || "newest"); break;
       case "queries": await renderQueries(target); break;
       case "query": await renderSavedQuery(target, Number(r.id)); break;
+      case "play-rules": await renderPlayRules(target); break;
       case "library": await views.renderLibrary(target, Number(r.id)); break;
       case "admin": await renderAdmin(target, r.params); break;
       case "view": await views.renderDeepLink(target, Number(r.id), r.params); break;
