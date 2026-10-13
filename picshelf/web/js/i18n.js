@@ -2,6 +2,9 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "请运行 check --full 查看具体问题；先核对备份，再单独修复": "Run check --full for details; verify backups before a separate repair",
+    "同时核对原图哈希；默认检查可达性": "Also verify original hashes; check availability by default",
+    "输出脱敏的本地诊断 JSON，不上传或自动修复。": "Output redacted local diagnostic JSON without uploading or automatic repair.",
     "请先查看作品关联和待匹配引用，再明确确认解除": "Inspect work membership and pending references before explicitly confirming unlinking",
     "作品关联无法完成": "The work relationship could not be changed",
     "请检查图片权限与关系类型；先解除错误关联，再重新关联；首选图片必须属于该作品": "Check image permissions and relationship roles; unlink an incorrect relationship before relinking; the preferred image must belong to the work",

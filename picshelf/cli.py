@@ -174,7 +174,7 @@ class _I18nGroup(click.Group):
 def _json_requested(command, args):
     """Inspect Click's parsed options without invoking callbacks or opening data."""
     json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup", "paths", "works"}
-    json_commands = {"check", "organize", "rebuild", "import-status", "import-execute", "import-cancel"}
+    json_commands = {"doctor", "check", "organize", "rebuild", "import-status", "import-execute", "import-cancel"}
     path = []
     machine = False
     while command is not None:
@@ -275,11 +275,13 @@ def serve(cfg: Config, host: str, port: int, reload: bool):
     if reload:
         os.environ["PICSHELF_DATA"] = str(cfg.data_dir)
         uvicorn.run("picshelf.api:create_app_dev", host=host, port=port, reload=True, factory=True,
+                    access_log=False,
                     proxy_headers=bool(cfg.trusted_proxies), forwarded_allow_ips=list(cfg.trusted_proxies))
         return
     app = create_app(cfg)
     click.echo(f"Pic Shelf Web → http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="info",
+                access_log=False,
                 proxy_headers=bool(cfg.trusted_proxies), forwarded_allow_ips=list(cfg.trusted_proxies))
 
 
@@ -1270,6 +1272,18 @@ def check_cmd(cfg, full):
     result = checks.check(cfg, full=full)
     click.echo(json.dumps(result, ensure_ascii=False, indent=2))
     if set(result['counts']) - {'derivative_unreferenced'}:
+        raise click.exceptions.Exit(1)
+
+
+@main.command('doctor')
+@click.option('--full', is_flag=True, help='同时核对原图哈希；默认检查可达性')
+@click.pass_obj
+def doctor_cmd(cfg, full):
+    """输出脱敏的本地诊断 JSON，不上传或自动修复。"""
+    from .diagnostics import doctor
+    result = doctor(cfg, full=full)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result['ready']:
         raise click.exceptions.Exit(1)
 
 

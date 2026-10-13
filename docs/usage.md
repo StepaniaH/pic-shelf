@@ -12,6 +12,8 @@ Use [library paths and naming](paths.md) to rebind verified original-file copies
 
 Use [works and file versions](works.md) to manually link original, compressed, cropped or revised files while retaining each image's organization.
 
+Use [local diagnostics](diagnostics.md) for a redacted report and [packaging](packaging.md) for locked environments and installed-artifact checks.
+
 ## Web browsing
 
 Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags

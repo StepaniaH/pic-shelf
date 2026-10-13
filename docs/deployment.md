@@ -67,6 +67,8 @@ docker compose up -d --build        # 重新构建并滚动替换；数据库迁
 
 ## 备份与恢复
 
+先用 `backup inspect` 核验归档，再停止 Web、worker、TUI 与其他数据库连接；恢复不能在仍占用数据目录的服务中执行。容器已停止时可用独立的 `docker compose run --rm picshelf picshelf import-backup ...`。完整恢复边界见[备份说明](backups.md)，容器换挂载路径使用[根目录核验](paths.md)，排障可导出[脱敏诊断](diagnostics.md)。
+
 - **应用级**：`docker compose exec picshelf picshelf export /data/exports/backup.zip [--encrypt --passphrase-stdin]`（数据库一致性快照，可选含缩略图；原图不在备份中，需另外备份图片库目录）；恢复用 `picshelf import-backup`。恢复前停止服务写入；`--force` 会先用 SQLite 备份接口保留现有数据，包含已提交的 WAL 内容。恢复数据库后运行 `scan <库名> --full` 重建派生图片。
 - **卷级**：停止服务后快照 `./data` 目录（含全部派生物与密钥），并另外备份原图目录。运行中的 SQLite 不能只复制主数据库文件。
 

@@ -2,117 +2,104 @@
 
 **English** | [简体中文](README.zh-CN.md)
 
-Self-hosted image library: import → encode (hash / thumbnails) → search / rate / tag / artists → rule-based playback.
-Three frontends: **Web** (browser) / **TUI** (terminal) / **CLI** (command line — hand the playback queue straight to mpv). Desktop client planned.
+Pic Shelf is a self-hosted image collection for importing, organizing, finding and
+viewing images. It offers a Web interface, a keyboard-driven TUI and a CLI. Image
+files stay in registered library directories; metadata and derived images live
+in a separate data directory. Core use is offline, with no telemetry.
 
-![Pic Shelf — library](docs/screenshots/2026-10-11-library-en.png)
-![Pic Shelf — viewer](docs/screenshots/2026-10-11-viewer-en.png)
+![Library](docs/screenshots/2026-10-11-library-en.png)
+![Viewer](docs/screenshots/2026-10-11-viewer-en.png)
 
-[Usage](docs/usage.md) · [Architecture](docs/architecture.md) · [Deployment](docs/deployment.md) · [Contributing](CONTRIBUTING.md)
+[Usage](docs/usage.md) · [Deployment](docs/deployment.md) · [Security](docs/security.md) · [Contributing](CONTRIBUTING.md)
 
 ## Features
 
-| Capability | Description | Status |
-|---|---|---|
-| Import & encode | Directory = library; SHA-256 (exact dedupe) + pHash (similarity) + WebP thumbnails & previews | ✅ |
-| Managed import | Hardlink (default — originals untouched, zero extra space) / copy / move; sha256 dedupe, automatic rename on conflicts, dry-run first; **CLI + Web admin "Import" wizard** | ✅ |
-| Image groups | Folder albums (automatic) + manual albums (add/remove, cover) | ✅ |
-| Ratings | Per-user 0–10, personal + average | ✅ |
-| Tags | Namespaced tags (`artist:name` style), autocomplete, add/remove | ✅ |
-| Artists | First-class entities (aliases, links, notes) linked to images; browse / play by artist | ✅ |
-| Comics / series | Album `category` field + `series:` tag convention (CBZ support on the roadmap) | ✅ basic |
-| Playback | Server-side queue: timed / counted / carousel (loop) / random / cross-album / by artist; Web slideshow + mpv handoff + TUI slideshow | ✅ |
-| Search | `tag`, `-tag`, `artist:`, `album:`, `rating:>=N`, `fav:`, `ext:`, `file:`, bare words | ✅ |
-| User groups | Groups with a capability set (view/rate/comment/note/tag_edit/manage) + per-library grants | ✅ |
-| Comments / notes | Per-image comments and text notes (on-image region notes on the roadmap) | ✅ |
-| Multi-user shared libraries | Multiple users, per-library ACL, per-user ratings & favorites | ✅ |
-| Encryption | scrypt passwords, HMAC-signed tokens, encrypted backup export; full-library encryption deliberately out of scope for now (see `docs/decisions.md` D1) | ✅ per D1 |
-| Deployment | Docker / docker-compose ready (binds to loopback by default; no published image yet) | ✅ |
-| Localization | Fully bilingual **zh / en** across Web + TUI + CLI + API errors; follows the system locale, switchable (Web header toggle; CLI `--lang` / `PICSHELF_LANG`) | ✅ |
-| Local-model tagging | Auto-tagging / CLIP similarity (interface reserved, see Roadmap) | ⏳ planned |
+- Index existing directories without changing originals, or import into a managed
+  library by hardlink, copy or move. Saved previews, background jobs, cancellation
+  and retry keep file operations reviewable and recoverable. Hardlinks share bytes;
+  use copy for an independent original archive.
+- Per-user 0–10 ratings, favorites and explicit organization state; tags, artists,
+  source records, comments, notes, folder albums and manual albums.
+- Batch metadata editing with fixed selections and undo that preserves later edits.
+- Validated search expressions, saved queries and dynamic smart albums.
+- Saved playback rules and resumable sessions through Web, TUI or mpv. Existing
+  random/shuffle modes remain without replacement; independent sampling is explicit.
+- Verified root rebinding, deterministic naming templates and explicit managed-library
+  reorganization that preserves image identities.
+- Manual work/file-version relationships and an optional preferred viewing file.
+- Portable user-scoped metadata, checked database archives and read-only diagnostics.
+- Current library permissions across queries, media, jobs and exports; revocable
+  sessions and Chinese/English interfaces. Intended for personal and trusted shared use.
 
 ## Quick start
 
-```bash
+Python 3.11 or later is required. The locked environment and installed artifacts
+have been tested on macOS arm64 with Python 3.11; other platforms require their own
+validation. See [packaging](docs/packaging.md).
+
+```sh
 git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
-
-# 1) Environment (skip when .venv already exists)
-uv venv .venv && uv pip install --python .venv/bin/python -e ".[dev]"
-
-# 2) Initialize the data directory + admin account
+uv sync --locked --extra dev --python 3.11
+export PICSHELF_DATA="$PWD/data"
 .venv/bin/picshelf init --admin admin
 
-# 3) Index an existing directory (read-only scan; originals untouched)
-.venv/bin/picshelf library add wallpapers "/path/to/your/images"
-.venv/bin/picshelf scan wallpapers
+# Read an existing directory without moving its files.
+.venv/bin/picshelf library add photos /path/to/images --mode indexed
+.venv/bin/picshelf scan photos
 
-# 3.5) …or import external directories into a managed library (dry-run first, then --apply; hardlink by default)
-.venv/bin/picshelf library add mylib "~/Pictures/PicShelfLib" --mkdir
-.venv/bin/picshelf import "~/incoming" mylib            # dry run
-.venv/bin/picshelf import "~/incoming" mylib --apply    # execute + auto-scan
-#    Or via Web: Admin → Import (dry-run table → confirm)
+# Or receive imports into a writable managed directory.
+.venv/bin/picshelf library add collection /path/to/collection --mode managed --mkdir
+.venv/bin/picshelf import /path/to/incoming collection --mode copy --json
+.venv/bin/picshelf import-execute PLAN_ID --yes
 
-# 4) Pick a frontend
-.venv/bin/picshelf serve            # Web: http://127.0.0.1:39431
-.venv/bin/picshelf tui              # terminal UI
-.venv/bin/picshelf ls               # CLI listing
-
-# 5) Playback (filtered queue handed to mpv)
-.venv/bin/picshelf play --album 1 --order shuffle --interval 8 --count 50 --loop --player mpv
+.venv/bin/picshelf serve
+# Alternatively: .venv/bin/picshelf tui
 ```
 
-For a source checkout, data lives in `./data/` inside the project by default (database, thumbnails, secret key, playlists); override with `--data DIR` or `PICSHELF_DATA`. For a wheel installation, set an explicit writable data directory. All commands that operate on the same library must use the same data directory.
+Replace the sample paths and `PLAN_ID` with the preview's values. Initialization
+prompts for a password; scripts use `--password-stdin`. The Web service binds to
+loopback by default. A wheel installation requires an explicit writable `--data`
+or `PICSHELF_DATA`; use the same directory for all commands. Browser-selected local
+paths are not uploads: import paths refer to the server's filesystem.
+
+## Organize and keep a recoverable collection
+
+[Batch editing](docs/batches.md), [search and playback](docs/usage.md),
+[paths and naming](docs/paths.md), and [work versions](docs/works.md) explain the
+daily workflows. [Portable metadata](docs/metadata-format.md) moves organization
+onto independently copied originals. [Backups](docs/backups.md) preserve accounts
+and the catalog; originals, signing keys and configuration have separate recovery
+roles. Stop active applications before database restore. Upgrades preserve
+released fields and create a migration snapshot before changing an existing schema.
+
+`picshelf doctor` exports redacted local diagnostics; `picshelf check --full`
+checks files and relationships without repair. See [diagnostics](docs/diagnostics.md)
+and [performance measurements](docs/performance.md).
 
 ## Docker
 
-```bash
+```sh
 docker compose build
-mkdir -p data                       # ensure the container user can write here
+mkdir -p data
 docker compose run --rm picshelf picshelf init --admin admin
-docker compose up -d                # binds to loopback by default
+docker compose up -d
 ```
 
-Mount your image directories in `docker-compose.yml` (read-only is fine for index mode) and register them via `docker compose exec picshelf picshelf library add ...`. Full guide (volumes, networking, permissions, upgrades, backups): `docs/deployment.md`.
+Set writable volume ownership for the non-root container user and mount originals
+at explicit container paths. Index libraries can be read-only; managed libraries
+need write access. The compose configuration binds to loopback. Current container
+lifecycle verification and image publication are pending; see
+[deployment](docs/deployment.md) for mounts, access, upgrade and restore steps.
 
-## The three frontends
+## Boundaries
 
-- **Web**: log in and browse libraries / albums / artists / tags / favorites; grid browsing + viewer (rating / tags / comments / notes / favorite); slideshow mode (interval, count, order, loop, sizing, captions; respects the reduced-motion preference, keyboard-operable); admin pages (users / user groups / library grants / scan / import wizard).
-- **TUI**: `picshelf tui` — tree browsing + list + detail + rating/tag/favorite + slideshow loop (optional in-terminal image preview).
-- **CLI**: `picshelf ls|search|show|rate|tag|comment|note|play|dupes|export|import|users|groups|library|scan`.
-  Playback supports `--player mpv` (generates a playlist and hands it to mpv; per-image duration / loop / shuffle controlled by flags) / `--player terminal` / `--player list`.
+Originals are never included in metadata manifests or database archives. Animation
+and multipage formats use the first frame/page for derivatives; the actual
+[supported format behavior](docs/usage.md) is documented.
+Similarity suggestions do not identify works or authorize deleting duplicates.
 
-## Directory structure
-
-```
-picshelf/
-  config.py      # data dir / port configuration
-  db.py          # SQLite (WAL) + versioned migrations
-  hashing.py     # SHA-256 / pHash / thumbnails
-  indexer.py     # library scanning (incremental, move detection, soft delete)
-  importer.py    # managed import (hardlink/copy/move, dry-run first)
-  search.py      # search syntax → SQL
-  auth.py        # users / groups / permissions / tokens
-  play.py        # playback sessions (queue building & navigation)
-  api/           # FastAPI routes (REST + static Web)
-  cli.py         # command line
-  tui.py         # terminal UI (Textual)
-  web/           # frontend (no build step, vanilla JS)
-tests/           # pytest suite
-docs/            # research / architecture / decisions / screenshots
-```
-
-## Security
-
-- The server binds to `127.0.0.1` by default and is not exposed; for remote access read `docs/decisions.md` D2/B0 first (use private-network access and configure TLS as needed).
-- Passwords: salted scrypt hashes; session tokens: HMAC-signed with expiry.
-- `picshelf export --encrypt` produces an encrypted backup (passphrase-derived key).
-- Privacy: index mode never moves any file; managed import (`import`) writes only to the chosen target library directory and only when explicitly executed (hardlink by default, originals preserved); no telemetry is collected.
-
-## Roadmap (summary)
-
-- Managed import: tag/artist-based naming templates (CLI + Web wizard already available).
-- CBZ/ZIP archive import + ComicInfo.xml metadata; video files (via mpv).
-- Local models: Ollama vision auto-tagging / CLIP embedding similarity (interface reserved).
-- On-image region notes (booru-style), share links, desktop client (Tauri evaluation).
-- Full-library encryption: deliberately out of scope for now — trigger conditions and a zero-code migration path in `docs/decisions.md` D1.
+CBZ/ZIP reading, video indexing, model suggestions, semantic search, region notes,
+public sharing and a desktop wrapper are future work. Full-library encryption is
+an optional storage-layer concern; the application supports encrypted database
+archives. There is no default external service, model download or telemetry.

@@ -4,6 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import asynccontextmanager
 from threading import BoundedSemaphore
+import json
+import logging
+import time
+import uuid
 
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -55,11 +59,13 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.exception_handler(ServiceError)
     async def _service_error(request, exc: ServiceError):
+        request.state.log_code = exc.code
         headers = {"Retry-After": str(getattr(exc, "retry_after", 60))} if exc.status == 429 else None
         return JSONResponse(status_code=exc.status, content=exc.as_dict(), headers=headers)
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request, exc):
+        request.state.log_code = 'invalid_arguments'
         # Validation inputs may contain passwords, tokens or private paths.
         body = ServiceError("invalid_arguments", t("请求参数无效"), status=422,
                             next_step=t("请按接口说明检查字段类型和范围后重试")).as_dict()
@@ -76,10 +82,12 @@ def create_app(cfg: Config) -> FastAPI:
         body = ServiceError(codes.get(exc.status_code, "request_failed"), exc.detail,
                             status=exc.status_code, retryable=exc.status_code == 429,
                             next_step=t(steps.get(exc.status_code, "请按接口说明检查字段类型和范围后重试"))).as_dict()
+        request.state.log_code = body['error']['code']
         return JSONResponse(status_code=exc.status_code, content=body, headers=exc.headers)
 
     @app.middleware("http")
     async def _lang_from_header(request, call_next):
+        request_id, started = uuid.uuid4().hex, time.monotonic()
         # ContextVar 按请求隔离，线程池会继承当前请求的语言。
         header = request.headers.get("accept-language", "")
         first = header.split(",")[0].strip().lower()
@@ -111,6 +119,13 @@ def create_app(cfg: Config) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"
+        response.headers['X-Request-ID'] = request_id
+        if request.method not in ('GET','HEAD','OPTIONS') or response.status_code >= 400:
+            route = request.scope.get('route')
+            logging.getLogger('uvicorn.error').info(json.dumps({
+                'request_id':request_id,'route':getattr(route,'path','unmatched'),
+                'status':response.status_code,'code':getattr(request.state,'log_code','ok'),
+                'elapsed_ms':round((time.monotonic()-started)*1000,2)}))
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "private, no-store"
         return response
