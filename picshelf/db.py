@@ -5,9 +5,14 @@ schema 变更规则：在 MIGRATIONS 里追加新版本块并把 SCHEMA_VERSION 
 """
 from __future__ import annotations
 
+import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+from .errors import ServiceError
+from .i18n import t
 
 SCHEMA_VERSION = 1
 
@@ -221,40 +226,178 @@ def connect(db_path: Path) -> sqlite3.Connection:
     # WAL + busy_timeout 保证互不干扰。
     conn = sqlite3.connect(str(db_path), timeout=15, check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    conn.execute("PRAGMA synchronous = NORMAL")
-    return conn
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 10000")
+        # Validate before changing persistent journal settings in an existing file.
+        validate_schema(conn)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                conn.execute("PRAGMA journal_mode = WAL")
+                break
+            except sqlite3.OperationalError as exc:
+                if not _busy(exc) or time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
+        conn.execute("PRAGMA synchronous = NORMAL")
+        return conn
+    except BaseException:
+        conn.close()
+        raise
+
+
+def _invalid_schema() -> ServiceError:
+    return ServiceError("invalid_schema", t("数据库版本记录或结构无效"), status=503,
+                        next_step=t("请检查数据目录，或停止服务后恢复有效备份"))
 
 
 def schema_version(conn: sqlite3.Connection) -> int:
     try:
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")}
+        if "meta" not in tables:
+            if tables:
+                raise _invalid_schema()
+            return 0
         row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-        return int(row["value"]) if row else 0
-    except sqlite3.OperationalError:
-        return 0
+        value = str(row[0]) if row else ""
+        if not value.isascii() or not value.isdecimal() or int(value) < 1:
+            raise _invalid_schema()
+        return int(value)
+    except sqlite3.DatabaseError as exc:
+        if _busy(exc):
+            raise
+        raise _invalid_schema() from exc
+
+
+def validate_schema(conn: sqlite3.Connection) -> int:
+    """Validate a database without migration or changes to persistent settings."""
+    current = schema_version(conn)
+    if current > SCHEMA_VERSION:
+        raise ServiceError("unsupported_schema", t("数据库来自更新版本的 Pic Shelf"), status=503,
+                           next_step=t("请使用支持此数据库的新版程序，或停止服务后恢复升级前快照"))
+    if current:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        required = {"meta", "users", "groups", "user_groups", "libraries", "library_grants",
+                    "images", "albums", "album_images", "tags", "image_tags", "artists",
+                    "image_artists", "ratings", "favorites", "comments", "notes",
+                    "play_sessions", "play_items", "scans"}
+        if not required <= tables:
+            raise _invalid_schema()
+    return current
+
+
+def _busy(exc: sqlite3.Error) -> bool:
+    return (getattr(exc, "sqlite_errorcode", 0) & 0xff) in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+
+
+def _snapshot_before_migration(conn: sqlite3.Connection, current: int) -> Path | None:
+    """The caller holds the writer lock; a second reader captures committed WAL."""
+    filename = next(row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main")
+    if not filename:  # An in-memory database has no durable state to restore.
+        return None
+    directory = Path(filename).parent / "migration-backups"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    destination = directory / f"schema-v{current}-to-v{SCHEMA_VERSION}-{time.time_ns()}.db"
+    partial = destination.with_suffix(".partial")
+    descriptor = os.open(partial, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(descriptor)
+    source = target = None
+    try:
+        source = sqlite3.connect(Path(filename).as_uri() + "?mode=ro", uri=True)
+        target = sqlite3.connect(partial)
+        deadline = time.monotonic() + 30
+
+        def progress(status, remaining, total):
+            if time.monotonic() > deadline:
+                raise TimeoutError("snapshot timeout")
+
+        source.backup(target, pages=256, progress=progress, sleep=.05)
+        if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise sqlite3.DatabaseError("snapshot integrity check failed")
+        target.close()
+        target = None
+        with partial.open("rb") as saved:
+            os.fsync(saved.fileno())
+        os.replace(partial, destination)
+        return destination
+    finally:
+        if source is not None:
+            source.close()
+        if target is not None:
+            target.close()
+        partial.unlink(missing_ok=True)
+
+
+def _execute_migration(conn: sqlite3.Connection, script: str) -> None:
+    # executescript() commits an existing transaction, so execute complete SQL
+    # statements separately. SQLite recognizes trigger bodies and quoted ';'.
+    forbidden = {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+                 sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA}
+    conn.set_authorizer(lambda action, *args: sqlite3.SQLITE_DENY if action in forbidden else sqlite3.SQLITE_OK)
+    try:
+        start = 0
+        for end, char in enumerate(script):
+            if char == ";" and sqlite3.complete_statement(script[start:end + 1]):
+                conn.execute(script[start:end + 1])
+                start = end + 1
+        if script[start:].strip():
+            conn.execute(script[start:])
+    finally:
+        conn.set_authorizer(None)
 
 
 def migrate(conn: sqlite3.Connection) -> int:
-    """Apply pending migrations; returns final version."""
-    current = schema_version(conn)
-    for version in sorted(MIGRATIONS):
-        if version <= current:
-            continue
-        conn.executescript(MIGRATIONS[version])
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (str(version),),
-        )
+    """Atomically apply all pending versions, preserving a pre-upgrade snapshot."""
+    if conn.in_transaction:
+        raise ServiceError("transaction_active", t("迁移不能在未完成的事务中运行"),
+                           next_step=t("请先提交或回滚当前操作，再重新打开数据库"))
+    current = validate_schema(conn)
+    if current == SCHEMA_VERSION:
+        return current
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # Another process may have finished the upgrade while this one waited.
+        current = validate_schema(conn)
+        pending = range(current + 1, SCHEMA_VERSION + 1)
+        if any(version not in MIGRATIONS for version in pending):
+            raise ServiceError("migration_unavailable", t("安装包缺少所需的数据库迁移"), status=503,
+                               next_step=t("请重新安装完整的 Pic Shelf 软件包"))
+        if current and current < SCHEMA_VERSION:
+            _snapshot_before_migration(conn, current)
+        for version in pending:
+            _execute_migration(conn, MIGRATIONS[version])
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(version),))
+        if conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise sqlite3.IntegrityError("foreign key check failed")
+        validate_schema(conn)
         conn.commit()
-        current = version
-    return current
+        return SCHEMA_VERSION
+    except BaseException as exc:
+        conn.rollback()
+        if isinstance(exc, (sqlite3.Error, OSError)):
+            raise ServiceError("migration_failed", t("数据库迁移未完成，原有结构与数据已保留"),
+                               status=503, retryable=isinstance(exc, sqlite3.Error) and _busy(exc),
+                               next_step=t("请停止其他写入并检查可用空间；必要时从数据目录的 migration-backups 恢复快照")) from exc
+        raise
 
 
 def open_db(db_path: Path) -> sqlite3.Connection:
     """Connect + migrate. Use everywhere a fresh handle is needed."""
-    conn = connect(db_path)
-    migrate(conn)
-    return conn
+    conn = None
+    try:
+        conn = connect(db_path)
+        migrate(conn)
+        return conn
+    except BaseException as exc:
+        if conn is not None:
+            conn.close()
+        if isinstance(exc, (sqlite3.Error, OSError)):
+            busy = isinstance(exc, sqlite3.Error) and _busy(exc)
+            raise ServiceError("database_busy" if busy else "database_unavailable",
+                               t("无法打开数据库"), status=503, retryable=busy,
+                               next_step=t("请停止其他写入并检查数据目录权限和可用空间，然后重试")) from exc
+        raise

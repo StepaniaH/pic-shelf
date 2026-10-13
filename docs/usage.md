@@ -114,3 +114,24 @@ picshelf import-backup ./data/exports/catalog.zip --force
 ```
 
 Exports contain a consistent database snapshot and optionally derivatives. They do not contain original images or the session-signing key. Back up the library directories separately. Stop active writers before restoring. `--force` first saves a consistent copy of the current database, including committed WAL contents. Restore loads the database; scan each library with `--full` to rebuild derivatives. A plain ZIP contains metadata and password hashes, so store it with the same care as the live data directory.
+
+## Database upgrades
+
+Stop running Pic Shelf services and commands before upgrading. Opening an older
+database applies the pending schema migrations in one transaction. Before changing
+an existing database, Pic Shelf creates an owner-only snapshot in
+`<data-directory>/migration-backups/`. It includes committed WAL data. If a
+migration fails, the previous schema and metadata remain intact. A second open of
+an up-to-date database does not create another snapshot.
+
+An older program refuses a newer schema with `unsupported_schema`. Use a compatible
+program or restore the pre-upgrade snapshot; do not edit the version number by
+hand. Restoring an incompatible backup also fails before replacing the current
+catalog. Snapshot files include account data and need the same protection as the
+live database. They do not include original images or signing keys.
+
+To rehearse recovery, copy a snapshot into a new, empty data directory as
+`picshelf.db`, then open that directory with the compatible program and verify it.
+For an in-place rollback, stop all writers and use SQLite's backup API to restore
+the snapshot into the target database; do not replace a live database file while
+its WAL is active. See the [SQLite backup documentation](https://www.sqlite.org/backup.html).

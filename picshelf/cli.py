@@ -129,6 +129,8 @@ class _I18nGroup(click.Group):
     def invoke(self, ctx: click.Context):
         try:
             return super().invoke(ctx)
+        except ServiceError as exc:
+            raise click.ClickException(f"[{exc.code}] {exc.detail} {exc.next_step}") from exc
         except (ValueError, sqlite3.IntegrityError) as exc:
             raise click.ClickException(t("操作未完成：{error}。请检查参数后重试。", error=exc)) from exc
         except OSError as exc:
@@ -811,6 +813,7 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
                 raise sqlite3.DatabaseError("integrity_check failed")
             source.execute("SELECT id FROM images LIMIT 1")
             source.execute("SELECT id FROM users LIMIT 1")
+            dbm.validate_schema(source)
             if cfg.db_path.exists():
                 target = sqlite3.connect(str(cfg.db_path))
                 bak = cfg.db_path.with_name(f"picshelf.db.bak-{time.time_ns()}")

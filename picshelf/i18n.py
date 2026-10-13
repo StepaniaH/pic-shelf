@@ -65,6 +65,18 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "无法打开数据库": "Cannot open the database",
+    "请停止其他写入并检查数据目录权限和可用空间，然后重试": "Stop other writers, check data directory permissions and free space, then try again",
+    "数据库版本记录或结构无效": "The database version record or structure is invalid",
+    "请检查数据目录，或停止服务后恢复有效备份": "Check the data directory, or stop the service and restore a valid backup",
+    "数据库来自更新版本的 Pic Shelf": "This database was created by a newer version of Pic Shelf",
+    "请使用支持此数据库的新版程序，或停止服务后恢复升级前快照": "Use a version that supports this database, or stop the service and restore the pre-upgrade snapshot",
+    "迁移不能在未完成的事务中运行": "A migration cannot run inside an unfinished transaction",
+    "请先提交或回滚当前操作，再重新打开数据库": "Commit or roll back the current operation before reopening the database",
+    "安装包缺少所需的数据库迁移": "The installation is missing a required database migration",
+    "请重新安装完整的 Pic Shelf 软件包": "Reinstall the complete Pic Shelf package",
+    "数据库迁移未完成，原有结构与数据已保留": "The database migration did not complete; the previous structure and data were preserved",
+    "请停止其他写入并检查可用空间；必要时从数据目录的 migration-backups 恢复快照": "Stop other writers and check available space; if needed, restore a snapshot from migration-backups in the data directory",
     "请使用有效账户重新登录": "Sign in again with an active account",
     "请联系管理员检查账户和库授权": "Ask an administrator to check your account and library access",
     "请刷新图片列表，或扫描库后重试": "Refresh the image list, or scan the library and try again",

@@ -28,3 +28,8 @@ PICSHELF_BROWSER_TESTS=1 .venv/bin/python -m pytest tests/test_web.py -q
 The HTTP option uses a real loopback server. Browser tests require Chromium. Report
 blocked launches separately from failed business assertions; do not convert a
 failure into a passing test by weakening its expected result.
+
+`schema_v1.sql` is a frozen compatibility fixture from the released v1 schema.
+Do not regenerate it from current migrations. Migration tests populate independent
+nonconsecutive IDs and relationships, then compare the old data and structure
+after upgrades, failures, process interruption, and snapshot restoration.
