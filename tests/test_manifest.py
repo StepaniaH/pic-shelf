@@ -290,3 +290,29 @@ def test_public_example_contains_known_zero_rating_and_no_authentication_data():
     assert records['ratings'][0]['user_id'] == document['owner']
     assert records['images'][0]['rel_path'] == 'sample.png'
     assert records['comments'][0]['body'] == 'A portable comment.'
+
+
+def test_identity_alias_change_and_change_back_invalidates_preview(collection):
+    import uuid
+    _, cfg, _, _, maps, document = collection
+    with db.open_db(cfg.db_path) as conn:
+        access = AccessContext(1, local_admin=True)
+        plan = manifest.preview(conn, access, document, maps)
+        alias = uuid.uuid4().hex
+        image_id = plan['preview']['images'][0]['image_id']
+        conn.execute("INSERT INTO portable_import_ids VALUES(?,'images',?)", (alias, image_id)); conn.commit()
+        conn.execute('DELETE FROM portable_import_ids WHERE uid=?', (alias,)); conn.commit()
+        with pytest.raises(ServiceError) as caught:
+            manifest.execute(conn, cfg, access, plan['id'])
+        assert caught.value.code == 'manifest_target_changed'
+
+
+def test_revision_tracking_must_exist_before_opening_catalog(cfg):
+    import sqlite3
+    conn = db.open_db(cfg.db_path)
+    conn.close()
+    with sqlite3.connect(cfg.db_path) as raw:
+        raw.execute('DROP TRIGGER catalog_images_update')
+    with pytest.raises(ServiceError) as caught:
+        db.open_db(cfg.db_path)
+    assert caught.value.code == 'invalid_schema'

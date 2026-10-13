@@ -91,6 +91,48 @@ def _rows(conn, table):
     return [dict(row) for row in conn.execute(f"SELECT {','.join(COLUMNS[table])} FROM {table}")]
 
 
+def _export_rows(conn, access, selected, allowed):
+    """Filter in SQLite before loading records, bounding the complete export."""
+    for suffix in ('libraries', 'images', 'visible'):
+        conn.execute(f'DROP TABLE IF EXISTS temp._manifest_{suffix}')
+        conn.execute(f'CREATE TEMP TABLE _manifest_{suffix}(id INTEGER PRIMARY KEY)')
+    conn.executemany('INSERT INTO _manifest_libraries VALUES(?)', [(lid,) for lid in selected])
+    conn.execute('INSERT INTO _manifest_images SELECT id FROM images WHERE library_id IN (SELECT id FROM _manifest_libraries)')
+    if allowed is not None:
+        conn.executemany('INSERT INTO _manifest_visible VALUES(?)', [(lid,) for lid in allowed])
+    scope = 'IN (SELECT id FROM _manifest_images)'
+    album_where = (f'(library_id IN (SELECT id FROM _manifest_libraries) OR EXISTS(SELECT 1 FROM album_images ai WHERE ai.album_id=albums.id AND ai.image_id {scope})) '
+                   f'AND NOT EXISTS(SELECT 1 FROM album_images ai WHERE ai.album_id=albums.id AND ai.image_id NOT {scope}) '
+                   f'AND (cover_image_id IS NULL OR cover_image_id {scope})')
+    tag_ids = f'SELECT tag_id FROM image_tags WHERE image_id {scope} UNION SELECT tag_id FROM tag_claims WHERE image_id {scope}'
+    artist_ids = f'SELECT artist_id FROM image_artists WHERE image_id {scope}'
+    work_ids = f'SELECT work_id FROM work_images WHERE image_id {scope}'
+    filters = {'users': ('id=?', (access.user_id,)), 'libraries': ('id IN (SELECT id FROM _manifest_libraries)', ()),
+               'images': ('id ' + scope, ()), 'tags': (f'id IN ({tag_ids})', ()), 'artists': (f'id IN ({artist_ids})', ()),
+               'albums': (album_where, ()), 'album_images': (f'album_id IN (SELECT id FROM albums WHERE {album_where})', ()),
+               'tag_aliases': (f'entity_id IN ({tag_ids})', ()), 'artist_aliases': (f'entity_id IN ({artist_ids})', ()),
+               'works': (f'id IN ({work_ids})', ()), 'work_images': (f'work_id IN ({work_ids})' + ('' if allowed is None else ' AND image_id IN (SELECT id FROM images WHERE library_id IN (SELECT id FROM _manifest_visible))'), ())}
+    for table in ('ratings', 'favorites', 'image_workflow', 'comments', 'notes'):
+        filters[table] = (f'image_id {scope} AND user_id=?', (access.user_id,))
+    for table in ('image_tags', 'image_artists', 'image_sources', 'tag_claims'):
+        filters[table] = ('image_id ' + scope, ())
+    for table in ('saved_queries', 'play_rules'):
+        filters[table] = ('owner_id=?', (access.user_id,))
+    rows, remaining = {}, MAX_RECORDS
+    try:
+        for table, fields in COLUMNS.items():
+            where, args = filters[table]
+            records = [dict(row) for row in conn.execute(f"SELECT {','.join(fields)} FROM {table} WHERE {where} LIMIT ?", (*args, remaining + 1))]
+            if len(records) > remaining:
+                raise _error('manifest_too_large', 413)
+            rows[table] = records
+            remaining -= len(records)
+        return rows
+    finally:
+        for suffix in ('libraries', 'images', 'visible'):
+            conn.execute(f'DROP TABLE temp._manifest_{suffix}')
+
+
 def _query_export(conn, expression, selected_albums):
     parsed = search.parse(expression)
     if parsed.errors:
@@ -110,20 +152,18 @@ def export(conn, access, library_ids=None):
     access.require_capability(conn, 'view')
     with play.transaction(conn):
         allowed = access.allowed_libraries(conn)
-        libraries = _rows(conn, 'libraries')
         selected = set(library_ids if library_ids is not None else
-                       (allowed if allowed is not None else [row['id'] for row in libraries]))
+                       (allowed if allowed is not None else [row[0] for row in conn.execute('SELECT id FROM libraries')]))
         for lid in selected:
             access.require_library(conn, lid)
-        rows = {table: _rows(conn, table) for table in COLUMNS}
+        rows = _export_rows(conn, access, selected, allowed)
         rows['users'] = [row for row in rows['users'] if row['id'] == access.user_id]
-        rows['libraries'] = [row for row in libraries if row['id'] in selected]
         if len(rows['libraries']) != len(selected):
             raise _error('library_not_found', 404)
         rows['images'] = [row for row in rows['images'] if row['library_id'] in selected]
         image_ids = {row['id'] for row in rows['images']}
         work_ids = {row['work_id'] for row in rows['work_images'] if row['image_id'] in image_ids}
-        visible_ids = {row[0] for row in conn.execute('SELECT id FROM images WHERE library_id IN (' + ','.join('?' for _ in allowed) + ')', allowed)} if allowed is not None else None
+        visible_ids = {row['image_id'] for row in rows['work_images']} if allowed is not None else None
         rows['works'] = [row for row in rows['works'] if row['id'] in work_ids]
         rows['work_images'] = [row for row in rows['work_images'] if row['work_id'] in work_ids and (visible_ids is None or row['image_id'] in visible_ids)]
         for work in rows['works']:
@@ -181,8 +221,10 @@ def export(conn, access, library_ids=None):
             if pending['work_id'] not in work_ids:
                 continue
             local_image = _resolve(conn, 'images', pending['image_uid'])
-            if local_image is not None and visible_ids is not None and local_image not in visible_ids:
-                continue
+            if local_image is not None and allowed is not None:
+                library = conn.execute('SELECT library_id FROM images WHERE id=?', (local_image,)).fetchone()
+                if library is None or library[0] not in allowed:
+                    continue
             work_uid = _uid(conn, 'works', pending['work_id'])
             rows['work_images'].append({'work_id': work_uid, 'image_id': pending['image_uid'],
                                         'role': pending['role'], 'created_at': pending['created_at']})
@@ -278,13 +320,7 @@ def validate(value):
 
 
 def _fingerprint(conn):
-    rows = {table: sorted(_rows(conn, table), key=canonical) for table in COLUMNS}
-    rows['versions'] = [tuple(row) for row in conn.execute('SELECT * FROM metadata_versions ORDER BY image_id,field_key')]
-    rows['identities'] = [tuple(row) for row in conn.execute('SELECT * FROM portable_import_ids ORDER BY uid')]
-    rows['local_identities'] = [tuple(row) for row in conn.execute('SELECT * FROM portable_ids ORDER BY kind,local_id')]
-    rows['revision'] = conn.execute("SELECT value FROM meta WHERE key='catalog_revision'").fetchone()[0]
-    rows['pending_works'] = [tuple(row) for row in conn.execute('SELECT * FROM pending_work_images ORDER BY work_id,image_uid')]
-    return checksum(rows)
+    return checksum(conn.execute("SELECT value FROM meta WHERE key='catalog_revision'").fetchone()[0])
 
 
 def _mappings(conn, access, records, mappings):

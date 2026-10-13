@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -526,7 +526,23 @@ CREATE TRIGGER catalog_{_work_table}_{_work_action.lower()} AFTER {_work_action}
 END;
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12, 13: _SCHEMA_V13}
+_SCHEMA_V14 = ''
+for _identity_table in ('portable_ids', 'portable_import_ids', 'metadata_versions'):
+    for _identity_action in ('INSERT', 'UPDATE', 'DELETE'):
+        _SCHEMA_V14 += f"""
+CREATE TRIGGER catalog_{_identity_table}_{_identity_action.lower()} AFTER {_identity_action} ON {_identity_table} BEGIN
+ UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='catalog_revision';
+END;
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12, 13: _SCHEMA_V13, 14: _SCHEMA_V14}
+
+_REVISION_TABLES = ('users', 'libraries', 'images', 'tags', 'artists', 'albums',
+                    'comments', 'notes', 'image_sources', 'tag_claims', 'tag_aliases',
+                    'artist_aliases', 'saved_queries', 'play_rules', 'image_tags',
+                    'image_artists', 'album_images', 'ratings', 'favorites', 'image_workflow',
+                    'works', 'work_images', 'pending_work_images', 'portable_ids',
+                    'portable_import_ids', 'metadata_versions')
 
 
 def utcnow() -> str:
@@ -649,6 +665,14 @@ def validate_schema(conn: sqlite3.Connection) -> int:
             required |= {"works", "work_images", "pending_work_images"}
         if not required <= tables:
             raise _invalid_schema()
+        if current >= 14:
+            revision = conn.execute("SELECT value FROM meta WHERE key='catalog_revision'").fetchone()
+            if revision is None or not str(revision[0]).isascii() or not str(revision[0]).isdecimal():
+                raise _invalid_schema()
+            triggers = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")}
+            expected = {f'catalog_{table}_{action}' for table in _REVISION_TABLES for action in ('insert','update','delete')}
+            if not expected <= triggers:
+                raise _invalid_schema()
     return current
 
 

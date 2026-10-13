@@ -211,9 +211,10 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
                   threshold: int = 8) -> list[dict]:
     """按首个代表图分组；每个成员与代表图的距离不超过 threshold。
 
-    每个哈希只解析一次，重复哈希直接命中已选组。最坏仍为 O(n²)。
+    每个哈希只解析一次，重复哈希直接命中已选组。半径不超过 8 时按
+    threshold+1 个不相交位段生成完备候选，仍选最早代表。最坏仍为 O(n²)。
     """
-    if not 0 <= threshold <= 64:
+    if type(threshold) is not int or not 0 <= threshold <= 64:
         raise ValueError(t("相似距离必须在 0–64 之间"))
     sql = "SELECT id,phash,phash_version,filename FROM images WHERE missing=0 AND phash IS NOT NULL AND scan_error_code IS NULL"
     params: list = []
@@ -227,13 +228,30 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
     groups: list[list[dict]] = []
     representatives: list[tuple[int, int]] = []
     placed: dict[tuple[int, int], int] = {}
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    versions: dict[int, int] = {}
+    bands = []
+    if 0 < threshold <= 8:
+        shift = 0
+        for index in range(threshold + 1):
+            width = 64 // (threshold + 1) + int(index < 64 % (threshold + 1))
+            bands.append((shift, (1 << width) - 1))
+            shift += width
     for r in rows:
         ph = int(r["phash"], 16)
         version = int(r["phash_version"])
         key = (version, ph)
         target = placed.get(key)
-        if target is None:
-            for gi, (algorithm, representative) in enumerate(representatives):
+        if target is None and threshold:
+            candidates = range(len(representatives))
+            if bands and versions.get(version, 0) > 128:
+                matches = [buckets.get((version, index, (ph >> shift) & mask), [])
+                           for index, (shift, mask) in enumerate(bands)]
+                # Degenerate shared segments fall back to the ordinary scan.
+                if max(map(len, matches), default=0) < versions[version] * .4:
+                    candidates = sorted({index for bucket in matches for index in bucket})
+            for gi in candidates:
+                algorithm, representative = representatives[gi]
                 if algorithm == version and (representative ^ ph).bit_count() <= threshold:
                     target = gi
                     break
@@ -242,6 +260,9 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
             target = len(groups)
             representatives.append((version, ph))
             groups.append([entry])
+            versions[version] = versions.get(version, 0) + 1
+            for index, (shift, mask) in enumerate(bands):
+                buckets.setdefault((version, index, (ph >> shift) & mask), []).append(target)
         else:
             groups[target].append(entry)
         placed[key] = target
