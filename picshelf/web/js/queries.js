@@ -12,7 +12,7 @@ const revisions=new WeakMap();
 export async function attachSearchTools(view,source,rule=null) {
   const section=document.createElement("details");
   section.className="query-editor";
-  section.open=!!rule || !!source.errors.length;
+  section.open=!!source.errors.length;
   section.innerHTML=`<summary>${t("编辑搜索条件与保存规则")}</summary>
     <form>
       <label>${t("检索表达式")}<textarea name="expression" maxlength="4096" rows="3"></textarea></label>
@@ -87,13 +87,13 @@ export async function renderSavedQuery(view,id) {
   const rule=await api(`/queries/${id}`);
   const source=new Source(rule.name,{title:rule.name},{q:rule.query,sort:rule.sort});
   source.ruleErrors=rule.errors;
+  source.display=rule.display;
   if(rule.errors.length)source.errors=rule.errors;
   else await source.load(true);
   if(revisions.get(view)!==revision)return;
   renderGridInto(view,source,{headerExtraHtml:`<button class="btn" data-reload-rule>${t("重新读取规则")}</button>`});
   view.querySelector("[data-reload-rule]").onclick=()=>renderSavedQuery(view,id).catch(e=>toast(e.message,"error"));
   const grid=view.querySelector("#grid");
-  grid.classList.toggle("compact",rule.display?.density==="compact");
   grid.classList.toggle("hide-filenames",rule.display?.show_filename===false);
   await attachSearchTools(view,source,rule);
 }

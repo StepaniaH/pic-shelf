@@ -2,6 +2,11 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "主导航": "Main navigation",
+    "无法加载此页面": "Unable to load this page",
+    "连接中断，无法读取服务器。": "Connection interrupted. The server could not be reached.",
+    "检查网络和服务状态，然后重试。": "Check the connection and server status, then retry.",
+    "请稍后重试；仍失败时联系管理员。": "Retry in a moment. If it still fails, contact the administrator.",
     "播放配置无效，请检查模式、数量、间隔和显示选项": "Invalid playback configuration. Check mode, count, interval and display options.",
     "请选择有效播放模式；间隔为 0–86400 秒，数量为非负整数": "Choose a valid playback mode; interval is 0–86400 seconds and count is a nonnegative integer.",
     "请重新打开播放规则或创建会话": "Reopen a playback rule or create a session.",

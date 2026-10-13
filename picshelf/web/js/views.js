@@ -81,6 +81,19 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
             `<option value="${v}" ${v === source.sort ? "selected" : ""}>${l}</option>`).join("")});
 
   const grid = view.querySelector("#grid");
+  const densityLabel = document.createElement("label");
+  densityLabel.className = "muted";
+  densityLabel.innerHTML = `${t("图片密度")} <select id="density-select"><option value="comfortable">${t("宽松")}</option><option value="compact">${t("紧凑")}</option></select>`;
+  view.querySelector("#slideshow-btn").before(densityLabel);
+  const density = densityLabel.querySelector("select");
+  let savedDensity;
+  try { savedDensity = localStorage.getItem("picshelf.grid-density"); } catch { /* optional preference */ }
+  density.value = (source.display?.density || savedDensity) === "compact" ? "compact" : "comfortable";
+  grid.classList.toggle("compact", density.value === "compact");
+  density.onchange = () => {
+    grid.classList.toggle("compact", density.value === "compact");
+    try { localStorage.setItem("picshelf.grid-density", density.value); } catch { /* browsing remains available */ }
+  };
   const moreBtn = view.querySelector("#more-btn");
   const warnings = document.createElement("p");
   warnings.className = "error";

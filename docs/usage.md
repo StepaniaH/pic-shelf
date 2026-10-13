@@ -6,6 +6,23 @@ See [Authentication and shared-library permissions](security.md) for role requir
 
 Use [batch organization and undo](batches.md) to select images across pages, preview a fixed set, edit metadata, and restore changes without overwriting later edits. The Unorganized view follows each user's explicit workflow state.
 
+## Web browsing
+
+Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags
+provide narrower starting points. Saved queries, playback rules and batch history
+are in the same navigation bar. On narrow screens, scroll the navigation row to
+reach the remaining entries. Administrative tools appear for administrators.
+
+The image toolbar offers comfortable and compact density. This browser remembers
+the choice; opening a saved query uses that rule's display preference. Both modes
+show the whole image. Batch organization opens when you select an image, or when
+you expand its heading. Search rule editing also expands on demand and opens
+automatically for an invalid rule. Layout and form text respect browser text size.
+
+A connection failure keeps your account state and offers Retry. A permission error
+includes the server's recovery advice. Retrying reads the current permissions;
+it does not grant access to unavailable content.
+
 ## Commands
 
 Use `picshelf --help` and `picshelf <command> --help` for the complete options. In a source checkout, the executable is `.venv/bin/picshelf`. Global options, including `--data` and `--lang`, precede the command.

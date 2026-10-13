@@ -107,3 +107,35 @@ assert.deepEqual(ticks,[24000,39000]);
 """
     result=subprocess.run([node,'--input-type=module','-e',script,module],capture_output=True,text=True,timeout=10)
     assert result.returncode==0,result.stderr
+
+
+def test_api_errors_distinguish_offline_and_preserve_recovery_advice():
+    """A connection failure must not masquerade as an expired login."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for API error scenarios")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/api.js").as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {api, setAuthFailHandler} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+let logouts = 0;
+setAuthFailHandler(() => logouts++);
+globalThis.fetch = async () => {throw new TypeError('Failed to fetch')};
+await assert.rejects(api('/auth/me'), e => e.status === 0 && e.code === 'network_error'
+  && /connection/i.test(e.message) && /retry/i.test(e.nextStep));
+assert.equal(logouts, 0);
+globalThis.fetch = async () => new Response(JSON.stringify({detail:'Access denied',
+  error:{code:'library_forbidden',next_step:'Ask the library owner.'}}), {status:403});
+await assert.rejects(api('/images/7'), e => e.status === 403 && e.code === 'library_forbidden'
+  && e.nextStep === 'Ask the library owner.');
+assert.equal(logouts, 0);
+globalThis.fetch = async () => new Response('unavailable', {status:503});
+await assert.rejects(api('/stats'), e => e.status === 503 && e.nextStep.length > 0);
+globalThis.fetch = async () => new Response('', {status:401});
+await assert.rejects(api('/auth/me'), e => e.status === 401);
+assert.equal(logouts, 1);
+'''
+    result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

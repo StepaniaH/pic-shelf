@@ -3,33 +3,40 @@ import { t, getLocale } from "./i18n.js";
 const BASE = "/api/v1";
 
 export class ApiError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = "request_failed", nextStep = t("请稍后重试；仍失败时联系管理员。")) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.nextStep = nextStep;
   }
 }
 
 let authFailHandler = () => {};
 export function setAuthFailHandler(fn) { authFailHandler = fn; }
 
-export async function api(path, { method = "GET", body } = {}) {
+export async function api(path, { method = "GET", body, signal } = {}) {
   const headers = { "Accept-Language": getLocale() };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  const res = await fetch(BASE + path, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-    credentials: "same-origin",
-  });
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      method, headers, signal,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      credentials: "same-origin",
+    });
+  } catch (error) {
+    if (error.name === "AbortError") throw error;
+    throw new ApiError(0, t("连接中断，无法读取服务器。"), "network_error", t("检查网络和服务状态，然后重试。"));
+  }
   if (res.status === 401) {
     authFailHandler();
     throw new ApiError(401, t("未登录"));
   }
   if (!res.ok) {
-    let msg = res.statusText;
-    try { msg = (await res.json()).detail || msg; } catch { /* ignore */ }
+    let msg = res.statusText, detail;
+    try { const data = await res.json(); msg = data.detail || msg; detail = data.error; } catch { /* non-JSON errors */ }
     if (Array.isArray(msg)) msg = msg.map(error => `${(error.loc || []).slice(1).join(".")}: ${error.msg}`).join("; ");
-    throw new ApiError(res.status, msg || t("请求失败"));
+    throw new ApiError(res.status, msg || t("请求失败"), detail?.code, detail?.next_step);
   }
   return res.status === 204 ? null : res.json();
 }

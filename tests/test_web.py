@@ -388,6 +388,7 @@ def test_saved_smart_search_updates_members_and_repairs_invalid_rule(page,tmp_pa
             ops.set_rating(conn,catalog.images['n03'],catalog.users['reader'],None)
         page.locator('[data-reload-rule]').click()
         expect(page.locator('#grid .card')).to_have_count(2)
+        page.locator('.query-editor summary').click()
         page.locator('.query-editor [name=expression]').fill('tag:')
         page.locator('[data-save]').click()
         expect(page.locator('[data-rule-error]')).to_contain_text('Invalid search condition')
@@ -441,3 +442,45 @@ def test_play_rule_pause_bad_image_skip_and_resume_cursor(page,tmp_path):
         expect(page.locator('#ss-img')).to_be_hidden()
         expect(page.locator('#ss-caption')).to_have_text('')
         page.locator('#ss-exit').click()
+
+
+@pytest.mark.parametrize("language", ["zh", "en"])
+@pytest.mark.parametrize("width", [360, 390, 768, 1280, 1920])
+@pytest.mark.parametrize("text_scale", [1, 2])
+def test_browse_layout_touch_targets_and_text_scaling(page, web_server, language, width, text_scale):
+    """Measure actual layout; root text scaling is not a hardware/browser zoom check."""
+    from playwright.sync_api import expect
+    page.set_viewport_size({"width": width, "height": 900})
+    sign_in(page, web_server, language)
+    page.evaluate("scale => document.documentElement.style.fontSize = `${16 * scale}px`", text_scale)
+    page.locator('#nav a[href="#/search"]').click()
+    expect(page.locator("#grid .card")).to_have_count(120)
+    expect(page.locator("details.batch-controls")).not_to_have_attribute("open", "")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    assert page.locator("#search-input").evaluate("el => parseFloat(getComputedStyle(el).fontSize) >= 16")
+    for selector in ["#lang-btn", "#slideshow-btn", "#density-select", ".card-selection"]:
+        box = page.locator(selector).first.bounding_box()
+        assert box["width"] >= 44 and box["height"] >= 44, (selector, box)
+    assert page.locator("#grid img").first.evaluate("el => getComputedStyle(el).objectFit") == "contain"
+    page.locator("#density-select").select_option("compact")
+    page.locator("[data-select-image]").first.check()
+    expect(page.locator("[data-batch-preview]")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    if destination := os.environ.get("PICSHELF_TEST_SCREENSHOTS"):
+        output = Path(destination)
+        output.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(output / f"browse-{language}-{width}-text{text_scale}.png"))
+    page.reload()
+    expect(page.locator("#density-select")).to_have_value("compact")
+
+
+def test_route_offline_error_keeps_login_and_can_retry(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.route("**/api/v1/images?*", lambda route: route.abort("internetdisconnected"))
+    page.locator('#nav a[href="#/search"]').click()
+    expect(page.get_by_role("heading", name="Unable to load this page")).to_be_visible()
+    expect(page.locator("#logout-btn")).to_be_visible()
+    page.unroute("**/api/v1/images?*")
+    page.locator("[data-route-retry]").click()
+    expect(page.locator("#grid .card")).to_have_count(120)

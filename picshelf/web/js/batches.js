@@ -84,10 +84,10 @@ function watchStatus(panel, initial, onChange) {
 
 export function attachBatchControls(view,source,grid,refresh) {
   const selection = new ImageSelection();
-  const bar = document.createElement("section");
+  const bar = document.createElement("details");
   bar.className = "batch-controls";
   bar.setAttribute("aria-label",t("批量整理"));
-  bar.innerHTML = `<div class="form-row"><strong>${t("批量整理")}</strong><span data-selection-count role="status"></span>
+  bar.innerHTML = `<summary>${t("批量整理")} · <span data-selection-count role="status"></span></summary><div class="form-row">
     <button class="btn small" data-select-loaded>${t("选择当前已加载图片")}</button>
     <button class="btn small" data-select-all>${t("选择全部匹配结果")}</button>
     <button class="btn small" data-select-clear>${t("清空选择")}</button><a href="#/batches">${t("批次记录")}</a></div>
@@ -112,7 +112,7 @@ export function attachBatchControls(view,source,grid,refresh) {
   };
   grid.addEventListener("change",event=>{
     const input=event.target.closest("[data-select-image]");
-    if(input){selection.toggle(Number(input.dataset.selectImage),input.checked);invalidate();update();}
+    if(input){selection.toggle(Number(input.dataset.selectImage),input.checked);if(input.checked)bar.open=true;invalidate();update();}
   });
   for(const [name,fn] of [["loaded",()=>selection.loaded(source.items)],["all",()=>selection.all()],["clear",()=>selection.clear()]]) {
     bar.querySelector(`[data-select-${name}]`).onclick=()=>{fn();invalidate();update();};

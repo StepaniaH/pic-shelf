@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#171a21">
 <title data-i18n="Pic Shelf — 图片库">Pic Shelf — 图片库</title>
 <link rel="stylesheet" href="/css/app.css">
 </head>
@@ -16,8 +17,9 @@
            placeholder="搜索：tag / artist:名 / album:名 / rating:>=8 / fav: / ext:png"
            data-i18n-placeholder="搜索：tag / artist:名 / album:名 / rating:>=8 / fav: / ext:png">
   </form>
-  <nav id="nav">
+  <nav id="nav" aria-label="主导航" data-i18n-label="主导航">
     <a href="#/home" data-i18n="首页">首页</a>
+    <a href="#/search" data-i18n="浏览">浏览</a>
     <a href="#/albums" data-i18n="专辑">专辑</a>
     <a href="#/artists" data-i18n="艺术家">艺术家</a>
     <a href="#/tags" data-i18n="标签">标签</a>

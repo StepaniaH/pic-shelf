@@ -105,7 +105,8 @@ async function ensureUser() {
   if (state.user) return state.user;
   try {
     state.user = await api("/auth/me");
-  } catch {
+  } catch (error) {
+    if (error.status !== 401) throw error;
     state.user = null;
   }
   renderUserBox();
@@ -133,10 +134,12 @@ function renderUserBox() {
       } catch (error) { toast(error.message, "error"); }
     });
     box.querySelector("#logout-btn").addEventListener("click", async () => {
-      await api("/auth/logout", { method: "POST" });
-      state.user = null;
-      renderUserBox();
-      navigate("#/login");
+      try {
+        await api("/auth/logout", { method: "POST" });
+        state.user = null;
+        renderUserBox();
+        navigate("#/login");
+      } catch (error) { toast(error.message, "error"); }
     });
   } else {
     adminLink.hidden = true;
@@ -180,10 +183,12 @@ async function route() {
   const r = parseHash();
   state.route = r;
   const target = document.createElement("div");
+  target.setAttribute("aria-busy", "true");
   viewEl().replaceChildren(target);
   target.innerHTML = `<p class="empty" role="status">${t("加载中…")}</p>`;
   document.querySelectorAll("#nav a").forEach(link => {
-    const selected = link.hash === `#/${r.name}` || link.hash === `#/${r.name}s`;
+    const parent = {album:"albums", artist:"artists", tag:"tags", query:"queries", batch:"batches", library:"search", view:"search"};
+    const selected = link.hash === `#/${parent[r.name] || r.name}`;
     if (selected) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   });
@@ -216,9 +221,14 @@ async function route() {
     }
   } catch (e) {
     if (version !== routeVersion || (e && e.status === 401)) return;
-    console.error(e);
-    toast(e.message || t("出错了"), "error");
-    target.innerHTML = `<p class="empty error">${escapeHtml(e.message || t("出错了"))}</p>`;
+    target.innerHTML = `<section class="page-error" role="alert">
+      <h1>${t("无法加载此页面")}</h1><p>${escapeHtml(e.message || t("出错了"))}</p>
+      <p>${escapeHtml(e.nextStep || t("请稍后重试；仍失败时联系管理员。"))}</p>
+      <button class="btn primary" data-route-retry>${t("重试")}</button>
+      <a class="btn" href="#/home">${t("首页")}</a></section>`;
+    target.querySelector("[data-route-retry]").onclick = route;
+  } finally {
+    target.removeAttribute("aria-busy");
   }
 }
 
