@@ -6,6 +6,7 @@ import { t } from "./i18n.js";
 import {metadataHtml, bindMetadata} from "./metadata.js";
 import {formatTimestamp} from "./format.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
+import {ViewerLoader, decodeImage} from "./viewer-load.js";
 
 const SIZE_LABEL = { fit: t("适应"), fill: t("填满"), original: t("原图") };
 const SIZE_CYCLE = ["fit", "fill", "original"];
@@ -18,6 +19,20 @@ export function openViewer(source, index) {
   let detail = null;
   let closed = false;
   let showVersion = 0;
+  let frame = null, status = "", saving = false, closing = false;
+  let renderedId = null, renderedWithDetails = false, transparent = false;
+  const drafts = new Map();
+  const previews = new Map();
+  let prefetch = new AbortController();
+  const loader = new ViewerLoader({
+    read: (id, signal) => api(`/images/${id}`, {signal}),
+    decode: (item, mode, signal) => {
+      const url = imageMediaUrl(mode === "original" ? "original" : "preview", item);
+      const cached = previews.get(url);
+      previews.delete(url);
+      return cached || decodeImage(url, signal);
+    },
+  });
 
   const backdrop = document.createElement("div");
   backdrop.className = "viewer-backdrop";
@@ -30,59 +45,128 @@ export function openViewer(source, index) {
     localStorage.setItem("picshelf.panel", panelOpen ? "1" : "0");
   };
 
+  function captureDrafts() {
+    if (renderedId === null || !renderedWithDetails) return;
+    const values = {};
+    for (const input of backdrop.querySelectorAll(".viewer-panel input, .viewer-panel textarea, .viewer-panel select")) {
+      const key = input.id ? `#${input.id}` : input.name ? `[name="${input.name}"]` : null;
+      if (key && input.value) values[key] = input.value;
+    }
+    if (Object.keys(values).length) drafts.set(renderedId, values);
+    else drafts.delete(renderedId);
+  }
+
+  function setStatus(message) {
+    status = message;
+    const el = backdrop.querySelector(".viewer-status");
+    if (el) { el.textContent = message; el.hidden = !message; }
+  }
+
   async function show(i) {
     if (closed) return;
+    if (saving) { setStatus(t("正在保存，请稍候。")); return; }
+    captureDrafts();
     const version = ++showVersion;
+    loader.cancel(); prefetch.abort();
     try {
       if (i >= source.items.length && !source.loadedAll) await source.loadMore();
-    } catch (error) {
-      if (!closed && version === showVersion) toast(error.message, "error");
-      return;
-    }
-    if (closed || version !== showVersion || !source.items.length) return;
-    current = Math.max(0, Math.min(i, source.items.length - 1));
-    detail = null;
-    render();
-    const item = source.items[current];
-    try {
-      const loaded = await api(`/images/${item.id}`);
-      if (closed || version !== showVersion) return;
-      detail = loaded;
+      if (closed || version !== showVersion || !source.items.length) return;
+      current = Math.max(0, Math.min(i, source.items.length - 1));
+      detail = null; frame = null; status = t("加载中…");
       render();
-    } catch (e) {
+      const result = await loader.load(source.items[current].id, zoom);
+      if (!result || closed || version !== showVersion) return;
+      detail = result.detail; frame = result.image;
+      Object.assign(source.items[current], {favorite:detail.favorite, my_rating:detail.my_rating});
+      status = drafts.has(detail.id) ? t("输入尚未保存。") : "";
+      render();
+      if (!navigator.connection?.saveData) {
+        prefetch = new AbortController();
+        const signal = prefetch.signal;
+        const adjacent = [source.items[current + 1], source.items[current - 1]].filter(item => item && !item.missing);
+        const urls = adjacent.map(item => imageMediaUrl("preview", item));
+        for (const url of previews.keys()) if (!urls.includes(url)) previews.delete(url);
+        for (const url of urls) {
+          if (!previews.has(url)) decodeImage(url, signal).then(image => {
+            if (!closed && !signal.aborted) previews.set(url, image);
+          }).catch(() => {});
+        }
+      }
+    } catch (error) {
       if (closed || version !== showVersion) return;
-      const p = backdrop.querySelector(".viewer-panel");
-      if (p && !detail) p.innerHTML = t("<p class=\"muted\">信息加载失败：{v0}</p>", {v0: escapeHtml(e.message || e)});
-    }
-    // 预取相邻两张
-    for (const n of [current + 1, current - 1]) {
-      const it = source.items[n];
-      if (it) { const img = new Image(); img.src = imageMediaUrl("preview", it); }
+      detail = null; frame = null;
+      status = error.status !== undefined ? `${error.message} ${error.nextStep || ""}` : t("图片无法显示，请重试或跳到下一张。");
+      render();
+      backdrop.querySelector("#v-retry").hidden = false;
     }
   }
 
-  async function refresh() {
-    const item = source.items[current];
+  async function refresh(id = source.items[current]?.id) {
+    if (closed || id !== source.items[current]?.id) return;
+    const version = showVersion;
     try {
-      const loaded = await api(`/images/${item.id}`);
-      if (closed || source.items[current]?.id !== item.id) return;
+      const loaded = await api(`/images/${id}`);
+      if (closed || version !== showVersion || id !== source.items[current]?.id) return;
+      const kind = zoom === "original" ? "original" : "preview";
+      if (!detail || imageMediaUrl(kind, detail) !== imageMediaUrl(kind, loaded)) {
+        await show(current);
+        return;
+      }
       detail = loaded;
+      Object.assign(source.items[current], {favorite:detail.favorite, my_rating:detail.my_rating});
       render();
-    } catch { /* ignore */ }
-    if (source.onChange) source.onChange();
+    } catch (error) {
+      if (closed || version !== showVersion) return;
+      if ([401,403,404].includes(error.status)) { detail = null; frame = null; render(); }
+      setStatus(t("详情尚未刷新。已确认的保存仍有效，请刷新后核对。") + " " + error.message);
+      backdrop.querySelector("#v-retry").hidden = false;
+    }
+    source.onChange?.();
   }
 
   // ---------------------------------------------------------------- 渲染
 
   function render() {
     if (closed) return;
-    const focusedId = backdrop.contains(document.activeElement) ? document.activeElement.id : null;
+    captureDrafts();
+    const active = backdrop.contains(document.activeElement) ? document.activeElement : null;
+    const focusKey = active?.id ? `#${CSS.escape(active.id)}` : active?.name ? `[name="${CSS.escape(active.name)}"]`
+      : active?.dataset.rate ? `[data-rate="${active.dataset.rate}"]` : null;
     const item = source.items[current];
     if (!item) return;
+    const panelScroll = renderedId === item.id ? backdrop.querySelector(".viewer-panel")?.scrollTop || 0 : 0;
     const loaded = source.loadedAll ? t("共 {v0}", {v0: source.total}) : t("已加载 {v0} / 共 {v1}", {v0: source.items.length, v1: source.total});
-    backdrop.innerHTML = t("\n      <div class=\"viewer-top\">\n        <span class=\"title\">{v0}</span>\n        <span class=\"muted meta-count\">{v1} / {v2}（{loaded}）</span>\n        <div class=\"viewer-actions\">\n          <button class=\"btn small\" id=\"v-slideshow\">幻灯片</button>\n          <button class=\"btn small\" id=\"v-zoom\" title=\"切换显示尺寸 (z)\">尺寸：{v3}</button>\n          {v4}\n          <button class=\"btn small\" id=\"v-panel\" title=\"信息面板 (i)\">信息</button>\n          <a class=\"btn small\" href=\"{v5}?download=1\">下载原图</a>\n          <button class=\"btn small\" id=\"v-close\" title=\"关闭 (Esc)\">关闭 ✕</button>\n        </div>\n      </div>\n      <div class=\"viewer-body\">\n        <div class=\"viewer-stage size-{zoom}\">\n          <img src=\"{v6}\" alt=\"{v7}\">\n          <button class=\"nav-btn prev\" title=\"上一张 (←)\">‹</button>\n          <button class=\"nav-btn next\" title=\"下一张 (→)\">›</button>\n        </div>\n        <aside class=\"viewer-panel\" {v8}>{v9}</aside>\n      </div>", {v0: escapeHtml(item.filename), v1: current + 1, v2: source.items.length, loaded: loaded, v3: SIZE_LABEL[zoom], v4: can("rate") ? `<button class="btn small" id="v-fav" title="${t("收藏 (f)")}">${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}</button>` : "", v5: mediaUrl("original", item.id), zoom: zoom, v6: imageMediaUrl(zoom === "original" ? "original" : "preview", item), v7: escapeHtml(item.filename), v8: panelOpen ? "" : "hidden", v9: panelHtml(item)});
+    backdrop.innerHTML = `<div class="viewer-top">
+      <span class="title">${escapeHtml(item.filename)}</span><span class="muted meta-count">${current + 1} / ${source.items.length} (${loaded})</span>
+      <div class="viewer-actions">
+        <button class="btn small" id="v-slideshow">${t("幻灯片")}</button>
+        <button class="btn small" id="v-zoom">${t("尺寸：{value}", {value:SIZE_LABEL[zoom]})}</button>
+        <button class="btn small" id="v-bg" aria-pressed="${transparent}">${t("透明背景")}</button>
+        ${can("rate") ? `<button class="btn small" id="v-fav" aria-pressed="${!!item.favorite}" ${!detail ? "disabled" : ""}>${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}</button>` : ""}
+        <button class="btn small" id="v-panel" aria-expanded="${panelOpen}" aria-controls="viewer-details">${t("信息")}</button>
+        ${detail ? `<a class="btn small" href="${mediaUrl("original", item.id)}?download=1">${t("下载原图")}</a>` : ""}
+        <button class="btn small" id="v-close">${t("关闭")} ✕</button>
+      </div></div>
+      <p class="viewer-status" role="status" ${status ? "" : "hidden"}>${escapeHtml(status)}</p>
+      <button class="btn" id="v-retry" hidden>${t("重试")}</button>
+      <div class="viewer-body"><div class="viewer-stage size-${zoom} ${transparent ? "checkerboard" : ""}">
+        <button class="nav-btn prev" aria-label="${t("上一张")}" ${current === 0 ? "disabled" : ""}>‹</button>
+        <button class="nav-btn next" aria-label="${t("下一张")}" ${current >= source.total - 1 ? "disabled" : ""}>›</button>
+      </div><aside id="viewer-details" class="viewer-panel" ${panelOpen ? "" : "hidden"}>${detail ? panelHtml(item) : ""}</aside></div>`;
+    if (frame) {
+      frame.alt = detail.filename;
+      backdrop.querySelector(".viewer-stage").prepend(frame);
+    }
+    renderedId = item.id;
+    renderedWithDetails = !!detail;
+    for (const [key, value] of Object.entries(drafts.get(item.id) || {})) {
+      const input = backdrop.querySelector(key);
+      if (input) input.value = value;
+    }
     bind(item);
-    if (focusedId) backdrop.querySelector(`#${CSS.escape(focusedId)}`)?.focus({ preventScroll: true });
+    const panel = backdrop.querySelector(".viewer-panel");
+    panel.scrollTop = panelScroll;
+    if (focusKey && isTopDialog(backdrop)) backdrop.querySelector(focusKey)?.focus({preventScroll:true});
   }
 
   function panelHtml(item) {
@@ -108,18 +192,45 @@ export function openViewer(source, index) {
   function bind(item) {
     const q = (sel) => backdrop.querySelector(sel);
     q("#v-close").addEventListener("click", close);
+    q("#v-retry").onclick = () => show(current);
+    q("#v-bg").onclick = () => { transparent = !transparent; render(); };
+    async function write(path, options, clear = []) {
+      if (saving) throw new Error(t("正在保存，请稍候。"));
+      saving = true;
+      setStatus(t("正在保存，请稍候。"));
+      const controls = [...backdrop.querySelectorAll("button, input, select, textarea")].map(el => [el, el.disabled]);
+      controls.forEach(([el]) => { el.disabled = true; });
+      try {
+        const result = await api(path, options);
+        for (const selector of clear) backdrop.querySelectorAll(selector).forEach(el => { el.value = ""; });
+        captureDrafts();
+        setStatus(t("已保存"));
+        return result;
+      } catch (error) {
+        if ([401,403,404].includes(error.status)) { captureDrafts(); detail = null; frame = null; previews.clear(); render(); }
+        setStatus((error.status && error.status < 500 ? t("未保存，输入已保留。") : t("保存结果尚未确认，请先刷新详情核对，避免重复提交。")) + " " + error.message);
+        const retry = q("#v-retry");
+        retry.hidden = false;
+        const previous = controls.find(([el]) => el === retry);
+        if (previous) previous[1] = false;
+        throw error;
+      } finally {
+        saving = false;
+        controls.forEach(([el, disabled]) => { el.disabled = disabled; });
+      }
+    }
     q(".nav-btn.prev").addEventListener("click", () => show(current - 1));
     q(".nav-btn.next").addEventListener("click", () => show(current + 1));
     q("#v-slideshow").addEventListener("click", () => openSlideshow(source, current));
     q("#v-zoom").addEventListener("click", () => {
       zoom = SIZE_CYCLE[(SIZE_CYCLE.indexOf(zoom) + 1) % SIZE_CYCLE.length];
       savePrefs();
-      render();
+      show(current);
     });
     const favBtn = q("#v-fav");
     if (favBtn) favBtn.addEventListener("click", async () => {
       try {
-        const r = await api(`/images/${item.id}/favorite`, { method: "POST", body: {} });
+        const r = await write(`/images/${item.id}/favorite`, { method: "POST", body: {} });
         item.favorite = r.favorite ? 1 : 0;
         if (detail && source.items[current]?.id === item.id) detail.favorite = item.favorite;
         toast(r.favorite ? t("已收藏") : t("已取消收藏"), "ok");
@@ -131,14 +242,16 @@ export function openViewer(source, index) {
       panelOpen = !panelOpen;
       savePrefs();
       q(".viewer-panel").hidden = !panelOpen;
+      q("#v-panel").setAttribute("aria-expanded", String(panelOpen));
     });
 
     if (!detail) return;
-    bindMetadata(backdrop, detail, refresh);
+    q(".viewer-panel").addEventListener("input", () => setStatus(t("输入尚未保存。")));
+    bindMetadata(backdrop, detail, () => refresh(item.id), write);
     backdrop.querySelectorAll("[data-rate]").forEach((btn) => btn.addEventListener("click", async () => {
       const v = btn.dataset.rate === "clear" ? null : Number(btn.dataset.rate);
       try {
-        const r = await api(`/images/${item.id}/rating`, { method: "POST", body: { value: v } });
+        const r = await write(`/images/${item.id}/rating`, { method: "POST", body: { value: v } });
         item.my_rating = r.my_rating;
         if (source.onChange) source.onChange();
         if (closed || source.items[current]?.id !== item.id) return;
@@ -167,19 +280,19 @@ export function openViewer(source, index) {
         const name = tagInput.value.trim();
         if (!name) return;
         try {
-          await api(`/images/${item.id}/tags`, { method: "POST", body: { names: [name] } });
+          await write(`/images/${item.id}/tags`, { method: "POST", body: { names: [name] } }, ["#tag-input"]);
           toast(t("已添加标签：{name}", {name: name}), "ok");
-          await refresh();
+          await refresh(item.id);
         } catch (e) { toast(e.message, "error"); }
       };
       q("#tag-add").addEventListener("click", addTag);
-      tagInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addTag(); } });
+      tagInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addTag(); } });
     }
     backdrop.querySelectorAll("[data-untag]").forEach((btn) => btn.addEventListener("click", async () => {
       try {
-        await api(`/images/${item.id}/tags/${encodeURIComponent(btn.dataset.untag)}`, { method: "DELETE" });
+        await write(`/images/${item.id}/tags/${encodeURIComponent(btn.dataset.untag)}`, { method: "DELETE" });
         toast(t("已移除标签"), "ok");
-        await refresh();
+        await refresh(item.id);
       } catch (e) { toast(e.message, "error"); }
     }));
 
@@ -201,24 +314,25 @@ export function openViewer(source, index) {
         if (!name) return;
         try {
           const found = await api("/artists?limit=1&q=" + encodeURIComponent(name));
+          if (closed || source.items[current]?.id !== item.id || !artistInput.isConnected) return;
           let artistId = found[0] && found[0].name === name ? found[0].id : null;
           if (!artistId) {
-            const created = await api("/artists", { method: "POST", body: { name } });
+            const created = await write("/artists", { method: "POST", body: { name } });
             artistId = created.id;
           }
-          await api(`/images/${item.id}/artists`, { method: "POST", body: { artist_id: artistId, on: true } });
+          await write(`/images/${item.id}/artists`, { method: "POST", body: { artist_id: artistId, on: true } }, ["#artist-input"]);
           toast(t("已关联艺术家：{name}", {name: name}), "ok");
-          await refresh();
+          await refresh(item.id);
         } catch (e) { toast(e.message, "error"); }
       };
       q("#artist-add").addEventListener("click", addArtist);
-      artistInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); addArtist(); } });
+      artistInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addArtist(); } });
     }
     backdrop.querySelectorAll("[data-unartist]").forEach((btn) => btn.addEventListener("click", async () => {
       try {
-        await api(`/images/${item.id}/artists`, { method: "POST", body: { artist_id: Number(btn.dataset.unartist), on: false } });
+        await write(`/images/${item.id}/artists`, { method: "POST", body: { artist_id: Number(btn.dataset.unartist), on: false } });
         toast(t("已取消关联"), "ok");
-        await refresh();
+        await refresh(item.id);
       } catch (e) { toast(e.message, "error"); }
     }));
 
@@ -227,17 +341,20 @@ export function openViewer(source, index) {
       (async () => {
         try {
           const albums = await api(`/albums?library_id=${item.library_id}&kind=manual`);
+          if (!albumSelect.isConnected) return;
           albumSelect.innerHTML = t("<option value=\"\">加入手工专辑…</option>") +
             albums.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+          const selected = drafts.get(item.id)?.["#album-select"];
+          if (selected) albumSelect.value = selected;
         } catch { /* ignore */ }
       })();
       q("#album-add").addEventListener("click", async () => {
         const id = Number(albumSelect.value);
         if (!id) return;
         try {
-          await api(`/albums/${id}/images`, { method: "POST", body: { image_ids: [item.id] } });
+          await write(`/albums/${id}/images`, { method: "POST", body: { image_ids: [item.id] } }, ["#album-select"]);
           toast(t("已加入专辑"), "ok");
-          await refresh();
+          await refresh(item.id);
         } catch (e) { toast(e.message, "error"); }
       });
     }
@@ -247,17 +364,17 @@ export function openViewer(source, index) {
       const body = q("#comment-input").value.trim();
       if (!body) return;
       try {
-        await api(`/images/${item.id}/comments`, { method: "POST", body: { body } });
+        await write(`/images/${item.id}/comments`, { method: "POST", body: { body } }, ["#comment-input"]);
         toast(t("评论已发表"), "ok");
-        await refresh();
+        await refresh(item.id);
       } catch (e) { toast(e.message, "error"); }
     });
     backdrop.querySelectorAll("[data-del-comment]").forEach((btn) => btn.addEventListener("click", async () => {
       if (!(await uiConfirm(t("删除评论"), t("确认删除这条评论？")))) return;
       try {
-        await api(`/comments/${btn.dataset.delComment}`, { method: "DELETE" });
+        await write(`/comments/${btn.dataset.delComment}`, { method: "DELETE" });
         toast(t("评论已删除"), "ok");
-        await refresh();
+        await refresh(item.id);
       } catch (e) { toast(e.message, "error"); }
     }));
 
@@ -266,20 +383,20 @@ export function openViewer(source, index) {
       const body = q("#note-input").value.trim();
       if (!body) return;
       try {
-        await api(`/images/${item.id}/notes`, { method: "POST", body: { body } });
+        await write(`/images/${item.id}/notes`, { method: "POST", body: { body } }, ["#note-input"]);
         toast(t("笔记已添加"), "ok");
-        await refresh();
+        await refresh(item.id);
       } catch (e) { toast(e.message, "error"); }
     });
   }
 
   function onKey(e) {
-    if (!isTopDialog(backdrop) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!isTopDialog(backdrop) || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === " " && e.target.closest("button, a")) return;
-    if (e.target && ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+    if (e.target?.closest("input, textarea, select, [contenteditable=true]")) return;
     switch (e.key) {
       case "ArrowRight": case " ": e.preventDefault(); show(current + 1); break;
-      case "ArrowLeft": show(current - 1); break;
+      case "ArrowLeft": e.preventDefault(); show(current - 1); break;
       case "Escape": close(); break;
       case "f": backdrop.querySelector("#v-fav")?.click(); break;
       case "i": q_panel_toggle(); break;
@@ -289,9 +406,18 @@ export function openViewer(source, index) {
   }
   function q_panel_toggle() { backdrop.querySelector("#v-panel")?.click(); }
 
-  function close() {
-    if (closed) return;
+  async function close() {
+    if (closed || closing) return;
+    if (saving) { setStatus(t("正在保存，请稍候。")); return; }
+    captureDrafts();
+    if (drafts.size) {
+      closing = true;
+      const discard = await uiConfirm(t("离开查看器"), t("存在未保存输入。离开会丢弃这些输入，取消可继续编辑。"));
+      closing = false;
+      if (!discard) return;
+    }
     closed = true;
+    showVersion++; loader.cancel(); prefetch.abort(); previews.clear(); drafts.clear();
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     if (source.onChange) source.onChange();

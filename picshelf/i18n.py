@@ -65,6 +65,20 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "尺寸：{value}": "Size: {value}",
+    "透明背景": "Transparency grid",
+    "上一张": "Previous image",
+    "下一张": "Next image",
+    "正在保存，请稍候。": "Saving. Please wait.",
+    "输入尚未保存。": "There is unsaved input.",
+    "图片无法显示，请重试或跳到下一张。": "The image could not be displayed. Retry or skip to the next image.",
+    "详情尚未刷新。已确认的保存仍有效，请刷新后核对。": "Details have not refreshed. Confirmed changes remain saved; refresh to check them.",
+    "已保存": "Saved",
+    "未保存，输入已保留。": "Not saved. Your input has been kept.",
+    "保存结果尚未确认，请先刷新详情核对，避免重复提交。": "The save result is unconfirmed. Refresh details before retrying to avoid duplicate submissions.",
+    "离开查看器": "Leave viewer",
+    "存在未保存输入。离开会丢弃这些输入，取消可继续编辑。": "There is unsaved input. Leaving discards it; cancel to continue editing.",
+    "按住 Shift 选择已加载图片的连续范围。选择全部匹配后，先清空选择再单独勾选。": "Hold Shift to select a range of loaded images. Clear an all-matching selection before selecting individual images.",
     "主导航": "Main navigation",
     "无法加载此页面": "Unable to load this page",
     "连接中断，无法读取服务器。": "Connection interrupted. The server could not be reached.",

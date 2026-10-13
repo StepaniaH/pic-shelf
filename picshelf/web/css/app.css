@@ -334,3 +334,9 @@ details.batch-controls[open] { padding-bottom: .875rem; }
   .icon-btn:hover { color: var(--fg); }
   .tag-chip button:hover { color: var(--warn); }
 }
+
+.viewer-status { margin: .25rem 1rem; overflow-wrap: anywhere; color: var(--warn); }
+.viewer-stage img { flex-shrink: 0; }
+.viewer-stage.size-original { align-items: safe center; justify-content: safe center; }
+.viewer-stage.checkerboard { background-color: #999; background-image: conic-gradient(#bbb 25%, transparent 0 50%, #bbb 0 75%, transparent 0); background-size: 24px 24px; }
+.viewer-stage .nav-btn:disabled { opacity: .4; cursor: default; }

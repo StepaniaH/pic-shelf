@@ -104,8 +104,33 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   const refresh=document.createElement("button");refresh.className="btn";refresh.textContent=t("刷新结果");
   paging.append(policy,refresh);grid.before(paging);
   let updateSelection = () => {};
+  const markup = new Map();
   const paint = () => {
-    grid.innerHTML = source.items.map(cardHtml).join("") || (source.errors.length?"":`<p class="empty">${escapeHtml(source.emptyText)}</p>`);
+    if (!source.items.length) {
+      grid.innerHTML = source.errors.length ? "" : `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
+      markup.clear();
+    } else {
+      const existing = new Map([...grid.querySelectorAll(".card")].map(card => [Number(card.dataset.id), card]));
+      grid.querySelectorAll(":scope > .empty").forEach(el => el.remove());
+      let previous = null;
+      for (const item of source.items) {
+        const html = cardHtml(item);
+        let card = existing.get(item.id);
+        existing.delete(item.id);
+        if (!card || markup.get(item.id) !== html) {
+          const template = document.createElement("template");
+          template.innerHTML = html;
+          const fresh = template.content.firstElementChild;
+          if (card) card.replaceWith(fresh);
+          card = fresh;
+          markup.set(item.id, html);
+        }
+        const next = previous ? previous.nextElementSibling : grid.firstElementChild;
+        if (card !== next) grid.insertBefore(card, next);
+        previous = card;
+      }
+      for (const [id, card] of existing) { card.remove(); markup.delete(id); }
+    }
     view.querySelector("#count").textContent = t("共 {v0} 张", {v0: source.total});
     moreBtn.hidden = source.loadedAll || source.sort === "random";
     policy.textContent=t(source.sort==="random"?"随机发现每次重新抽样；播放会另建稳定队列。":"列表按当前目录分页；扫描或编辑改变结果后，请刷新再继续浏览。");
@@ -142,6 +167,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     if (idx >= 0) openViewer(source, idx);
   });
   grid.addEventListener("keydown", (e) => {
+    if(e.isComposing || e.keyCode === 229 || e.ctrlKey || e.altKey || e.metaKey)return;
     if(e.target.closest("input,label"))return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();

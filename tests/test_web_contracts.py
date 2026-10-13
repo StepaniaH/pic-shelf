@@ -139,3 +139,55 @@ assert.equal(logouts, 1);
     result = subprocess.run([node, "--input-type=module", "-e", script, module],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_viewer_frames_never_publish_late_or_half_loaded_images():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for viewer race scenarios")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/viewer-load.js").as_uri()
+    script = r'''
+const {ViewerLoader} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const deferred = () => {let resolve, reject; const promise = new Promise((a,b) => {resolve=a;reject=b}); return {promise,resolve,reject};};
+const reads = new Map(), decodes = new Map(), signals = new Map();
+const loader = new ViewerLoader({
+ read:(id,signal)=>{signals.set(id,signal);const d=deferred();reads.set(id,d);return d.promise;},
+ decode:(detail,mode)=>{const d=deferred();decodes.set(detail.id,{...d,mode});return d.promise;}
+});
+const first=loader.load(7,'fit');reads.get(7).resolve({id:7,filename:'A'});await Promise.resolve();
+const second=loader.load(9,'original');reads.get(9).resolve({id:9,filename:'B'});await Promise.resolve();
+assert(signals.get(7).aborted);
+let published=false;second.then(()=>published=true);await Promise.resolve();assert.equal(published,false);
+decodes.get(9).resolve('pixels B');assert.deepEqual(await second,{detail:{id:9,filename:'B'},image:'pixels B'});
+decodes.get(7).resolve('pixels A');assert.equal(await first,null);
+assert.equal(decodes.get(9).mode,'original');
+const broken=loader.load(11,'fit');reads.get(11).resolve({id:11});await Promise.resolve();
+decodes.get(11).reject(new Error('bad pixels'));await assert.rejects(broken,/bad pixels/);
+const gone=loader.load(12,'fit');loader.cancel();reads.get(12).resolve({id:12});assert.equal(await gone,null);
+assert(!decodes.has(12));
+'''
+    result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_range_selection_uses_only_loaded_order_and_preserves_other_pages():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for selection scenarios")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/selection.js").as_uri()
+    script = r'''
+const {ImageSelection}=await import(process.argv[1]);const {strict:assert}=await import('node:assert');
+const selection=new ImageSelection(), items=[{id:9},{id:4},{id:7},{id:2}];
+selection.toggle(101,true);
+selection.range(4,true,items,false);selection.range(2,true,items,true);
+assert.deepEqual([...selection.ids],[101,4,7,2]);
+selection.range(7,false,items,true);
+assert.deepEqual([...selection.ids],[101,4]);
+selection.range(9,true,[{id:9}],true);
+assert.deepEqual([...selection.ids],[101,4,9]);
+'''
+    result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

@@ -92,7 +92,7 @@ export function attachBatchControls(view,source,grid,refresh) {
     <button class="btn small" data-select-all>${t("选择全部匹配结果")}</button>
     <button class="btn small" data-select-clear>${t("清空选择")}</button><a href="#/batches">${t("批次记录")}</a></div>
     <p class="hint">${t("选择可跨加载页保留；全部匹配结果在预演时固定，预演后新增图片不进入批次。")}</p>
-    <div class="form-row"><label>${t("操作")} <select data-batch-operation>${operations.map(([value,label])=>`<option value="${value}">${t(label)}</option>`).join("")}</select></label>
+    <p class="hint">${t("按住 Shift 选择已加载图片的连续范围。选择全部匹配后，先清空选择再单独勾选。")}</p><div class="form-row"><label>${t("操作")} <select data-batch-operation>${operations.map(([value,label])=>`<option value="${value}">${t(label)}</option>`).join("")}</select></label>
     <label data-batch-value-label>${t("标签（每行一个）")} <textarea data-batch-names rows="2"></textarea></label>
     <label data-batch-target-label hidden>${t("目标")} <select data-batch-target></select></label>
     <label data-batch-rating-label hidden>${t("评分")} <input type="number" min="0" max="10" value="0" data-batch-rating></label>
@@ -107,12 +107,14 @@ export function attachBatchControls(view,source,grid,refresh) {
   const update = () => {
     bar.querySelector("[data-selection-count]").textContent = selection.allMatching
       ?t("全部匹配：{n} 张（预演时固定）",{n:source.total}):t("已选 {n} 张",{n:selection.ids.size});
-    grid.querySelectorAll("[data-select-image]").forEach(input=>{input.checked=selection.allMatching || selection.ids.has(Number(input.dataset.selectImage));});
+    grid.querySelectorAll("[data-select-image]").forEach(input=>{input.checked=selection.allMatching || selection.ids.has(Number(input.dataset.selectImage));input.disabled=selection.allMatching;});
     bar.querySelector("[data-batch-preview]").disabled = !selection.allMatching && !selection.ids.size;
   };
+  let extendSelection = false;
+  grid.addEventListener("click",event=>{if(event.target.matches("[data-select-image]"))extendSelection=event.shiftKey;});
   grid.addEventListener("change",event=>{
     const input=event.target.closest("[data-select-image]");
-    if(input){selection.toggle(Number(input.dataset.selectImage),input.checked);if(input.checked)bar.open=true;invalidate();update();}
+    if(input){selection.range(Number(input.dataset.selectImage),input.checked,source.items,extendSelection);extendSelection=false;if(input.checked)bar.open=true;invalidate();update();}
   });
   for(const [name,fn] of [["loaded",()=>selection.loaded(source.items)],["all",()=>selection.all()],["clear",()=>selection.clear()]]) {
     bar.querySelector(`[data-select-${name}]`).onclick=()=>{fn();invalidate();update();};

@@ -31,12 +31,12 @@ export function metadataHtml(image) {
     </section>`;
 }
 
-export function bindMetadata(panel, image, refresh) {
+export function bindMetadata(panel, image, refresh, write = api) {
   const workflow = panel.querySelector("[data-workflow]");
   if (workflow) workflow.onclick = async () => {
     workflow.disabled = true;
     try {
-      await api("/metadata/workflow", {method: "POST", body: {image_ids: [image.id], state: workflow.dataset.workflow}});
+      await write("/metadata/workflow", {method: "POST", body: {image_ids: [image.id], state: workflow.dataset.workflow}});
       if (workflow.isConnected) await refresh();
     } catch (error) { toast(error.message, "error"); workflow.disabled = false; }
   };
@@ -47,7 +47,8 @@ export function bindMetadata(panel, image, refresh) {
     button.disabled = true;
     const body = Object.fromEntries([...new FormData(form)].map(([key, value]) => [key, value.trim() || null]));
     try {
-      await api(`/images/${image.id}/sources`, {method: "POST", body});
+      await write(`/images/${image.id}/sources`, {method: "POST", body});
+      form.reset();
       if (form.isConnected) await refresh();
     } catch (error) { toast(error.message, "error"); button.disabled = false; }
   };
@@ -55,7 +56,7 @@ export function bindMetadata(panel, image, refresh) {
     button.onclick = async () => {
       button.disabled = true;
       try {
-        await api(`/tag-claims/${button.dataset.confirmClaim}/confirm`, {method: "POST"});
+        await write(`/tag-claims/${button.dataset.confirmClaim}/confirm`, {method: "POST"});
         if (button.isConnected) await refresh();
       } catch (error) { toast(error.message, "error"); button.disabled = false; }
     };

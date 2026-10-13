@@ -23,6 +23,24 @@ A connection failure keeps your account state and offers Retry. A permission err
 includes the server's recovery advice. Retrying reads the current permissions;
 it does not grant access to unavailable content.
 
+The viewer publishes an image together with its matching details after decoding.
+Failed images have Retry and next-image controls. Preview images are used by
+default; Original size and Download request the original file. The transparency
+grid is optional. At most two neighboring previews are prefetched, and that
+prefetch is disabled when the browser requests reduced data usage. Reused pixels
+stay inside the open viewer; every selection still checks current access.
+
+Unsaved form input stays with its image while you navigate within the viewer.
+Closing asks before discarding it. A failed save preserves the input; an uncertain
+network result asks you to refresh and check before submitting again. A confirmed
+save remains effective even if refreshing details subsequently fails. Drafts are
+kept only while the viewer is open, not across a browser reload.
+
+Shift-click selects a range of loaded images in the displayed order. Selections
+from other loaded pages remain selected. To switch from all matching results to
+individual images, clear the selection first. Closing the viewer returns focus
+to its opening card and retains the list's search and selection.
+
 ## Commands
 
 Use `picshelf --help` and `picshelf <command> --help` for the complete options. In a source checkout, the executable is `.venv/bin/picshelf`. Global options, including `--data` and `--lang`, precede the command.

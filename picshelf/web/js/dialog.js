@@ -1,6 +1,6 @@
 // Shared focus and keyboard handling for nested dialogs, viewers and slideshows.
 const stack = [];
-const focusable = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+const focusable = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
 export function isTopDialog(root) { return stack.at(-1) === root; }
 
@@ -31,7 +31,7 @@ export function activateDialog(root, close) {
     .filter(el => !el.disabled && !el.closest("[hidden], [inert]") && el.getClientRects().length);
   const focus = () => (targets()[0] || root).focus({ preventScroll: true });
   function onKey(event) {
-    if (!isTopDialog(root)) return;
+    if (!isTopDialog(root) || event.isComposing || event.keyCode === 229) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -49,7 +49,10 @@ export function activateDialog(root, close) {
   queueMicrotask(() => {
     if (root.isConnected && isTopDialog(root) && !root.contains(document.activeElement)) focus();
   });
+  let released = false;
   return () => {
+    if (released) return;
+    released = true;
     document.removeEventListener("keydown", onKey, true);
     stack.splice(stack.indexOf(root), 1);
     for (const [node, previous] of inert) node.inert = previous;
