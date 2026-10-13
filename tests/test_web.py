@@ -100,15 +100,17 @@ def sign_in(page, web_server, language="en"):
 def test_import_executes_saved_preview_and_requires_new_preview_after_option_change(page, web_server):
     from playwright.sync_api import expect
     sign_in(page, web_server)
-    library = page.evaluate("""async (root) => {
-      const { api } = await import('/js/api.js');
-      return await api('/libraries', {method:'POST', body:{name:'Managed import test',root_path:root}});
-    }""", str(web_server.import_target))
-    page.goto(web_server.url + "/#/admin")
+    page.goto(web_server.url + "/#/admin?tab=libraries")
+    page.locator("#nl-name").fill("Managed import test")
+    page.locator("#nl-path").fill(str(web_server.import_target))
+    page.locator("#nl-mode").select_option("managed")
+    page.locator("#nl-default").select_option("copy")
+    page.locator("#nl-create").click()
+    expect(page.locator(".grant-item").filter(has_text="Managed import test")).to_be_visible()
     page.locator('[data-tab="import"]').click()
     page.locator("#imp-src").fill(str(web_server.import_source))
-    page.locator("#imp-lib").select_option(str(library["id"]))
-    page.locator("#imp-mode").select_option("copy")
+    page.locator("#imp-lib").select_option(label="Managed import test (0 images)")
+    expect(page.locator("#imp-mode")).to_have_value("copy")
     page.locator("#imp-plan").click()
     expect(page.locator("#imp-exec")).to_be_enabled()
     page.locator("#imp-mode").select_option("move")
@@ -127,6 +129,37 @@ def test_import_executes_saved_preview_and_requires_new_preview_after_option_cha
     expect(row).to_contain_text("Succeeded")
     row.locator("[data-view]").click()
     expect(page.locator(".job-progress")).to_contain_text("Processed 1/1")
+
+
+def test_empty_catalog_guides_server_path_registration_scan_and_tasks(page, tmp_path):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / "data").ensure()
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        password = secrets.token_urlsafe(24)
+        auth.create_user(conn, "browser-test", password, is_admin=True)
+    root = tmp_path / "originals"
+    make_image(root / "only.png", (5, 90, 130), size=(80, 60))
+    original = (root / "only.png").read_bytes()
+    with http_server(cfg) as client:
+        sign_in(page, WebServer(str(client.base_url), password, root, root))
+        expect(page.get_by_role("heading", name="Get started")).to_be_visible()
+        page.locator('a[href="#/admin?tab=libraries"]').click()
+        expect(page.get_by_text("Local browser files are not uploaded.", exact=False)).to_be_visible()
+        page.locator("#nl-name").fill("Read in place")
+        page.locator("#nl-path").fill(str(root))
+        expect(page.locator("#nl-mode")).to_have_value("indexed")
+        page.locator("#nl-create").click()
+        library = page.locator(".grant-item").filter(has_text="Read in place")
+        library.locator("[data-scan]").click()
+        expect(library.locator("[data-scan]")).to_be_enabled(timeout=10000)
+        library.get_by_role("link", name="Read in place", exact=True).click()
+        expect(page.locator("#grid .card")).to_have_count(1)
+        assert "-d2" in page.locator("#grid .card img").get_attribute("src")
+        page.goto(str(client.base_url) + "/#/admin?tab=jobs")
+        expect(page.locator("tr[data-job]").filter(has_text="Scan")).to_contain_text("Succeeded")
+    assert (root / "only.png").read_bytes() == original
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

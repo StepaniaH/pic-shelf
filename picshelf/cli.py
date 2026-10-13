@@ -166,7 +166,7 @@ def _lang_cb(ctx: click.Context, param: click.Parameter, value: str | None):
 
 @click.group(cls=_I18nGroup, context_settings=CONTEXT_SETTINGS)
 @click.option("--data", "data_dir", default=None, envvar="PICSHELF_DATA",
-              help="数据目录（默认：项目内 ./data）")
+              help="数据目录（源码运行默认项目内 ./data；安装包需明确指定）")
 @click.option("--lang", type=click.Choice(["zh", "en"]), default=None,
               is_eager=True, callback=_lang_cb,
               help="界面语言：zh / en（默认跟随系统 locale）")
@@ -238,10 +238,14 @@ def library():
 @click.argument("path", type=click.Path())
 @click.option("--description", default=None)
 @click.option("--mkdir", "make_dir", is_flag=True, help="目录不存在时自动创建（托管库推荐）")
+@click.option("--mode", type=click.Choice(["indexed", "managed"]), default=None,
+              help="indexed=只索引；managed=托管收纳；省略保留兼容行为")
+@click.option("--default-import-mode", type=click.Choice(["hardlink", "copy", "move"]), default="hardlink", show_default=True)
 @click.pass_obj
-def library_add(cfg: Config, name: str, path: str, description: str | None, make_dir: bool):
+def library_add(cfg: Config, name: str, path: str, description: str | None, make_dir: bool,
+                mode: str | None, default_import_mode: str):
     """注册一个图片库（只索引，不移动文件）。"""
-    root = Path(path).expanduser().resolve()
+    root = Path(path).expanduser().absolute()
     if not root.is_dir():
         if make_dir:
             root.mkdir(parents=True, exist_ok=True)
@@ -249,11 +253,28 @@ def library_add(cfg: Config, name: str, path: str, description: str | None, make
             raise click.ClickException(t("目录不存在：{root}（加 --mkdir 可自动创建）", root=root))
     conn = _conn(cfg)
     try:
-        lib_id = libsvc.create_library(conn, name, str(root), description)
+        lib_id = libsvc.create_library(conn, name, str(root), description, mode=mode,
+                                      default_import_mode=default_import_mode)
     except sqlite3.IntegrityError:
         raise click.ClickException(t("库名已存在：{name}", name=name))
     click.echo(t("已注册库 #{lib_id} {name} → {root}", lib_id=lib_id, name=name, root=root))
     click.echo(t("下一步：picshelf scan {name}", name=name))
+
+
+@library.command("configure")
+@click.argument("library_name")
+@click.option("--mode", type=click.Choice(["indexed", "managed"]))
+@click.option("--default-import-mode", type=click.Choice(["hardlink", "copy", "move"]))
+@click.pass_obj
+def library_configure(cfg: Config, library_name: str, mode: str | None, default_import_mode: str | None):
+    """设置库用途与默认导入方式，不移动或重写原文件。"""
+    conn = _conn(cfg)
+    library = libsvc.find_library(conn, library_name)
+    if library is None:
+        raise click.ClickException(t("库不存在"))
+    changes = {key: value for key, value in {"mode": mode, "default_import_mode": default_import_mode}.items() if value is not None}
+    result = libsvc.update_library(conn, cfg, AccessContext(_acting_user(conn)["id"], local_admin=True), library["id"], **changes)
+    click.echo(json.dumps(result, ensure_ascii=False))
 
 
 @library.command("list")
@@ -887,8 +908,7 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
 @main.command("import")
 @click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
 @click.argument("library_name")
-@click.option("--mode", type=click.Choice(["hardlink", "copy", "move"]), default="hardlink",
-              show_default=True,
+@click.option("--mode", type=click.Choice(["hardlink", "copy", "move"]), default=None,
               help="hardlink=原文件不动且零额外空间（跨盘自动降级 copy）；copy=复制留档；move=移入整理")
 @click.option("--rename/--keep-names", default=True, show_default=True,
               help="文件名规范化（去掉文件系统危险字符）")
@@ -908,6 +928,7 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
     try:
         access = AccessContext(_acting_user(conn)["id"], local_admin=True)
         plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename)
+        mode = plan["mode"]
     except ValueError as exc:
         raise click.ClickException(str(exc))
 

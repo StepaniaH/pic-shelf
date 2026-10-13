@@ -37,6 +37,13 @@ export async function api(path, { method = "GET", body } = {}) {
 export const mediaUrl = (kind, id, version) => `${BASE}/media/${kind}/${id}`
   + (version ? `?v=${encodeURIComponent(version.slice(0, 16))}` : "");
 
+export function imageMediaUrl(kind, image) {
+  if (image[`${kind}_url`]) return image[`${kind}_url`];
+  const url = mediaUrl(kind, image.id, image.sha256);
+  return kind !== "original" && image.sha256
+    ? `${url}-d${image.derivative_version ?? 0}` : url;
+}
+
 // 构造 /images 查询串
 export function imagesQuery({ q = "", sort = "newest", limit = 120, offset = 0, ...rest } = {}) {
   const p = new URLSearchParams();

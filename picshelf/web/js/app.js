@@ -187,7 +187,7 @@ async function route() {
       case "favorites": await views.renderFavorites(target); break;
       case "search": await views.renderSearch(target, r.params.get("q") || ""); break;
       case "library": await views.renderLibrary(target, Number(r.id)); break;
-      case "admin": await renderAdmin(target); break;
+      case "admin": await renderAdmin(target, r.params); break;
       case "view": await views.renderDeepLink(target, Number(r.id), r.params); break;
       default: await views.renderHome(target);
     }

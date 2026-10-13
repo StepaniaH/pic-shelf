@@ -1,9 +1,10 @@
 // 视图：首页 / 专辑 / 艺术家 / 标签 / 收藏 / 搜索 / 库 / 深链
-import { api, mediaUrl, imagesQuery } from "./api.js";
+import { api, mediaUrl, imageMediaUrl, imagesQuery } from "./api.js";
 import { state, escapeHtml, navigate, toast, can, uiConfirm, refreshChrome } from "./app.js";
 import { openViewer } from "./viewer.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
+import { jobKey, watchJob } from "./jobs.js";
 
 export function fmtSize(n) {
   if (!n && n !== 0) return "—";
@@ -67,7 +68,7 @@ function cardHtml(item) {
   const rating = item.my_rating >= 0 ? `<span class="badge rated">${item.my_rating}</span>` : "";
   const fav = item.favorite ? `<span class="badge fav">★</span>` : "";
   return `<figure class="card" data-id="${item.id}" tabindex="0" role="button" aria-label="${escapeHtml(item.filename)}">
-    <img src="${mediaUrl("thumb", item.id, item.sha256)}" alt="" loading="lazy" decoding="async">
+    <img src="${imageMediaUrl("thumb", item)}" alt="" loading="lazy" decoding="async">
     <figcaption><span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
     <span class="badges">${rating}${fav}</span></figcaption></figure>`;
 }
@@ -174,11 +175,27 @@ export async function renderHome(view) {
           ${state.user.is_admin ? `<button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>` : ""}
         </div>
       </div>`).join("") || `<p class="empty">${t("还没有库。管理员可在「管理 → 库」中注册目录。")}</p>`});
+  if (state.user.is_admin && stats.images === 0) {
+    const onboarding = document.createElement("section");
+    onboarding.className = "lib-card";
+    onboarding.innerHTML = `<h2>${t("开始使用图片库")}</h2>
+      <p>${t("先注册服务端目录。只索引库扫描原目录；托管库先预演导入，确认后再执行。")}</p>
+      <div class="form-row"><a class="btn primary" href="#/admin?tab=libraries">${t("创建库")}</a>
+      <a class="btn" href="#/admin?tab=import">${t("预演导入")}</a>
+      <a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a></div>`;
+    view.querySelector(".page-head").after(onboarding);
+  }
   view.querySelectorAll("[data-scan]").forEach((btn) => btn.addEventListener("click", async () => {
     btn.disabled = true;
     btn.textContent = t("扫描中…");
     try {
-      const stats2 = await api(`/libraries/${btn.dataset.scan}/scan`, { method: "POST" });
+      const queued = await api(`/libraries/${btn.dataset.scan}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
+      const target = document.createElement("div");
+      btn.parentElement.after(target);
+      const status = await watchJob(queued.id, target);
+      if (!status || !btn.isConnected) return;
+      const stats2 = status.result;
+      if (!stats2) return;
       toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: stats2.added, v1: stats2.updated, v2: stats2.moved, v3: stats2.missing}), "ok");
       await renderHome(view);
     } catch (e) {
@@ -306,12 +323,25 @@ export async function renderLibrary(view, libraryId) {
   renderGridInto(view, source, {
     headerExtraHtml: t("<a class=\"btn small\" href=\"#/albums?library_id={libraryId}\">专辑</a>{scanBtn}{last}", {libraryId: libraryId, scanBtn: scanBtn, last: last}),
   });
+  if (canManage && source.total === 0) {
+    const next = document.createElement("div");
+    next.className = "form-row";
+    next.innerHTML = `${lib.mode !== "indexed" ? `<a class="btn" href="#/admin?tab=import&library=${libraryId}">${t("预演导入")}</a>` : ""}
+      <a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a>`;
+    view.querySelector(".page-head").after(next);
+  }
   const scanEl = view.querySelector("#lib-scan");
   if (scanEl) scanEl.addEventListener("click", async () => {
     scanEl.disabled = true;
     scanEl.textContent = t("扫描中…");
     try {
-      const s = await api(`/libraries/${libraryId}/scan`, { method: "POST" });
+      const queued = await api(`/libraries/${libraryId}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
+      const target = document.createElement("div");
+      view.querySelector(".page-head").after(target);
+      const status = await watchJob(queued.id, target);
+      if (!status || !scanEl.isConnected) return;
+      const s = status.result;
+      if (!s) return;
       toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: s.added, v1: s.updated, v2: s.moved, v3: s.missing}), "ok");
       await renderLibrary(view, libraryId);
     } catch (e) {

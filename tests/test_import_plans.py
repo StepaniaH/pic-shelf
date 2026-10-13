@@ -336,7 +336,11 @@ def test_physical_root_alias_shares_lock_but_another_library_can_scan(workspace,
     cfg, conn, access, source, target, lid, _ = workspace
     alias = tmp_path / "alias"
     alias.symlink_to(target, target_is_directory=True)
-    alias_id = libsvc.create_library(conn, "alias", str(alias))
+    # A historical catalog may contain aliases. New registrations reject them,
+    # but old aliases must still share the physical-root lock after upgrade.
+    alias_id = conn.execute("INSERT INTO libraries(name,root_path,created_at) VALUES(?,?,?)",
+                            ("alias", str(alias), db.utcnow())).lastrowid
+    conn.commit()
     other = tmp_path / "other"
     draw_image(other / "one.png", 8)
     other_id = libsvc.create_library(conn, "other", str(other))

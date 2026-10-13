@@ -10,7 +10,7 @@ const CAP_LABEL = {
 };
 const ALL_CAPS = Object.keys(CAP_LABEL);
 
-export async function renderAdmin(view) {
+export async function renderAdmin(view, params = new URLSearchParams()) {
   if (!state.user.is_admin) {
     view.innerHTML = t("<p class=\"empty\">需要管理员权限。</p>");
     return;
@@ -26,12 +26,13 @@ export async function renderAdmin(view) {
     view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
     if (t === "users") await renderUsers(body);
     else if (t === "groups") await renderGroups(body, () => setTab("groups"));
-    else if (t === "import") await renderImport(body);
+    else if (t === "import") await renderImport(body, params.get("library"));
     else if (t === "jobs") await renderJobs(body);
     else await renderLibraries(body);
   };
   view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
-  await setTab("users");
+  const libs = await api("/libraries");
+  await setTab(params.get("tab") || (libs.length ? "users" : "libraries"));
 }
 
 // ---------------------------------------------------------------- 用户
@@ -185,23 +186,65 @@ async function renderGroups(body) {
 
 async function renderLibraries(body) {
   const [libs, groups] = await Promise.all([api("/libraries"), api("/groups")]);
-  body.innerHTML = t("\n    <h2>库</h2>\n    <div class=\"form-row\">\n      <input id=\"nl-name\" placeholder=\"库名\" style=\"width:140px\">\n      <input id=\"nl-path\" placeholder=\"/绝对路径/到/图片目录\" style=\"width:320px\">\n      <input id=\"nl-desc\" placeholder=\"描述（可选）\">\n      <button class=\"btn primary\" id=\"nl-create\">注册库</button>\n    </div>\n    {v0}", {v0: libs.map((l) => `
+  body.innerHTML = `
+    <h2>${t("库")}</h2>
+    <p class="hint">${t("填写运行 Pic Shelf 的服务端目录；容器内使用挂载后的路径，浏览器本地文件不会自动上传。")}</p>
+    <div class="form-row">
+      <label>${t("库名")} <input id="nl-name" required></label>
+      <label>${t("服务端目录")} <input id="nl-path" placeholder="/path/to/images" required></label>
+      <label>${t("用途")} <select id="nl-mode">
+        <option value="indexed">${t("只索引（保留原目录）")}</option>
+        <option value="managed">${t("托管收纳（接收导入）")}</option>
+      </select></label>
+      <label id="nl-default-label" hidden>${t("默认导入方式")} <select id="nl-default">
+        <option value="hardlink">${t("硬链接")}</option><option value="copy">${t("复制")}</option><option value="move">${t("移动")}</option>
+      </select></label>
+      <label>${t("描述（可选）")} <input id="nl-desc"></label>
+      <button class="btn primary" id="nl-create">${t("注册库")}</button>
+    </div>
+    <p class="hint">${t("只索引库仅在数据目录保存索引和整理信息；托管库允许导入。注册和修改用途都不会搬动原文件。")}</p>
+    <div class="form-row"><a class="btn" href="#/admin?tab=import">${t("预演导入")}</a><a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a></div>
+    ${libs.map((l) => `
       <div class="grant-item" style="margin-bottom:12px">
         <div class="form-row">
-          <b>${escapeHtml(l.name)}</b>
+          <a href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
           <span class="muted">${escapeHtml(l.root_path)}</span>
           <span class="pill">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</span>
+          <label>${t("用途")} <select data-mode="${l.id}">
+            ${l.mode == null ? `<option value="">${t("历史库（保留原行为）")}</option>` : ""}
+            <option value="indexed" ${l.mode === "indexed" ? "selected" : ""}>${t("只索引（保留原目录）")}</option>
+            <option value="managed" ${l.mode === "managed" ? "selected" : ""}>${t("托管收纳（接收导入）")}</option>
+          </select></label>
+          <label>${t("默认导入方式")} <select data-default="${l.id}">
+            ${["hardlink", "copy", "move"].map(m => `<option value="${m}" ${l.default_import_mode === m ? "selected" : ""}>${t({hardlink:"硬链接",copy:"复制",move:"移动"}[m])}</option>`).join("")}
+          </select></label>
+          <button class="btn small" data-save-mode="${l.id}">${t("保存设置")}</button>
           <button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>
+          ${l.mode !== "indexed" ? `<a class="btn small" href="#/admin?tab=import&library=${l.id}">${t("预演导入")}</a>` : ""}
         </div>
         <div class="grant-grid" data-grants="${l.id}">${t("加载授权…")}</div>
-      </div>`).join("") || `<p class="empty">${t("还没有库。在上方注册图片目录。")}</p>`});
+      </div>`).join("") || `<p class="empty">${t("还没有库。在上方注册图片目录。")}</p>`}`;
+  body.querySelector("#nl-mode").addEventListener("change", (event) => {
+    body.querySelector("#nl-default-label").hidden = event.target.value !== "managed";
+  });
+  body.querySelectorAll("[data-save-mode]").forEach(button => button.addEventListener("click", async () => {
+    const id = button.dataset.saveMode;
+    const mode = body.querySelector(`[data-mode="${id}"]`).value || null;
+    const default_import_mode = body.querySelector(`[data-default="${id}"]`).value;
+    button.disabled = true;
+    try {
+      await api(`/libraries/${id}`, {method: "PATCH", body: {mode, default_import_mode}});
+      toast(t("库设置已保存"), "ok");
+      await renderLibraries(body);
+    } catch (error) { toast(error.message, "error"); button.disabled = false; }
+  }));
 
   body.querySelector("#nl-create").addEventListener("click", async () => {
     const name = body.querySelector("#nl-name").value.trim();
     const root_path = body.querySelector("#nl-path").value.trim();
     const description = body.querySelector("#nl-desc").value.trim() || null;
     try {
-      await api("/libraries", { method: "POST", body: { name, root_path, description } });
+      await api("/libraries", { method: "POST", body: { name, root_path, description, mode: body.querySelector("#nl-mode").value, default_import_mode: body.querySelector("#nl-default").value } });
       toast(t("已注册库：{name}", {name: name}), "ok");
       await renderLibraries(body);
     } catch (e) { toast(e.message, "error"); }
@@ -249,13 +292,32 @@ async function renderLibraries(body) {
 
 // ---------------------------------------------------------------- 托管导入
 
-async function renderImport(body) {
-  const libs = await api("/libraries");
-  body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把外部目录的图片导入到托管的库。默认「硬链接」：原文件不动、库内出现规范化命名、同盘零额外空间（跨盘自动降级为复制）。先「预演」，确认无误后再「执行」。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}${t("（{n} 张）", {n: l.image_count})}</option>`).join(""), v1: libs.length ? "" : `<span class="muted">${t("提示：先到「库」标签页注册一个目标库。")}</span>`});
+async function renderImport(body, selectedLibrary) {
+  const libs = (await api("/libraries")).filter(library => library.mode !== "indexed");
+  body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把服务端目录的图片导入目标库。导入方式取自库设置，也可单次调整。先「预演」，确认无误后再「执行」；移动会移除源文件。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}${t("（{n} 张）", {n: l.image_count})}</option>`).join(""), v1: libs.length ? "" : `<span class="muted">${t("提示：先到「库」标签页注册一个目标库。")}</span>`});
 
   let plan = null;
   let plannedInput = null;
   let executing = false;
+  const pathHint = document.createElement("p");
+  pathHint.className = "hint";
+  pathHint.textContent = t("填写运行 Pic Shelf 的服务端目录；容器内使用挂载后的路径，浏览器本地文件不会自动上传。");
+  body.querySelector("h2").after(pathHint);
+  const librarySelect = body.querySelector("#imp-lib");
+  if (libs.some(library => String(library.id) === selectedLibrary)) librarySelect.value = selectedLibrary;
+  const applyDefault = () => {
+    const library = libs.find(item => String(item.id) === librarySelect.value);
+    body.querySelector("#imp-mode").value = library?.default_import_mode || "hardlink";
+  };
+  applyDefault();
+  librarySelect.addEventListener("change", applyDefault);
+  body.querySelector("#imp-plan").disabled = !libs.length;
+  if (!libs.length) {
+    const create = document.createElement("a");
+    create.href = "#/admin?tab=libraries";
+    create.textContent = t("创建托管库");
+    pathHint.after(create);
+  }
   const out = body.querySelector("#imp-out");
   const execBtn = body.querySelector("#imp-exec");
   const inputControls = [...body.querySelectorAll("#imp-src, #imp-lib, #imp-mode, #imp-rename, #imp-plan")];

@@ -1,13 +1,18 @@
 """运行配置：数据目录解析与各子路径。
 
-优先级：显式参数 > 环境变量 PICSHELF_DATA > 仓库内 ./data
-（默认值锚定在仓库目录，保证从任意 cwd 运行都落在项目文件夹内。）
+优先级：显式参数 > 环境变量 PICSHELF_DATA > 可识别源码目录内 ./data。
+安装包要求显式指定数据目录，不写 site-packages 或静默新建另一套数据。
 """
 from __future__ import annotations
 
 import os
+import tempfile
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from .errors import ServiceError
+from .i18n import t
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 39431
@@ -49,15 +54,21 @@ class Config:
         return self.data_dir / "exports"
 
     def ensure(self) -> "Config":
-        for d in (
-            self.data_dir,
-            self.media_dir,
-            self.thumbs_dir,
-            self.previews_dir,
-            self.playlists_dir,
-            self.exports_dir,
-        ):
-            d.mkdir(parents=True, exist_ok=True)
+        try:
+            for d in (
+                self.data_dir,
+                self.media_dir,
+                self.thumbs_dir,
+                self.previews_dir,
+                self.playlists_dir,
+                self.exports_dir,
+            ):
+                d.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryFile(dir=self.data_dir):
+                pass
+        except OSError as exc:
+            raise ServiceError("data_directory_unwritable", t("指定的数据目录不可写"),
+                               next_step=t("请修复目录权限，或明确指定可写目录：picshelf --data <数据目录> init")) from exc
         return self
 
     @classmethod
@@ -67,4 +78,12 @@ class Config:
         env = os.environ.get(ENV_DATA)
         if env:
             return cls(Path(env).expanduser().resolve())
+        try:
+            project = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text())
+            source_checkout = project.get("project", {}).get("name") == "pic-shelf" and (REPO_ROOT / "picshelf").is_dir()
+        except (OSError, ValueError):
+            source_checkout = False
+        if not source_checkout:
+            raise ServiceError("data_directory_required", t("安装包需要明确的数据目录"),
+                               next_step=t("请先运行 picshelf --data <数据目录> init，并在后续命令中使用同一路径或设置 PICSHELF_DATA"))
         return cls(REPO_ROOT / "data")

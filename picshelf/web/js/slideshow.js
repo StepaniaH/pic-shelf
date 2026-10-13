@@ -1,5 +1,5 @@
 // 幻灯片：设置弹窗 + 全屏播放（服务端队列驱动）。
-import { api, mediaUrl } from "./api.js";
+import { api, imageMediaUrl } from "./api.js";
 import { escapeHtml, toast, showModal } from "./app.js";
 import { t } from "./i18n.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
@@ -111,7 +111,7 @@ async function startSlideshow(source, opts) {
       if (r.image) {
         lastImage = r.image;
         position = r.position;
-        imgEl.src = mediaUrl(opts.size === "original" ? "original" : "preview", r.image.id, r.image.sha256);
+        imgEl.src = imageMediaUrl(opts.size === "original" ? "original" : "preview", r.image);
         imgEl.alt = r.image.filename;
         renderCaption();
       }

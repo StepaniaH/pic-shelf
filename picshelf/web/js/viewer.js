@@ -1,5 +1,5 @@
 // 查看器：大图 + 信息面板（评分/标签/艺术家/专辑/评论/笔记/元数据）。
-import { api, mediaUrl } from "./api.js";
+import { api, mediaUrl, imageMediaUrl } from "./api.js";
 import { escapeHtml, toast, can, state, uiConfirm } from "./app.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
@@ -55,7 +55,7 @@ export function openViewer(source, index) {
     // 预取相邻两张
     for (const n of [current + 1, current - 1]) {
       const it = source.items[n];
-      if (it) { const img = new Image(); img.src = mediaUrl("preview", it.id, it.sha256); }
+      if (it) { const img = new Image(); img.src = imageMediaUrl("preview", it); }
     }
   }
 
@@ -78,7 +78,7 @@ export function openViewer(source, index) {
     const item = source.items[current];
     if (!item) return;
     const loaded = source.loadedAll ? t("共 {v0}", {v0: source.total}) : t("已加载 {v0} / 共 {v1}", {v0: source.items.length, v1: source.total});
-    backdrop.innerHTML = t("\n      <div class=\"viewer-top\">\n        <span class=\"title\">{v0}</span>\n        <span class=\"muted meta-count\">{v1} / {v2}（{loaded}）</span>\n        <div class=\"viewer-actions\">\n          <button class=\"btn small\" id=\"v-slideshow\">幻灯片</button>\n          <button class=\"btn small\" id=\"v-zoom\" title=\"切换显示尺寸 (z)\">尺寸：{v3}</button>\n          {v4}\n          <button class=\"btn small\" id=\"v-panel\" title=\"信息面板 (i)\">信息</button>\n          <a class=\"btn small\" href=\"{v5}?download=1\">下载原图</a>\n          <button class=\"btn small\" id=\"v-close\" title=\"关闭 (Esc)\">关闭 ✕</button>\n        </div>\n      </div>\n      <div class=\"viewer-body\">\n        <div class=\"viewer-stage size-{zoom}\">\n          <img src=\"{v6}\" alt=\"{v7}\">\n          <button class=\"nav-btn prev\" title=\"上一张 (←)\">‹</button>\n          <button class=\"nav-btn next\" title=\"下一张 (→)\">›</button>\n        </div>\n        <aside class=\"viewer-panel\" {v8}>{v9}</aside>\n      </div>", {v0: escapeHtml(item.filename), v1: current + 1, v2: source.items.length, loaded: loaded, v3: SIZE_LABEL[zoom], v4: can("rate") ? `<button class="btn small" id="v-fav" title="${t("收藏 (f)")}">${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}</button>` : "", v5: mediaUrl("original", item.id), zoom: zoom, v6: mediaUrl(zoom === "original" ? "original" : "preview", item.id, item.sha256), v7: escapeHtml(item.filename), v8: panelOpen ? "" : "hidden", v9: panelHtml(item)});
+    backdrop.innerHTML = t("\n      <div class=\"viewer-top\">\n        <span class=\"title\">{v0}</span>\n        <span class=\"muted meta-count\">{v1} / {v2}（{loaded}）</span>\n        <div class=\"viewer-actions\">\n          <button class=\"btn small\" id=\"v-slideshow\">幻灯片</button>\n          <button class=\"btn small\" id=\"v-zoom\" title=\"切换显示尺寸 (z)\">尺寸：{v3}</button>\n          {v4}\n          <button class=\"btn small\" id=\"v-panel\" title=\"信息面板 (i)\">信息</button>\n          <a class=\"btn small\" href=\"{v5}?download=1\">下载原图</a>\n          <button class=\"btn small\" id=\"v-close\" title=\"关闭 (Esc)\">关闭 ✕</button>\n        </div>\n      </div>\n      <div class=\"viewer-body\">\n        <div class=\"viewer-stage size-{zoom}\">\n          <img src=\"{v6}\" alt=\"{v7}\">\n          <button class=\"nav-btn prev\" title=\"上一张 (←)\">‹</button>\n          <button class=\"nav-btn next\" title=\"下一张 (→)\">›</button>\n        </div>\n        <aside class=\"viewer-panel\" {v8}>{v9}</aside>\n      </div>", {v0: escapeHtml(item.filename), v1: current + 1, v2: source.items.length, loaded: loaded, v3: SIZE_LABEL[zoom], v4: can("rate") ? `<button class="btn small" id="v-fav" title="${t("收藏 (f)")}">${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}</button>` : "", v5: mediaUrl("original", item.id), zoom: zoom, v6: imageMediaUrl(zoom === "original" ? "original" : "preview", item), v7: escapeHtml(item.filename), v8: panelOpen ? "" : "hidden", v9: panelHtml(item)});
     bind(item);
     if (focusedId) backdrop.querySelector(`#${CSS.escape(focusedId)}`)?.focus({ preventScroll: true });
   }

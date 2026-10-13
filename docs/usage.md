@@ -7,8 +7,9 @@ Pic Shelf keeps image files in registered libraries and stores metadata in a sep
 Use `picshelf --help` and `picshelf <command> --help` for the complete options. In a source checkout, the executable is `.venv/bin/picshelf`. Global options, including `--data` and `--lang`, precede the command.
 
 ```sh
-picshelf --data ./data init --admin admin
-picshelf library add photos /path/to/images
+export PICSHELF_DATA=/path/to/writable/picshelf-data
+picshelf init --admin admin
+picshelf library add photos /path/to/images --mode indexed
 picshelf scan photos
 picshelf ls --library photos --sort path --limit 50
 picshelf search -q 'ext:png rating:>=8' --json
@@ -28,6 +29,59 @@ Its service errors return JSON with `detail` and an `error` object containing
 an out-of-range rating has code `invalid_rating`; a missing image has code
 `image_not_found`. The ordinary text output remains available without `--json`.
 Local administrative rating operations can select the rating owner with `--user`.
+
+## Library purpose and first use
+
+Explicit `--data` takes precedence over `PICSHELF_DATA`. A source checkout keeps
+its repository-local `data/` default, independent of the current directory. A
+wheel installation requires one of these explicit settings; it never creates a
+catalog under site-packages or silently falls back to a different location when
+the selected directory is not writable. Use the same data path for Web, CLI and
+TUI. `picshelf --data /path/to/writable/data init --admin admin` initializes it.
+
+Register the directory that the Pic Shelf process can access. Web paths are
+server paths, not local browser paths or uploads. In Docker, use the path inside
+the container after mounting the host directory. Directories must exist for Web
+registration; CLI `--mkdir` can create one. Registration rejects unreadable roots,
+symlink loops, duplicate physical directories and parent/child overlaps. Internal
+directory symlinks are not traversed during scanning.
+
+| Purpose | Original directory | Import behavior |
+| --- | --- | --- |
+| `indexed` | Read access is sufficient; catalog metadata and derivatives go into the data directory | Import is refused; scan files already in place |
+| `managed` | Read and write access required | Preview and confirm hardlink, copy or move into the library |
+| Unspecified (legacy) | Existing path and behavior retained | Original import behavior, with hardlink as the initial default |
+
+Existing libraries remain unspecified after upgrade. CLI/API callers that omit
+`mode` retain this compatibility behavior. New Web registrations explicitly
+choose a purpose. Selecting a purpose does not move, rename or rewrite originals.
+Default import mode is a separate preference; explicit `import --mode` overrides
+it. A saved preview retains its chosen mode even if the preference later changes.
+Changing the library to `indexed` blocks unfinished imports before they write.
+Purpose changes and active scans/imports share the same library lock.
+
+```sh
+picshelf library add archive /path/to/originals --mode indexed
+picshelf library add collection /path/to/collection --mkdir --mode managed --default-import-mode copy
+picshelf import /path/to/incoming collection --json
+picshelf import-execute <plan-id> --yes --json
+picshelf library configure collection --default-import-mode hardlink
+picshelf library configure archive --mode indexed
+```
+
+For an empty catalog, Home links to library creation, import preview and task
+history. After registration, scan an indexed library or preview an import into a
+managed library. Scan actions show background progress and can be revisited under
+Management → Background tasks. Indexed libraries remain editable for ratings,
+tags and other metadata even when the original directory is read-only.
+
+API creation accepts `mode: "indexed" | "managed" | null` and
+`default_import_mode: "hardlink" | "copy" | "move"` at `POST /libraries`.
+`PATCH /libraries/{id}` can update these settings but does not accept `root_path`.
+Import requests may omit `mode` to use the library preference. Path errors include
+an actionable `error.code` such as `library_path_invalid`, `library_root_overlap`
+or `library_root_unwritable`; importing into an indexed library returns
+`library_indexed` with HTTP 409.
 
 ## Search
 

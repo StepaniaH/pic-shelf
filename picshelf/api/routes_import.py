@@ -4,6 +4,7 @@
 安全：执行必须显式 confirm=true；move 模式由前端二次确认（服务端同价要求）。
 """
 from __future__ import annotations
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/import", tags=["import"])
 class ImportBody(BaseModel):
     source_dir: str
     library_id: int
-    mode: str = "hardlink"
+    mode: Literal["hardlink", "copy", "move"] | None = None
     rename: bool = True
 
 

@@ -4,10 +4,11 @@ from __future__ import annotations
 import mimetypes
 import sqlite3
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, search
 from ..access import AccessContext
@@ -34,14 +35,20 @@ def stats(conn: Db, user: User):
 # ---------------------------------------------------------------- 库
 
 class LibraryBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
     root_path: str
     description: str | None = None
+    mode: Literal["indexed", "managed"] | None = None
+    default_import_mode: Literal["hardlink", "copy", "move"] = "hardlink"
 
 
 class LibraryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = None
     description: str | None = None
+    mode: Literal["indexed", "managed"] | None = None
+    default_import_mode: Literal["hardlink", "copy", "move"] | None = None
 
 
 @router.get("/libraries")
@@ -53,11 +60,12 @@ def list_libraries(conn: Db, user: User):
 def create_library(body: LibraryBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "manage_library"):
         raise HTTPException(status_code=403, detail=t("缺少权限：manage_library"))
-    root = Path(body.root_path).expanduser().resolve()
-    if not root.is_dir():
-        raise HTTPException(status_code=400, detail=t("目录不存在：{root}", root=root))
+    if not Path(body.root_path).expanduser().is_absolute():
+        raise ServiceError("library_path_invalid", t("请填写服务端的绝对目录路径"),
+                           next_step=t("浏览器本地文件不会自动上传；容器内请使用挂载后的容器路径"))
     try:
-        lib_id = libsvc.create_library(conn, body.name, str(root), body.description)
+        lib_id = libsvc.create_library(conn, body.name, body.root_path, body.description,
+                                      mode=body.mode, default_import_mode=body.default_import_mode)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail=t("库名已存在：{v0}", v0=body.name))
     except ValueError as exc:
@@ -80,20 +88,10 @@ def get_library(library_id: int, conn: Db, user: User):
 
 
 @router.patch("/libraries/{library_id}")
-def patch_library(library_id: int, body: LibraryPatch, conn: Db, user: User):
+def patch_library(library_id: int, body: LibraryPatch, request: Request, conn: Db, user: User):
     ensure_library_access(conn, user, library_id, minimum="manage")
-    sets, params = [], []
-    if body.name:
-        sets.append("name=?")
-        params.append(body.name)
-    if body.description is not None:
-        sets.append("description=?")
-        params.append(body.description)
-    if sets:
-        params.append(library_id)
-        conn.execute(f"UPDATE libraries SET {', '.join(sets)} WHERE id=?", params)
-        conn.commit()
-    return libsvc.get_library(conn, library_id)
+    return libsvc.update_library(conn, request.app.state.cfg, AccessContext(user["id"]), library_id,
+                                 **body.model_dump(exclude_unset=True))
 
 
 @router.post("/libraries/{library_id}/scan")
@@ -301,7 +299,11 @@ def media(kind: str, image_id: int, request: Request, conn: Db, user: User, down
             if not path.is_relative_to(cfg.media_dir.resolve()):
                 raise HTTPException(status_code=404, detail=t("文件不存在"))
             etag = f"{kind}-d{row['derivative_version']}-{row['sha256'] or image_id}"
-            return _serve_file(cfg, path, "image/webp", etag)
+            response = _serve_file(cfg, path, "image/webp", etag)
+            expected = f"{(row['sha256'] or '')[:16]}-d{row['derivative_version']}"
+            if request.query_params.get("v") != expected:
+                response.headers["Cache-Control"] = "private, no-cache"
+            return response
         kind = "original"  # 缩略图缺失时回退原图
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
     root = Path(lib["root_path"]).resolve()

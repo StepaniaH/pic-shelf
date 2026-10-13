@@ -317,6 +317,12 @@ def test_api_cache_keys_change_with_derivative_version_and_offline_root_is_not_s
         new = client.get(f"/api/v1/images/{row['id']}").json()
         assert new["thumb_url"] != old["thumb_url"] and new["original_url"] == old["original_url"]
         assert client.get(new["thumb_url"]).headers["etag"] != old_media.headers["etag"]
+        # Album covers and older clients may omit the algorithm cache key.
+        # They must revalidate instead of retaining an old derivative for an hour.
+        unversioned = client.get(f"/api/v1/media/thumb/{row['id']}")
+        assert unversioned.headers["cache-control"] == "private, no-cache"
+        assert client.get(old["thumb_url"]).headers["cache-control"] == "private, no-cache"
+        assert client.get(new["thumb_url"]).headers["cache-control"] == "private, max-age=3600"
         assert new["derivative_version"] == 2 and new["phash_version"] == 2
         root, saved = library["root"], library["root"].with_name("offline-root")
         root.rename(saved)

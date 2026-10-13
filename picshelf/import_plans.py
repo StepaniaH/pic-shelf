@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import uuid
 
-from . import hashing, importer, indexer
+from . import hashing, importer, indexer, libsvc
 from .access import AccessContext
 from .config import Config
 from .coordination import library_write_lock
@@ -37,11 +37,13 @@ def _source_identity(stat) -> dict:
 
 
 def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int,
-                source_dir: str, *, mode="hardlink", rename=True) -> dict:
+                source_dir: str, *, mode=None, rename=True) -> dict:
     access.require_library(conn, library_id, "manage")
     library = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if library is None:
         raise _failure("library_not_found", t("库不存在"))
+    libsvc.require_importable(library)
+    mode = library["default_import_mode"] if mode is None else mode
     snapshot = importer.plan_import(conn, library, source_dir, mode=mode, rename=rename)
     snapshot["rename"] = rename
     snapshot["root_identity"] = _identity(Path(snapshot["root"]).stat())
@@ -260,9 +262,10 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
     if expired and not (retry and row["started_at"]):
         raise _failure("plan_expired", t("导入计划已过期，请重新预演"))
     root = Path(snapshot["root"])
-    library = conn.execute("SELECT root_path FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
+    library = conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone()
+    libsvc.require_importable(library)
     try:
-        scope_matches = (Path(library[0]).resolve() == root and _identity(root.stat()) == snapshot["root_identity"]
+        scope_matches = (Path(library["root_path"]).resolve() == root and _identity(root.stat()) == snapshot["root_identity"]
                          and _identity(Path(snapshot["source"]).stat()) == snapshot["source_identity"])
     except OSError:
         scope_matches = False
@@ -271,6 +274,7 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
     with library_write_lock(cfg, root):
         # A concurrent request may have completed while this one was preparing.
         row = _authorized_plan(conn, access, plan_id)
+        libsvc.require_importable(conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone())
         if row["state"] == "succeeded" or (row["state"] == "partial" and not retry):
             return json.loads(row["result"])
         if row["cancel_requested"] and not retry:

@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -289,7 +289,13 @@ ALTER TABLE images ADD COLUMN verified_at TEXT;
 CREATE INDEX idx_images_encoding_version ON images(library_id, derivative_version, phash_version);
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4}
+_SCHEMA_V5 = """
+ALTER TABLE libraries ADD COLUMN mode TEXT CHECK(mode IN ('indexed','managed'));
+ALTER TABLE libraries ADD COLUMN default_import_mode TEXT NOT NULL DEFAULT 'hardlink'
+  CHECK(default_import_mode IN ('hardlink','copy','move'));
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5}
 
 
 def utcnow() -> str:
@@ -416,7 +422,13 @@ def _execute_migration(conn: sqlite3.Connection, script: str) -> None:
     # statements separately. SQLite recognizes trigger bodies and quoted ';'.
     forbidden = {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
                  sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_PRAGMA}
-    conn.set_authorizer(lambda action, *args: sqlite3.SQLITE_DENY if action in forbidden else sqlite3.SQLITE_OK)
+    def authorize(action, arg1, arg2, database, source):
+        # ADD COLUMN with CHECK invokes a read-only quick_check internally.
+        # Continue to reject PRAGMAs that can alter transaction/durability rules.
+        if action == sqlite3.SQLITE_PRAGMA and arg1 == "quick_check":
+            return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY if action in forbidden else sqlite3.SQLITE_OK
+    conn.set_authorizer(authorize)
     try:
         start = 0
         for end, char in enumerate(script):

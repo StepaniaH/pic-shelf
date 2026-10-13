@@ -2,26 +2,126 @@
 from __future__ import annotations
 
 import sqlite3
+import os
+from pathlib import Path
+import tempfile
 
 from . import search
+from .access import AccessContext
 from .auth import grant_default_library
+from .config import Config
+from .coordination import library_write_lock
 from .db import utcnow
+from .errors import ServiceError
 from .i18n import t
 
 
+def _validate_mode(mode, default_import_mode):
+    if mode not in (None, "indexed", "managed") or default_import_mode not in ("hardlink", "copy", "move"):
+        raise ServiceError("library_mode_invalid", t("库用途或默认导入方式无效"),
+                           next_step=t("请选择 indexed 或 managed；导入方式为 hardlink、copy 或 move"))
+
+
+def _library_root(root_path: str, *, writable=False) -> Path:
+    try:
+        root = Path(root_path).expanduser().resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("not a directory")
+        with os.scandir(root) as entries:
+            next(entries, None)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise ServiceError("library_path_invalid", t("无法读取服务端图片目录"),
+                           next_step=t("请检查目录是否存在、读取权限及循环链接；容器内请使用挂载后的容器路径")) from exc
+    if writable:
+        try:
+            with tempfile.TemporaryFile(dir=root):
+                pass
+        except OSError as exc:
+            raise ServiceError("library_root_unwritable", t("托管库目录不可写"),
+                               next_step=t("请修复目录写入权限，或选择只索引模式")) from exc
+    return root
+
+
+def _check_overlap(conn, root: Path):
+    def identities(path):
+        result = set()
+        for parent in (path, *path.parents):
+            try:
+                stat = parent.stat()
+                result.add((stat.st_dev, stat.st_ino))
+            except OSError:
+                continue
+        return result
+    root_stat = root.stat()
+    root_id = (root_stat.st_dev, root_stat.st_ino)
+    ancestors = identities(root)
+    for row in conn.execute("SELECT id,root_path,root_device,root_inode FROM libraries"):
+        other = Path(row["root_path"])
+        try:
+            other = other.resolve()
+            stat = other.stat()
+            other_id = (stat.st_dev, stat.st_ino)
+        except (OSError, RuntimeError):
+            other_id = (row["root_device"], row["root_inode"])
+        if (root.is_relative_to(other) or other.is_relative_to(root) or
+                other_id in ancestors or root_id in identities(other)):
+            raise ServiceError("library_root_overlap", t("该目录与已注册库重复或重叠"), status=409,
+                               next_step=t("请使用已有库，或选择互不包含的目录；符号链接不会创建独立图库"),
+                               objects={"library_id": row["id"]})
+
+
 def create_library(conn: sqlite3.Connection, name: str, root_path: str,
-                   description: str | None = None) -> int:
+                   description: str | None = None, *, mode: str | None = None,
+                   default_import_mode: str = "hardlink") -> int:
     name = (name or "").strip()
     if not name:
         raise ValueError(t("库名不能为空"))
-    cur = conn.execute(
-        "INSERT INTO libraries(name, root_path, description, created_at) VALUES(?,?,?,?)",
-        (name, str(root_path), description, utcnow()),
-    )
-    library_id = int(cur.lastrowid)
-    conn.commit()
+    _validate_mode(mode, default_import_mode)
+    root = _library_root(root_path, writable=mode == "managed")
+    # Serialize validation with insertion so concurrent aliases cannot register twice.
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _check_overlap(conn, root)
+        cur = conn.execute(
+            "INSERT INTO libraries(name, root_path, description, created_at,mode,default_import_mode) VALUES(?,?,?,?,?,?)",
+            (name, str(root), description, utcnow(), mode, default_import_mode),
+        )
+        library_id = int(cur.lastrowid)
     grant_default_library(conn, library_id)
     return library_id
+
+
+def update_library(conn: sqlite3.Connection, cfg: Config, access: AccessContext,
+                   library_id: int, **changes) -> dict:
+    access.require_library(conn, library_id, "manage")
+    if set(changes) - {"name", "description", "mode", "default_import_mode"}:
+        raise ServiceError("library_field_invalid", t("不能通过库设置修改根目录"),
+                           next_step=t("请使用已核验的根目录迁移流程"))
+    library = get_library(conn, library_id)
+    if library is None:
+        raise ServiceError("library_not_found", t("库不存在"), status=404,
+                           next_step=t("请刷新库列表后重试"))
+    if "name" in changes:
+        changes["name"] = (changes["name"] or "").strip()
+        if not changes["name"]:
+            raise ValueError(t("库名不能为空"))
+    mode = changes.get("mode", library["mode"])
+    default = changes.get("default_import_mode", library["default_import_mode"])
+    _validate_mode(mode, default)
+    root = _library_root(library["root_path"], writable=mode == "managed")
+    with library_write_lock(cfg, root):
+        access.require_library(conn, library_id, "manage")
+        if changes:
+            with conn:
+                conn.execute("UPDATE libraries SET " + ",".join(f"{key}=?" for key in changes) + " WHERE id=?",
+                             [*changes.values(), library_id])
+    return get_library(conn, library_id)
+
+
+def require_importable(library):
+    if library["mode"] == "indexed":
+        raise ServiceError("library_indexed", t("只索引库不接收导入文件"), status=409,
+                           next_step=t("请新建托管库，或明确将此库用途改为 managed 后重新预演"))
 
 
 def get_library(conn: sqlite3.Connection, library_id: int) -> dict | None:
