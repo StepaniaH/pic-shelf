@@ -2,6 +2,16 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "命名模板或字段无效": "Invalid naming template or fields",
+    "请使用 artists、tags、source、date、stem、ext；不允许绝对路径、父目录或格式转换": "Use artists, tags, source, date, stem and ext; absolute paths, parent directories and format conversions are not allowed",
+    "库路径迁移未执行": "The library root was not rebound",
+    "请检查副本的相对路径、内容、根目录身份与预演冲突；修正后重新预演": "Check the copy’s relative paths, contents, root identity and preview conflicts, then create a new preview",
+    "库文件重组未完成": "Library file reorganization did not finish",
+    "请检查逐项路径与冲突；保留文件，使用原计划重试或重新预演": "Inspect per-item paths and conflicts; preserve files and retry the original plan or create a new preview",
+    "请先检查库路径迁移预演，再明确确认执行": "Inspect the root relocation preview before explicitly confirming execution",
+    "核验并重绑定库根目录，或预演托管库文件重组。": "Verify and rebind a library root, or preview managed-library reorganization.",
+    "按命名模板生成目标相对路径": "Generate destination relative paths from a naming template",
+    "命名字段 JSON：artists、tags、source、date": "Naming fields as JSON: artists, tags, source and date",
     "备份无法安全恢复": "The backup cannot be restored safely",
     "请检查口令、归档校验和与程序版本；停止所有 Pic Shelf 服务后重试": "Check the passphrase, archive checksums and application version; stop all Pic Shelf services before retrying",
     "检查备份清单、校验和与恢复边界。": "Inspect the backup inventory, checksums and recovery scope.",

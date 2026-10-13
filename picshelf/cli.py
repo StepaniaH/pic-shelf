@@ -173,7 +173,7 @@ class _I18nGroup(click.Group):
 
 def _json_requested(command, args):
     """Inspect Click's parsed options without invoking callbacks or opening data."""
-    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup"}
+    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup", "paths"}
     json_commands = {"check", "organize", "rebuild", "import-status", "import-execute", "import-cancel"}
     path = []
     machine = False
@@ -1280,6 +1280,8 @@ def check_cmd(cfg, full):
 @click.argument("library_name")
 @click.option("--mode", type=click.Choice(["hardlink", "copy", "move"]), default=None,
               help="hardlink=原文件不动且零额外空间（跨盘自动降级 copy）；copy=复制留档；move=移入整理")
+@click.option("--template", default=None, help="按命名模板生成目标相对路径")
+@click.option("--template-fields", default=None, help="命名字段 JSON：artists、tags、source、date")
 @click.option("--rename/--keep-names", default=True, show_default=True,
               help="文件名规范化（去掉文件系统危险字符）")
 @click.option("--apply", "do_apply", is_flag=True, help="真正执行（默认只预演）")
@@ -1287,7 +1289,7 @@ def check_cmd(cfg, full):
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
 def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
-               rename: bool, do_apply: bool, yes: bool, as_json: bool):
+               rename: bool, do_apply: bool, yes: bool, as_json: bool, template: str | None, template_fields: str | None):
     """把外部目录导入托管的库：预演优先，--apply 执行，完成后自动扫描入库。"""
     if do_apply and not yes and not sys.stdin.isatty():
         raise ServiceError("confirmation_required", t("非交互执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
@@ -1299,7 +1301,13 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
         raise ServiceError("library_not_found", t("找不到库：{library_name}（先运行 picshelf library add）", library_name=library_name), status=404, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     try:
         access = AccessContext(_acting_user(conn)["id"], local_admin=True)
-        plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename)
+        try:
+            fields = json.loads(template_fields) if template_fields else None
+        except ValueError as exc:
+            raise click.UsageError(t('JSON 格式无效，请检查输入')) from exc
+        plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename,
+                                        template=template, template_fields=fields)
+        mode = plan['mode']
         mode = plan["mode"]
     except ValueError as exc:
         raise click.ClickException(str(exc))
@@ -1558,6 +1566,64 @@ def manifest_execute(cfg, plan_id, yes, user):
 
 
 # ---------------------------------------------------------------- 用户 / 组 / 统计
+
+@main.group('paths')
+def paths_group():
+    """核验并重绑定库根目录，或预演托管库文件重组。"""
+
+
+@paths_group.command('preview')
+@click.argument('library_name')
+@click.argument('target_path', type=click.Path(exists=True, file_okay=False))
+@click.pass_obj
+def paths_preview(cfg, library_name, target_path):
+    from . import relocations
+    conn = _conn(cfg)
+    library = libsvc.find_library(conn, library_name)
+    if library is None:
+        raise click.ClickException(t('库不存在'))
+    result = relocations.preview(conn, _batch_access(conn, None), library['id'], target_path)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if not result['preview']['ready']:
+        raise click.exceptions.Exit(1)
+
+
+@paths_group.command('show')
+@click.argument('plan_id')
+@click.pass_obj
+def paths_show(cfg, plan_id):
+    from . import relocations
+    conn = _conn(cfg)
+    click.echo(json.dumps(relocations.get(conn, _batch_access(conn, None), plan_id), ensure_ascii=False, indent=2))
+
+
+@paths_group.command('execute')
+@click.argument('plan_id')
+@click.option('--yes', is_flag=True)
+@click.pass_obj
+def paths_execute(cfg, plan_id, yes):
+    from . import relocations
+    if not yes:
+        raise ServiceError('confirmation_required', t('结构化执行需要 --yes；请先检查预演结果'),
+                           next_step=t('请先检查库路径迁移预演，再明确确认执行'))
+    conn = _conn(cfg)
+    click.echo(json.dumps(relocations.execute(conn, cfg, _batch_access(conn, None), plan_id), ensure_ascii=False, indent=2))
+
+
+@paths_group.command('reorganize')
+@click.argument('library_name')
+@click.option('--template', required=True)
+@click.pass_obj
+def paths_reorganize(cfg, library_name, template):
+    from . import reorganize
+    conn = _conn(cfg)
+    library = libsvc.find_library(conn, library_name)
+    if library is None:
+        raise click.ClickException(t('库不存在'))
+    result = reorganize.preview(conn, cfg, _batch_access(conn, None), library['id'], template)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if result['stats']['error']:
+        raise click.exceptions.Exit(1)
 
 @main.group()
 def users():

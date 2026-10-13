@@ -37,7 +37,7 @@ def _source_identity(stat) -> dict:
 
 
 def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int,
-                source_dir: str, *, mode=None, rename=True) -> dict:
+                source_dir: str, *, mode=None, rename=True, template=None, template_fields=None) -> dict:
     access.require_library(conn, library_id, "manage")
     library = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if library is None:
@@ -45,8 +45,11 @@ def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int
     libsvc.require_importable(library)
     mode = library["default_import_mode"] if mode is None else mode
     source_access.require_source(conn, access, source_dir, mode=mode)
-    snapshot = importer.plan_import(conn, library, source_dir, mode=mode, rename=rename)
+    snapshot = importer.plan_import(conn, library, source_dir, mode=mode, rename=rename,
+                                    template=template, template_fields=template_fields)
     snapshot["rename"] = rename
+    snapshot['template'] = template
+    snapshot['template_fields'] = template_fields
     snapshot["root_identity"] = _identity(Path(snapshot["root"]).stat())
     snapshot["source_identity"] = _identity(Path(snapshot["source"]).stat())
     identities = []
@@ -83,7 +86,12 @@ def _authorized_plan(conn, access, plan_id):
                            next_step=t("请使用创建计划的账户，或重新预演"))
     access.require_library(conn, row["library_id"], "manage")
     snapshot = json.loads(row["snapshot"])
-    source_access.require_source(conn, access, snapshot["source"], mode=snapshot["mode"])
+    if snapshot.get('reorganize'):
+        if libsvc.get_library(conn, row['library_id'])['mode'] != 'managed':
+            from .reorganize import _error
+            raise _error('reorganization_requires_managed')
+    else:
+        source_access.require_source(conn, access, snapshot["source"], mode=snapshot["mode"])
     return row
 
 
@@ -279,6 +287,9 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
         # A concurrent request may have completed while this one was preparing.
         row = _authorized_plan(conn, access, plan_id)
         libsvc.require_importable(conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone())
+        if snapshot.get('reorganize') and row['started_at'] is None:
+            from . import reorganize
+            reorganize.verify_preview(conn, snapshot)
         if row["state"] == "succeeded" or (row["state"] == "partial" and not retry):
             return json.loads(row["result"])
         if row["cancel_requested"] and not retry:
@@ -297,9 +308,15 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
                 record = conn.execute("SELECT * FROM import_plan_items WHERE plan_id=? AND position=?",
                                       (plan_id, position)).fetchone()
                 if record["state"] in ("succeeded", "skipped") or item["action"] == "error":
+                    if snapshot.get('reorganize') and record['state'] == 'succeeded':
+                        from .reorganize import publish
+                        publish(conn, plan_id, position, snapshot, item)
                     continue
                 try:
                     _execute_item(conn, plan_id, position, snapshot, item, record)
+                    if snapshot.get('reorganize'):
+                        from .reorganize import publish
+                        publish(conn, plan_id, position, snapshot, item)
                 except (OSError, ServiceError, RuntimeError) as exc:
                     error = exc if isinstance(exc, ServiceError) else _failure(
                         "import_io_error", t("无法完成文件操作，请检查文件和目录权限或可用空间"), retryable=True)
@@ -311,7 +328,8 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
             current = _authorized_plan(conn, access, plan_id)
             if sum(result["done"][key] for key in importer.MODES):
                 result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check)
-                metadata.record_import(conn, row["library_id"], plan_id, snapshot, row["created_by"])
+                if not snapshot.get('reorganize'):
+                    metadata.record_import(conn, row["library_id"], plan_id, snapshot, row["created_by"])
             scan_errors = len(result["scan"]["errors"]) if result["scan"] else 0
             result["scan_error_count"] = scan_errors
             result["resumed_after_expiry"] = expired

@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -477,7 +477,18 @@ BEGIN
 END;
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11}
+_SCHEMA_V12 = """
+CREATE TABLE relocation_plans (
+ id TEXT PRIMARY KEY, library_id INTEGER NOT NULL REFERENCES libraries(id),
+ created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'preview',
+ snapshot TEXT NOT NULL, preview TEXT NOT NULL
+);
+ALTER TABLE import_plan_items ADD COLUMN image_id INTEGER REFERENCES images(id);
+ALTER TABLE import_plan_items ADD COLUMN catalog_published INTEGER NOT NULL DEFAULT 0;
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12}
 
 
 def utcnow() -> str:
@@ -594,6 +605,8 @@ def validate_schema(conn: sqlite3.Connection) -> int:
             required |= {"play_rules", "play_candidates", "play_requests"}
         if current >= 11:
             required |= {"portable_ids", "portable_import_ids", "manifest_plans"}
+        if current >= 12:
+            required |= {"relocation_plans"}
         if not required <= tables:
             raise _invalid_schema()
     return current

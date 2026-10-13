@@ -42,7 +42,7 @@ def _library_root(root_path: str, *, writable=False) -> Path:
     return root
 
 
-def _check_overlap(conn, root: Path):
+def _check_overlap(conn, root: Path, *, exclude=None):
     def identities(path):
         result = set()
         for parent in (path, *path.parents):
@@ -56,6 +56,8 @@ def _check_overlap(conn, root: Path):
     root_id = (root_stat.st_dev, root_stat.st_ino)
     ancestors = identities(root)
     for row in conn.execute("SELECT id,root_path,root_device,root_inode FROM libraries"):
+        if row['id'] == exclude:
+            continue
         other = Path(row["root_path"])
         try:
             other = other.resolve()

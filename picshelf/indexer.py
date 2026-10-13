@@ -142,9 +142,12 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
     }
     root_confirmed = not existing or lib["root_device"] is not None
     known_hashes = {row["sha256"] for row in existing.values() if row["sha256"]}
-    incomplete = {r["destination"]: json.loads(r["destination_identity"]) for r in conn.execute(
-        "SELECT destination,destination_identity FROM import_plan_items "
-        "WHERE destination_identity IS NOT NULL AND state NOT IN ('succeeded','skipped')")}
+    incomplete = {r["destination"]: (None if r['image_id'] is not None and not r['catalog_published'] else
+                                      json.loads(r["destination_identity"])) for r in conn.execute(
+        "SELECT i.destination,i.destination_identity,i.image_id,i.catalog_published FROM import_plan_items i "
+        "JOIN import_plans p ON p.id=i.plan_id WHERE "
+        "(i.destination_identity IS NOT NULL AND i.state NOT IN ('succeeded','skipped')) "
+        "OR (i.image_id IS NOT NULL AND i.catalog_published=0 AND p.started_at IS NOT NULL)")}
 
     def keep_existing(row, rel_dir):
         seen_ids.add(int(row["id"]))
@@ -222,7 +225,8 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                 raise ValueError(t("图片位于库目录之外，请检查符号链接"))
             st = path.stat()
             identity = incomplete.get(str(path))
-            if identity and st.st_dev == identity["device"] and st.st_ino == identity["inode"]:
+            if str(path) in incomplete and (identity is None or
+                    (st.st_dev == identity["device"] and st.st_ino == identity["inode"])):
                 stats["errors"].append(t("导入尚未完成：{path}，请恢复导入计划", path=rel))
                 report_item(rel, before_errors)
                 continue

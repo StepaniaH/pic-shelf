@@ -8,6 +8,8 @@ Use [batch organization and undo](batches.md) to select images across pages, pre
 
 Use [portable metadata](metadata-format.md) to move personal organization and shared catalog metadata onto separately copied originals. Database backups also contain account data and are described under Backup and restore.
 
+Use [library paths and naming](paths.md) to rebind verified original-file copies, name new imports, or explicitly reorganize a managed library.
+
 ## Web browsing
 
 Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags

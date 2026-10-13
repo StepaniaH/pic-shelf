@@ -22,6 +22,8 @@ class ImportBody(BaseModel):
     library_id: BodyIdentifier
     mode: Literal["hardlink", "copy", "move"] | None = None
     rename: StrictBool = True
+    template: str | None = None
+    template_fields: dict | None = None
 
 
 class ExecuteBody(ImportBody):
@@ -41,7 +43,8 @@ def plan_import(body: ImportBody, conn: Db, user: User):
     _target_library(conn, user, body.library_id)
     try:
         return import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
-                                        body.source_dir, mode=body.mode, rename=body.rename)
+                                        body.source_dir, mode=body.mode, rename=body.rename,
+                                        template=body.template, template_fields=body.template_fields)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -53,7 +56,8 @@ def execute_import(body: ExecuteBody, request: Request, conn: Db, user: User):
     _target_library(conn, user, body.library_id)
     try:
         plan = import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
-                                          body.source_dir, mode=body.mode, rename=body.rename)
+                                          body.source_dir, mode=body.mode, rename=body.rename,
+                                          template=body.template, template_fields=body.template_fields)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {**import_plans.execute_plan(conn, request.app.state.cfg, AccessContext(user["id"]), plan["plan_id"]),

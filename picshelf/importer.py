@@ -60,10 +60,18 @@ def plan_import(
     mode: str = "hardlink",
     *,
     rename: bool = True,
+    template: str | None = None,
+    template_fields: dict | None = None,
 ) -> dict:
     """生成导入计划（只读，不动任何文件）。library 为 libraries 表行或 dict。"""
     root = Path(library["root_path"]).resolve()
     source_root = Path(source_root).expanduser().resolve()
+    if template is not None:
+        from . import templates
+        templates.validate(template, template_fields)
+    elif template_fields is not None:
+        from .templates import _error
+        raise _error()
     if mode not in MODES:
         raise ValueError(t("未知模式：{mode}（可选 {v0}）", mode=mode, v0='/'.join(MODES)))
     if not source_root.is_dir():
@@ -121,11 +129,12 @@ def plan_import(
                 counts["skip"] += 1
                 continue
 
-            target_name = sanitize_filename(path.name) if rename else path.name
+            target_rel = Path(templates.render(template, path.name, template_fields)) if template is not None else rel
+            target_name = sanitize_filename(target_rel.name) if rename else target_rel.name
             stem, ext = os.path.splitext(target_name)
             suffix = 1
             parent = root
-            for part in rel.parent.parts:
+            for part in target_rel.parent.parts:
                 proposed = parent / (sanitize_filename(part) if rename else part)
                 key = _portable_key(proposed)
                 parent = directory_aliases.setdefault(key, equivalent(proposed) or proposed)
