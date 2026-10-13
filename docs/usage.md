@@ -382,7 +382,37 @@ lock does not coordinate unrelated tools that open the SQLite file directly.
 
 Web navigation remains available on phone-sized screens. Image cards show the complete composition. Use Enter or Space to open a focused image; Escape closes the topmost dialog and restores focus. In the viewer, left/right arrows navigate, `f` toggles favorites, `i` toggles details and `z` changes sizing. Original sizing loads the original image. Ratings include zero; Clear removes your rating.
 
-The TUI shows the current range and total, with `[` / `]` to change pages and `b` to toggle navigation. Narrow terminals initially hide the navigation pane. Other shortcuts: `/` search, `j` / `k` move, `r` rate, `t` add tags, `f` favorite, `c` comment, `n` note, `p` preview, `g` refresh and `q` quit. `s` starts a slideshow; Space pauses and resumes it. Optional terminal previews use `chafa` or `img2txt` when installed.
+Press F1 for terminal help. The list shows its range, total and selected count.
+Use `[` / `]` to page, `b` for navigation, `d` for full details, `/` to search
+and Escape to return to the list. Narrow terminals initially hide navigation
+and details; long names remain available in the detail pane. `NO_COLOR=1` keeps
+terminal color optional.
+
+`x` selects the current image across pages; Ctrl+X clears the selection. `r`
+rates (including 0; `-` clears), `t` adds tags (quote names containing spaces),
+`f` favorites, `a` links an existing artist, `l` adds to a manual album, and `w`
+sets `done` or `inbox`. Selected images use a fixed batch preview with paths and
+count. Cancel is focused by default. Batch writes run in the existing worker
+queue. With no selection, rating, favorites, tags, comments (`c`) and notes (`n`)
+keep their direct single-image behavior.
+
+Ctrl+S queues a scan of the selected library or the current image's library.
+Ctrl+J opens jobs and batches, including progress, cancel, retry and conflict-aware
+undo. Enter opens paginated item results. Workers use the same two execution
+slots as Web and CLI. Exiting stops this TUI's workers at safe boundaries;
+interrupted operations can be resumed from their saved state.
+
+`s` starts a fixed playback session; arrows navigate and Space pauses or resumes.
+Ctrl+P reopens the latest session paused, including one created in Web or CLI.
+Saved queries and playback rules appear in navigation. Search, prompts and help
+pause playback; resume explicitly with Space. Missing queue entries pause with a
+manual next-image action. `g` refreshes, `q` exits normally (status 0), and Ctrl+C
+exits with status 130 after terminal cleanup.
+
+`p` enables optional `chafa` or `img2txt` previews. Rendering runs asynchronously
+with a 20-second timeout; moving or closing cancels the old process. Missing or
+failed renderers leave text-based organization available. This does not imply
+support for every terminal's image protocol.
 
 Playback queues are limited to 10,000 images. Both `shuffle` and `random` keep
 their original behavior: a shuffled queue without replacement, repeated on
@@ -429,9 +459,8 @@ Rule/session commands emit JSON and accept `--user NAME`. Counts range from
 from 0 (manual) to 86,400. `sort` accepts non-random image sorts; `order` controls
 randomness. `size` is `fit`, `fill` or `original`; `captions` is a boolean.
 The existing `play --player mpv|terminal|list` entry remains available for its
-original three ordering modes and materialized playlist. The TUI's existing
-list auto-advance remains a list preview; persistent session controls are in
-Web and CLI.
+original three ordering modes and materialized playlist. The TUI uses the same persistent playback sessions and can resume the
+latest session paused with Ctrl+P.
 
 Web playback starts its timer after a successful image decode. It stops while
 loading, paused or hidden, and restarts with a full interval when visible. Manual
