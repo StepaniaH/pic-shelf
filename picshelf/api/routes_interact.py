@@ -7,7 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .. import auth, ops
+from .. import auth, catalog, ops
+from ..access import AccessContext
 from .deps import Db, User, ensure_catalog_access, image_and_access, require_cap
 
 router = APIRouter(tags=["interact"])
@@ -26,11 +27,7 @@ class RatingBody(BaseModel):
 
 @router.post("/images/{image_id}/rating")
 def set_rating(image_id: int, body: RatingBody, conn: Db, user: Rater):
-    image_and_access(conn, user, image_id)
-    try:
-        return ops.set_rating(conn, image_id, user["id"], body.value)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    return catalog.rate_image(conn, AccessContext(user["id"]), image_id, body.value)
 
 
 class FavoriteBody(BaseModel):

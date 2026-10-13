@@ -5,9 +5,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, FastAPI
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from .. import __version__, auth
 from ..config import Config
+from ..errors import ServiceError
 from ..i18n import set_lang as _set_lang
 from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play
 
@@ -30,6 +32,10 @@ def create_app(cfg: Config) -> FastAPI:
     )
     app.state.cfg = cfg
     app.state.secret = auth.load_secret(cfg.secret_path)
+
+    @app.exception_handler(ServiceError)
+    async def _service_error(request, exc: ServiceError):
+        return JSONResponse(status_code=exc.status, content=exc.as_dict())
 
     @app.middleware("http")
     async def _lang_from_header(request, call_next):

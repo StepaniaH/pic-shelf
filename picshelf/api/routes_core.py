@@ -9,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .. import __version__, auth, db as dbm, indexer, libsvc, ops, search
+from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, search
+from ..access import AccessContext
 from .deps import Db, User, ensure_catalog_access, ensure_library_access, image_and_access, require_cap, serialize_image
 from ..i18n import t
 
@@ -252,44 +253,12 @@ def list_images(
     artist_id: int | None = None, tag: str | None = None,
     favorites: bool = False, rating_min: int | None = None,
 ):
-    allowed = auth.visible_library_ids(conn, user)
     if library_id is not None:
         ensure_library_access(conn, user, library_id)
-    extra_where: list[str] = []
-    extra_params: dict = {}
-    if library_id is not None:
-        extra_where.append("i.library_id = :f_lib")
-        extra_params["f_lib"] = library_id
-    if album_id is not None:
-        extra_where.append(
-            "EXISTS(SELECT 1 FROM album_images ai WHERE ai.image_id=i.id AND ai.album_id=:f_alb)"
-        )
-        extra_params["f_alb"] = album_id
-    if artist_id is not None:
-        extra_where.append(
-            "EXISTS(SELECT 1 FROM image_artists ia WHERE ia.image_id=i.id AND ia.artist_id=:f_art)"
-        )
-        extra_params["f_art"] = artist_id
-    if tag:
-        extra_where.append(
-            "EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-            "WHERE it.image_id=i.id AND lower(tg.name)=lower(:f_tag))"
-        )
-        extra_params["f_tag"] = tag
-    if favorites:
-        extra_where.append(
-            "EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)"
-        )
-    if rating_min is not None:
-        extra_where.append(
-            "COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id "
-            "AND r.user_id=:uid),0) >= :f_rmin"
-        )
-        extra_params["f_rmin"] = rating_min
-    res = search.search_images(
-        conn, user["id"], allowed, query=q, sort=sort, limit=limit, offset=offset,
-        extra_where=extra_where or None, extra_params=extra_params or None,
-    )
+    res = catalog.query_images(conn, AccessContext(user["id"]), catalog.ImageQuery(
+        query=q, sort=sort, limit=limit, offset=offset, library_id=library_id,
+        album_id=album_id, artist_id=artist_id, tag=tag,
+        favorites=favorites, rating_min=rating_min))
     res["items"] = [serialize_image(i) for i in res["items"]]
     return res
 

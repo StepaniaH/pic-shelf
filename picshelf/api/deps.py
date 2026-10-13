@@ -7,11 +7,11 @@ from typing import Annotated, Iterator
 from fastapi import Cookie, Depends, Header, HTTPException, Request
 
 from .. import auth, search
+from ..access import AccessContext
 from ..db import open_db
 from ..i18n import t
 
 COOKIE_NAME = "picshelf_session"
-RANK = {"view": 1, "edit": 2, "manage": 3}
 
 
 def db(request: Request) -> Iterator[sqlite3.Connection]:
@@ -50,8 +50,7 @@ User = Annotated[sqlite3.Row, Depends(current_user)]
 
 def require_cap(cap: str):
     def dep(user: User, conn: Db) -> sqlite3.Row:
-        if not auth.has_cap(conn, user, cap):
-            raise HTTPException(status_code=403, detail=t("缺少权限：{cap}", cap=cap))
+        AccessContext(user["id"]).require_capability(conn, cap)
         return user
 
     return dep
@@ -59,21 +58,12 @@ def require_cap(cap: str):
 
 def ensure_library_access(conn: sqlite3.Connection, user: sqlite3.Row,
                           library_id: int, minimum: str = "view") -> str:
-    access = auth.library_access(conn, user, int(library_id))
-    if access is None or RANK.get(access, 0) < RANK[minimum]:
-        raise HTTPException(status_code=403, detail=t("无权访问该库"))
-    return access
+    return AccessContext(user["id"]).require_library(conn, int(library_id), minimum)
 
 
 def image_and_access(conn: sqlite3.Connection, user: sqlite3.Row,
                      image_id: int, minimum: str = "view") -> sqlite3.Row:
-    row = conn.execute(
-        "SELECT * FROM images WHERE id=? AND missing=0", (image_id,)
-    ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail=t("图片不存在"))
-    ensure_library_access(conn, user, int(row["library_id"]), minimum)
-    return row
+    return AccessContext(user["id"]).require_image(conn, image_id, minimum)
 
 
 def ensure_catalog_access(conn: sqlite3.Connection, user: sqlite3.Row,

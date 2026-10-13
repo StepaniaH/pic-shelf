@@ -18,8 +18,10 @@ from pathlib import Path
 
 import click
 
-from . import __version__, auth, db as dbm, indexer, libsvc, ops, play, search
+from . import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, play, search
+from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
+from .errors import ServiceError
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -344,20 +346,14 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
     """列表 / 检索图片。"""
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
-    allowed = auth.visible_library_ids(conn, user)
     if library:
         lib = libsvc.find_library(conn, library)
         if lib is None:
             raise click.ClickException(t("找不到库：{library}", library=library))
         library = lib["id"]
-    ew, ep = _base_where(conn, user, {
-        "album": album, "artist": artist, "tag": tag,
-        "favorites": favorites, "min_rating": min_rating, "library": library,
-    })
-    res = search.search_images(
-        conn, user["id"], allowed, query=query, sort=sort, limit=limit, offset=offset,
-        extra_where=ew or None, extra_params=ep or None,
-    )
+    res = catalog.query_images(conn, AccessContext(user["id"]), catalog.ImageQuery(
+        query=query, sort=sort, limit=limit, offset=offset, library_id=library,
+        album_id=album, artist_id=artist, tag=tag, favorites=favorites, rating_min=min_rating))
     if as_json:
         click.echo(json.dumps(res, ensure_ascii=False, indent=2))
         return
@@ -419,15 +415,22 @@ def show(cfg: Config, image_id: int, as_json: bool, print_path: bool):
 @click.argument("image_id", type=int)
 @click.argument("value", type=int)
 @click.option("--user", "user_name", default=None)
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
-def rate(cfg: Config, image_id: int, value: int, user_name: str | None):
+def rate(cfg: Config, image_id: int, value: int, user_name: str | None, as_json: bool):
     """给图片评分（0–10）。"""
     conn = _conn(cfg)
     user = _acting_user(conn, user_name)
     try:
-        summary = ops.set_rating(conn, image_id, user["id"], value)
-    except ValueError as exc:
-        raise click.ClickException(str(exc))
+        summary = catalog.rate_image(conn, AccessContext(user["id"], local_admin=True), image_id, value)
+    except ServiceError as exc:
+        if as_json:
+            click.echo(json.dumps(exc.as_dict(), ensure_ascii=False))
+            raise click.exceptions.Exit(1)
+        raise click.ClickException(f"[{exc.code}] {exc.detail} {exc.next_step}") from exc
+    if as_json:
+        click.echo(json.dumps(summary, ensure_ascii=False))
+        return
     click.echo(t("#{image_id} 我的评分 → {v0}（平均 {v1}）", image_id=image_id, v0=summary['my_rating'], v1=summary['avg_rating'] if summary['avg_rating'] is not None else '—'))
 
 

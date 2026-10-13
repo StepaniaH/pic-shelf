@@ -22,6 +22,13 @@ picshelf tui
 
 The CLI and TUI use local database access. They are administrative tools, not a boundary between untrusted operating-system users. `ls --user <name>` and `play --user <name>` select that user's ratings, favorites and visible libraries.
 
+`picshelf rate <image-id> <0-10> --json` returns the rating summary as JSON.
+Its service errors return JSON with `detail` and an `error` object containing
+`code`, `retryable`, `next_step` and `objects`, and exit with status 1. For example,
+an out-of-range rating has code `invalid_rating`; a missing image has code
+`image_not_found`. The ordinary text output remains available without `--json`.
+Local administrative rating operations can select the rating owner with `--user`.
+
 ## Search
 
 Whitespace combines conditions with AND. Commas within a condition mean OR. Prefix a condition with `-` to exclude it. Quote values containing spaces.
@@ -88,6 +95,15 @@ Interactive documentation is available at `/api/docs`; the machine-readable sche
 | Playback queue | `POST /play/sessions` |
 
 Image counts and associated tags/artists follow the caller's library grants and exclude missing images. Administrators can also browse unassigned tags and artists. The global user count is only exposed to administrators. Authentication is required for metadata and all media; health is public. Import execution requires management access and explicit confirmation.
+
+Shared service errors preserve the existing `detail` message and HTTP status, and
+add `error.code`, `error.retryable`, `error.next_step` and `error.objects`. Codes
+such as `permission_denied`, `authentication_required`, `image_not_found` and
+`invalid_rating` do not change with the response language. Permission checks
+resolve the current account and grants at each service operation. Older endpoints
+may still return only `detail`; framework input validation retains its existing
+response shape. Search responses also include `error_codes` alongside the existing
+localized `errors`; malformed expressions use `invalid_query` and return no items.
 
 ## Backups
 

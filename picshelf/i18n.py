@@ -65,6 +65,10 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "请使用有效账户重新登录": "Sign in again with an active account",
+    "请联系管理员检查账户和库授权": "Ask an administrator to check your account and library access",
+    "请刷新图片列表，或扫描库后重试": "Refresh the image list, or scan the library and try again",
+    "请输入 0–10 的整数，或清除评分": "Enter an integer from 0 to 10, or clear the rating",
     "条目不存在或无权访问": "Item not found or access denied.",
     "名称已存在，请使用其他名称": "Name already exists. Choose another name.",
     "上一页": "Previous page",

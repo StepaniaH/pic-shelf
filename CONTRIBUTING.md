@@ -12,7 +12,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 
 Use a separate data directory for development. Initialize it with `picshelf --data <directory> init --admin <name>`, then use the same `--data` argument for subsequent commands. `picshelf serve --reload` reloads the API during development.
 
-The CLI and TUI operate as a local administrator. The HTTP API authenticates each request and checks library grants. Keep shared domain operations in the Python service modules; keep HTTP validation and permission checks in `picshelf/api/`.
+The CLI and TUI operate as a local administrator. The HTTP API authenticates each request and passes an explicit `AccessContext` to shared services. Query and rating operations live in `picshelf/catalog.py`; current account and library permissions are checked in `picshelf/access.py`. Keep transport validation in `picshelf/api/` and business invariants in services. Low-level storage helpers retain their existing interfaces and require the caller to enforce access.
 
 ## Browser tests
 

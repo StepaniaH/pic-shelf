@@ -19,8 +19,10 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import DataTable, Footer, Header, Input, Label, Static, Tree
 
-from . import auth, db as dbm, indexer, ops, search
+from . import auth, catalog, db as dbm, indexer, ops, search
+from .access import AccessContext
 from .config import Config
+from .errors import ServiceError
 from .i18n import t
 
 
@@ -179,33 +181,6 @@ class PicShelfTUI(App):
 
     # ------------------------------------------------------------ 加载
 
-    def _filter_clauses(self, sel: dict) -> tuple[list[str], dict]:
-        ew: list[str] = []
-        ep: dict = {}
-        kind = sel.get("kind")
-        if kind == "library":
-            ew.append("i.library_id = :t_lib")
-            ep["t_lib"] = sel["id"]
-        elif kind == "album":
-            ew.append("EXISTS(SELECT 1 FROM album_images ai WHERE ai.image_id=i.id AND ai.album_id=:t_alb)")
-            ep["t_alb"] = sel["id"]
-        elif kind == "artist":
-            ew.append("EXISTS(SELECT 1 FROM image_artists ia WHERE ia.image_id=i.id AND ia.artist_id=:t_art)")
-            ep["t_art"] = sel["id"]
-        elif kind == "tag":
-            ew.append(
-                "EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-                "WHERE it.image_id=i.id AND lower(tg.name)=lower(:t_tag))"
-            )
-            ep["t_tag"] = sel["name"]
-        elif kind == "favorites":
-            ew.append("EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)")
-        elif kind == "highrating":
-            ew.append(
-                "COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id AND r.user_id=:uid),0) >= 8"
-            )
-        return ew, ep
-
     def load_images(self, sel: dict, query: str | None = None, *, offset: int | None = None) -> None:
         if offset is not None:
             self.page_offset = max(0, offset)
@@ -213,12 +188,15 @@ class PicShelfTUI(App):
             self.page_offset = 0
         self._current_sel = sel
         q = query if query is not None else self.query_one("#search-input", Input).value or ""
-        ew, ep = self._filter_clauses(sel)
-        res = search.search_images(
-            self.conn, self.user["id"], self.allowed,
+        kind = sel.get("kind")
+        spec = catalog.ImageQuery(
             query=q, sort="path", limit=self.PAGE_SIZE, offset=self.page_offset,
-            extra_where=ew or None, extra_params=ep or None,
-        )
+            library_id=sel.get("id") if kind == "library" else None,
+            album_id=sel.get("id") if kind == "album" else None,
+            artist_id=sel.get("id") if kind == "artist" else None,
+            tag=sel.get("name") if kind == "tag" else None,
+            favorites=kind == "favorites", rating_min=8 if kind == "highrating" else None)
+        res = catalog.query_images(self.conn, AccessContext(self.user["id"]), spec)
         self.total = res["total"]
         if not res["items"] and self.page_offset and self.total:
             return self.load_images(sel, offset=max(0, ((self.total - 1) // self.PAGE_SIZE) * self.PAGE_SIZE))
@@ -371,7 +349,10 @@ class PicShelfTUI(App):
         if value is None or value == "":
             return
         try:
-            summary = ops.set_rating(self.conn, iid, self.user["id"], int(value))
+            summary = catalog.rate_image(self.conn, AccessContext(self.user["id"], local_admin=True), iid, int(value))
+        except ServiceError as exc:
+            self.notify(f"{exc.detail} {exc.next_step}", severity="error")
+            return
         except ValueError:
             self.notify(t("评分必须是 0–10 的整数"), severity="error")
             return
