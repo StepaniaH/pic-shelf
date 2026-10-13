@@ -2,6 +2,12 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+  "重试未完成项": "Retry unfinished items",
+  "显示第 {start}–{end} 项，共 {total} 项": "Showing items {start}–{end} of {total}",
+  "扫描错误：": "Scan errors:",
+  "选项已变化，请重新预演。": "Options changed. Create a new preview.",
+  "上一页": "Previous page",
+  "下一页": "Next page",
   "密码": "Password",
   "用户名": "Username",
   "加载中…": "Loading…",
@@ -134,7 +140,7 @@ export const EN = {
   "硬链": "Hardlink",
   "跳过": "Skip",
   "错误": "Error",
-  "\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">以上为预演结果，未改动任何文件。确认后点「执行」。</p>": "\n    <p><b>{v0}</b> files: new <b>{v1}</b>, skipped <b>{v2}</b> (duplicate/existing), errors <b>{v3}</b>.\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>Action</th><th>Source</th><th>Target</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">Dry-run result — nothing changed. Click \"Execute\" to proceed.</p>",
+  "\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">预演已保存，源文件与目标文件未改动。确认后点「执行」。</p>": "\n    <p><b>{v0}</b> files: new <b>{v1}</b>, skipped <b>{v2}</b> (duplicate/existing), errors <b>{v3}</b>.\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>Action</th><th>Source</th><th>Target</th><th>Note</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">Preview saved; source and destination files are unchanged. Click \"Execute\" to proceed.</p>",
   "<p>执行完成：硬链 <b>{v0}</b>，复制 <b>{v1}</b>，移动 <b>{v2}</b>，跳过 <b>{v3}</b>，错误 <b>{v4}</b>。\n  {v5}</p>\n  {v6}": "<p>Done: hardlinked <b>{v0}</b>, copied <b>{v1}</b>, moved <b>{v2}</b>, skipped <b>{v3}</b>, errors <b>{v4}</b>.\n  {v5}</p>\n  {v6}",
   "\n    <div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"{v0}\">\n      <div class=\"modal-head\"><h2>{v1}</h2><button class=\"icon-btn\" data-close aria-label=\"关闭\">✕</button></div>\n      <div class=\"modal-body\"></div>\n    </div>": "\n    <div class=\"modal\" role=\"dialog\" aria-modal=\"true\" aria-label=\"{v0}\">\n      <div class=\"modal-head\"><h2>{v1}</h2><button class=\"icon-btn\" data-close aria-label=\"Close\">✕</button></div>\n      <div class=\"modal-body\"></div>\n    </div>",
   "<form class=\"prompt-form\"><input type=\"{type}\" value=\"{v0}\" placeholder=\"{v1}\" autocomplete=\"off\"><div class=\"modal-actions\"><button type=\"submit\" class=\"btn primary\">确定</button><button type=\"button\" class=\"btn\" data-cancel>取消</button></div></form>": "<form class=\"prompt-form\"><input type=\"{type}\" value=\"{v0}\" placeholder=\"{v1}\" autocomplete=\"off\"><div class=\"modal-actions\"><button type=\"submit\" class=\"btn primary\">OK</button><button type=\"button\" class=\"btn\" data-cancel>Cancel</button></div></form>",

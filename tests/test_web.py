@@ -24,6 +24,8 @@ pytestmark = pytest.mark.skipif(
 class WebServer:
     url: str
     password: str = field(repr=False)
+    import_source: Path
+    import_target: Path
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +55,11 @@ def web_server(tmp_path_factory):
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(.02)
     assert server.started
-    yield WebServer(f"http://127.0.0.1:{sock.getsockname()[1]}", password)
+    import_source = root / "incoming"
+    import_target = root / "managed"
+    import_target.mkdir()
+    make_image(import_source / "first.png", (20, 100, 230), size=(50, 30))
+    yield WebServer(f"http://127.0.0.1:{sock.getsockname()[1]}", password, import_source, import_target)
     server.should_exit = True
     thread.join(timeout=10)
     sock.close()
@@ -88,7 +94,34 @@ def sign_in(page, web_server, language="en"):
     page.locator("#login-username").fill("browser-test")
     page.locator("#login-password").fill(web_server.password)
     page.locator("#login-form button").click()
-    page.locator(".lib-card").wait_for()
+    page.locator(".lib-card").first.wait_for()
+
+
+def test_import_executes_saved_preview_and_requires_new_preview_after_option_change(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    library = page.evaluate("""async (root) => {
+      const { api } = await import('/js/api.js');
+      return await api('/libraries', {method:'POST', body:{name:'Managed import test',root_path:root}});
+    }""", str(web_server.import_target))
+    page.goto(web_server.url + "/#/admin")
+    page.locator('[data-tab="import"]').click()
+    page.locator("#imp-src").fill(str(web_server.import_source))
+    page.locator("#imp-lib").select_option(str(library["id"]))
+    page.locator("#imp-mode").select_option("copy")
+    page.locator("#imp-plan").click()
+    expect(page.locator("#imp-exec")).to_be_enabled()
+    page.locator("#imp-mode").select_option("move")
+    expect(page.locator("#imp-exec")).to_be_disabled()
+    page.locator("#imp-mode").select_option("copy")
+    page.locator("#imp-plan").click()
+    expect(page.locator("#imp-exec")).to_be_enabled()
+    make_image(web_server.import_source / "later.png", (80, 160, 240), size=(50, 30))
+    page.locator("#imp-exec").click()
+    page.locator(".modal-body .btn.danger").click()
+    expect(page.locator("#imp-out")).to_contain_text("Scanned: added 1 image(s).")
+    assert (web_server.import_target / "first.png").read_bytes() == (web_server.import_source / "first.png").read_bytes()
+    assert not (web_server.import_target / "later.png").exists()
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

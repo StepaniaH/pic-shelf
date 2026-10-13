@@ -21,6 +21,7 @@ import errno
 import os
 import shutil
 import sqlite3
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -32,8 +33,24 @@ _ILLEGAL = set('\x00<>:"\\|?*') | {chr(c) for c in range(32)}
 
 
 def sanitize_filename(name: str) -> str:
+    name = unicodedata.normalize("NFC", name)
     cleaned = "".join("_" if ch in _ILLEGAL else ch for ch in name).strip().strip(".")
-    return cleaned or "unnamed"
+    cleaned = cleaned or "unnamed"
+    stem, ext = os.path.splitext(cleaned)
+    reserved = {"CON", "PRN", "AUX", "NUL", *(f"COM{n}" for n in range(1, 10)), *(f"LPT{n}" for n in range(1, 10))}
+    if stem.upper() in reserved:
+        stem = "_" + stem
+    # Leave room for collision suffixes below common 255-byte component limits.
+    while len((stem + ext).encode("utf-8")) > 220:
+        if len(stem) > 1:
+            stem = stem[:-1]
+        else:
+            ext = ext[:-1]
+    return stem + ext
+
+
+def _portable_key(path: Path) -> str:
+    return unicodedata.normalize("NFC", str(path)).casefold()
 
 
 def plan_import(
@@ -69,9 +86,18 @@ def plan_import(
         dst_dev = source_root.stat().st_dev
 
     planned: set[str] = set()
-    reserved: set[Path] = set()
+    reserved: set[str] = set()
+    directory_aliases: dict[str, Path] = {}
+    directory_entries: dict[Path, dict[str, Path]] = {}
     items: list[dict] = []
     counts = {"hardlink": 0, "copy": 0, "move": 0, "skip": 0, "error": 0}
+
+    def equivalent(path):
+        if path.parent not in directory_entries:
+            directory_entries[path.parent] = {
+                _portable_key(child): child for child in sorted(path.parent.iterdir())
+            } if path.parent.is_dir() else {}
+        return directory_entries[path.parent].get(_portable_key(path))
 
     def walk_error(exc):
         items.append({"src": str(exc.filename or source_root), "dst": None,
@@ -98,17 +124,23 @@ def plan_import(
             target_name = sanitize_filename(path.name) if rename else path.name
             stem, ext = os.path.splitext(target_name)
             suffix = 1
-            rel_dst = rel.parent / target_name
-            dst = root / rel_dst
+            parent = root
+            for part in rel.parent.parts:
+                proposed = parent / (sanitize_filename(part) if rename else part)
+                key = _portable_key(proposed)
+                parent = directory_aliases.setdefault(key, equivalent(proposed) or proposed)
+            dst = parent / target_name
+            if not dst.resolve().is_relative_to(root):
+                raise ValueError(t("目标路径越出库目录，请检查符号链接"))
             skipped_dup = False
-            while dst in reserved or dst.exists() or dst.is_symlink():
-                if (dst not in reserved and dst.is_file()
-                        and dst.resolve().is_relative_to(root)
-                        and hashing.sha256_file(dst) == sha):
+            while _portable_key(dst) in reserved or equivalent(dst) or dst.exists() or dst.is_symlink():
+                existing_dst = equivalent(dst) or dst
+                if (_portable_key(dst) not in reserved and existing_dst.is_file()
+                        and existing_dst.resolve().is_relative_to(root)
+                        and hashing.sha256_file(existing_dst) == sha):
                     skipped_dup = True
                     break
-                rel_dst = rel.parent / f"{stem}-{suffix}{ext}"
-                dst = root / rel_dst
+                dst = parent / f"{stem}-{suffix}{ext}"
                 suffix += 1
             if not dst.resolve().is_relative_to(root):
                 raise ValueError(t("目标路径位于库目录之外，请检查符号链接"))
@@ -125,7 +157,7 @@ def plan_import(
                           "sha256": sha, "reason": ""})
             counts[action] += 1
             planned.add(sha)
-            reserved.add(dst)
+            reserved.add(_portable_key(dst))
         except Exception as exc:  # 单文件失败不中断计划
             items.append({"src": str(path), "dst": None, "action": "error", "reason": str(exc)})
             counts["error"] += 1

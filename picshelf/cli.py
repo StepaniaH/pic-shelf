@@ -847,37 +847,52 @@ def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: 
               help="文件名规范化（去掉文件系统危险字符）")
 @click.option("--apply", "do_apply", is_flag=True, help="真正执行（默认只预演）")
 @click.option("--yes", is_flag=True, help="跳过执行确认")
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
 def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
-               rename: bool, do_apply: bool, yes: bool):
+               rename: bool, do_apply: bool, yes: bool, as_json: bool):
     """把外部目录导入托管的库：预演优先，--apply 执行，完成后自动扫描入库。"""
-    from . import importer
+    from . import import_plans
 
     conn = _conn(cfg)
     lib = libsvc.find_library(conn, library_name)
     if lib is None:
         raise click.ClickException(t("找不到库：{library_name}（先运行 picshelf library add）", library_name=library_name))
     try:
-        plan = importer.plan_import(conn, lib, source_dir, mode=mode, rename=rename)
+        access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+        plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename)
     except ValueError as exc:
         raise click.ClickException(str(exc))
+
+    if as_json:
+        if not do_apply:
+            click.echo(json.dumps(plan, ensure_ascii=False, indent=2))
+            return
+        if not yes:
+            raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
+        result = import_plans.execute_plan(conn, cfg, access, plan["plan_id"])
+        click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["state"] != "succeeded":
+            raise click.exceptions.Exit(1)
+        return
 
     s = plan["stats"]
     new_n = s["hardlink"] + s["copy"] + s["move"]
     click.echo(t("预演：源 {v0} → 库 #{v1} {v2}（模式：{mode}）", v0=plan['source'], v1=lib['id'], v2=lib['name'], mode=mode))
     click.echo(
-        t("共 {v0} 个文件：新导入 {new_n}，跳过 {v1}（重复/已存在），错误 {v2}", v0=len(plan['items']), new_n=new_n, v1=s['skip'], v2=s['error'])
+        t("共 {v0} 个文件：新导入 {new_n}，跳过 {v1}（重复/已存在），错误 {v2}", v0=plan['items_total'], new_n=new_n, v1=s['skip'], v2=s['error'])
     )
+    click.echo(t("计划 ID：{plan_id}（可用 import-status 查看，import-execute 执行）", plan_id=plan["plan_id"]))
     labels = {"hardlink": t("硬链"), "copy": t("复制"), "move": t("移动"), "skip": t("跳过"), "error": t("错误")}
     for item in plan["items"][:20]:
         dst = item["dst"] or "—"
         reason = f"  ← {item['reason']}" if item["reason"] else ""
         click.echo(f"  [{labels.get(item['action'], item['action'])}] {item['src']} → {dst}{reason}")
-    if len(plan["items"]) > 20:
-        click.echo(t("  …（共 {v0} 项，只显示前 20）", v0=len(plan['items'])))
+    if plan["items_total"] > 20:
+        click.echo(t("  …（共 {v0} 项，只显示前 20）", v0=plan['items_total']))
 
     if not do_apply:
-        click.echo(t("这是预演，未改动任何文件。确认无误后加 --apply 执行。"))
+        click.echo(t("这是预演，未改动源文件或目标文件。使用 import-execute 执行已保存的计划。"))
         return
     if new_n == 0:
         click.echo(t("没有需要导入的文件。"))
@@ -890,17 +905,74 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
             if not click.confirm(t("确认导入 {new_n} 个文件？", new_n=new_n)):
                 raise click.ClickException(t("已取消"))
 
-    done = importer.execute_import(plan, apply=True)
+    result = import_plans.execute_plan(conn, cfg, access, plan["plan_id"])
+    done = result["done"]
     click.echo(
         t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", v0=done['hardlink'], v1=done['copy'], v2=done['move'], v3=done['skip'], v4=done['error'])
     )
     for err in done["errors"][:10]:
         click.echo(f"  ! {err}", err=True)
-    if done["hardlink"] or done["copy"] or done["move"]:
-        stats = indexer.scan_library(conn, cfg, lib["id"])
+    if result["scan"] is not None:
+        stats = result["scan"]
         click.echo(
             t("已扫描入库：新增 {v0}，更新 {v1}，未变 {v2}", v0=stats['added'], v1=stats['updated'], v2=stats['unchanged'])
         )
+    if result["state"] != "succeeded":
+        raise click.exceptions.Exit(1)
+
+
+@main.command("import-status")
+@click.argument("plan_id")
+@click.option("--offset", default=0, type=click.IntRange(min=0))
+@click.option("--limit", default=300, type=click.IntRange(1, 1000))
+@click.pass_obj
+def import_status(cfg: Config, plan_id: str, offset: int, limit: int):
+    """以 JSON 查看已保存的导入计划和逐项结果。"""
+    from . import import_plans
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(import_plans.get_plan(conn, access, plan_id, offset=offset, limit=limit),
+                          ensure_ascii=False, indent=2))
+
+
+@main.command("import-execute")
+@click.argument("plan_id")
+@click.option("--yes", is_flag=True, help="跳过执行确认")
+@click.option("--retry", is_flag=True, help="继续取消的计划或重试失败项目，成功项不会重复执行")
+@click.option("--json", "as_json", is_flag=True, help="输出 JSON")
+@click.pass_obj
+def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: bool):
+    """执行已查看的导入计划；不会重新扫描源目录生成另一份计划。"""
+    from . import import_plans
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    try:
+        plan = import_plans.get_plan(conn, access, plan_id)
+        if not yes:
+            if as_json or not sys.stdin.isatty():
+                raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
+            if not click.confirm(t("确认执行计划 {plan_id}（模式：{mode}）？", plan_id=plan_id, mode=plan["mode"])):
+                raise click.ClickException(t("已取消"))
+        result = import_plans.execute_plan(conn, cfg, access, plan_id, retry=retry)
+    except ServiceError as exc:
+        if not as_json:
+            raise
+        click.echo(json.dumps(exc.as_dict(), ensure_ascii=False))
+        raise click.exceptions.Exit(1)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if result["state"] != "succeeded":
+        raise click.exceptions.Exit(1)
+
+
+@main.command("import-cancel")
+@click.argument("plan_id")
+@click.pass_obj
+def import_cancel(cfg: Config, plan_id: str):
+    """请求取消导入；已经完成的项目会保留。"""
+    from . import import_plans
+    conn = _conn(cfg)
+    access = AccessContext(_acting_user(conn)["id"], local_admin=True)
+    click.echo(json.dumps(import_plans.cancel_plan(conn, access, plan_id), ensure_ascii=False, indent=2))
 
 
 # ---------------------------------------------------------------- 用户 / 组 / 统计

@@ -17,6 +17,7 @@ from typing import Callable
 
 from . import hashing
 from .config import Config
+from .coordination import library_write_lock
 from .db import utcnow
 from .i18n import t
 
@@ -69,6 +70,17 @@ def scan_library(
     root = Path(lib["root_path"]).resolve()
     if not root.is_dir():
         raise ValueError(t("库目录不存在：{root}", root=root))
+    with library_write_lock(cfg, root):
+        return _scan_library(conn, cfg, library_id, full=full, progress=progress)
+
+
+def _scan_library(conn, cfg, library_id, *, full=False, progress=None) -> dict:
+    lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
+    if lib is None:
+        raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
+    root = Path(lib["root_path"]).resolve()
+    if not root.is_dir():
+        raise ValueError(t("库目录不存在：{root}", root=root))
 
     cur = conn.execute(
         "INSERT INTO scans(library_id, started_at) VALUES(?,?)", (library_id, utcnow())
@@ -85,6 +97,9 @@ def scan_library(
         r["rel_path"]: r
         for r in conn.execute("SELECT * FROM images WHERE library_id=?", (library_id,))
     }
+    incomplete = {r["destination"]: json.loads(r["destination_identity"]) for r in conn.execute(
+        "SELECT destination,destination_identity FROM import_plan_items "
+        "WHERE destination_identity IS NOT NULL AND state NOT IN ('succeeded','skipped')")}
 
     def keep_existing(row, rel_dir):
         seen_ids.add(int(row["id"]))
@@ -114,6 +129,10 @@ def scan_library(
             if not path.resolve().is_relative_to(root):
                 raise ValueError(t("图片位于库目录之外，请检查符号链接"))
             st = path.stat()
+            identity = incomplete.get(str(path))
+            if identity and st.st_dev == identity["device"] and st.st_ino == identity["inode"]:
+                stats["errors"].append(t("导入尚未完成：{path}，请恢复导入计划", path=rel))
+                continue
         except (OSError, ValueError, RuntimeError) as exc:
             stats["errors"].append(f"{rel}: {exc}")
             continue

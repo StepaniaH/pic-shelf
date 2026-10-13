@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -212,7 +212,36 @@ CREATE INDEX idx_comments_image ON comments(image_id, deleted);
 CREATE INDEX idx_notes_image ON notes(image_id, deleted);
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1}
+_SCHEMA_V2 = """
+CREATE TABLE import_plans (
+  id TEXT PRIMARY KEY,
+  library_id INTEGER NOT NULL REFERENCES libraries(id),
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  snapshot TEXT NOT NULL,
+  state TEXT NOT NULL DEFAULT 'preview',
+  started_at TEXT,
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  result TEXT
+);
+CREATE TABLE import_plan_items (
+  plan_id TEXT NOT NULL REFERENCES import_plans(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL,
+  destination TEXT,
+  state TEXT NOT NULL DEFAULT 'pending',
+  source_identity TEXT,
+  destination_identity TEXT,
+  actual_action TEXT,
+  error_code TEXT,
+  detail TEXT,
+  PRIMARY KEY(plan_id, position)
+);
+CREATE INDEX idx_import_plans_owner ON import_plans(created_by, created_at);
+CREATE INDEX idx_import_plan_dest ON import_plan_items(destination, state);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2}
 
 
 def utcnow() -> str:
@@ -283,6 +312,8 @@ def validate_schema(conn: sqlite3.Connection) -> int:
                     "images", "albums", "album_images", "tags", "image_tags", "artists",
                     "image_artists", "ratings", "favorites", "comments", "notes",
                     "play_sessions", "play_items", "scans"}
+        if current >= 2:
+            required |= {"import_plans", "import_plan_items"}
         if not required <= tables:
             raise _invalid_schema()
     return current

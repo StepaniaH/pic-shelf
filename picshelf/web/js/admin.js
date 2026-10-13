@@ -239,13 +239,24 @@ async function renderImport(body) {
   body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把外部目录的图片导入到托管的库。默认「硬链接」：原文件不动、库内出现规范化命名、同盘零额外空间（跨盘自动降级为复制）。先「预演」，确认无误后再「执行」。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}${t("（{n} 张）", {n: l.image_count})}</option>`).join(""), v1: libs.length ? "" : `<span class="muted">${t("提示：先到「库」标签页注册一个目标库。")}</span>`});
 
   let plan = null;
+  let plannedInput = null;
+  let executing = false;
   const out = body.querySelector("#imp-out");
   const execBtn = body.querySelector("#imp-exec");
+  const inputControls = [...body.querySelectorAll("#imp-src, #imp-lib, #imp-mode, #imp-rename, #imp-plan")];
   const payload = () => ({
     source_dir: body.querySelector("#imp-src").value.trim(),
     library_id: Number(body.querySelector("#imp-lib").value),
     mode: body.querySelector("#imp-mode").value,
     rename: body.querySelector("#imp-rename").checked,
+  });
+  body.querySelectorAll("#imp-src, #imp-lib, #imp-mode, #imp-rename").forEach((input) => {
+    input.addEventListener("input", () => {
+      plan = null;
+      plannedInput = null;
+      execBtn.disabled = true;
+      out.textContent = t("选项已变化，请重新预演。");
+    });
   });
 
   body.querySelector("#imp-plan").addEventListener("click", async () => {
@@ -253,10 +264,19 @@ async function renderImport(body) {
     if (!p.source_dir) { toast(t("请填写源目录"), "error"); return; }
     const btn = body.querySelector("#imp-plan");
     btn.disabled = true;
+    execBtn.disabled = true;
+    plan = null;
+    plannedInput = null;
     btn.textContent = t("预演中…");
     try {
-      plan = await api("/import/plan", { method: "POST", body: p });
-      renderPlan(plan, out);
+      const saved = await api("/import/plan", { method: "POST", body: p });
+      if (JSON.stringify(payload()) !== JSON.stringify(p)) {
+        out.textContent = t("选项已变化，请重新预演。");
+        return;
+      }
+      plan = saved;
+      plannedInput = p;
+      renderPlan(plan, out, () => plan?.plan_id === saved.plan_id && plan.state === "preview" && !executing);
       const newN = plan.stats.hardlink + plan.stats.copy + plan.stats.move;
       execBtn.disabled = newN === 0;
     } catch (e) {
@@ -269,38 +289,72 @@ async function renderImport(body) {
   });
 
   execBtn.addEventListener("click", async () => {
-    const p = payload();
+    if (!plan || JSON.stringify(payload()) !== JSON.stringify(plannedInput)) return;
+    const selectedPlan = plan;
+    const p = plannedInput;
     const newN = plan ? plan.stats.hardlink + plan.stats.copy + plan.stats.move : 0;
     const modeText = { hardlink: t("硬链接"), copy: t("复制"), move: t("移动") }[p.mode] || p.mode;
     const warn = p.mode === "move" ? t("注意：移动模式下原位置的文件将被移走，不再保留。") : "";
     if (!(await uiConfirm(t("确认执行导入"), t("将处理 {newN} 个文件（模式：{modeText}）。{warn} 将写入目标库目录。", {newN: newN, modeText: modeText, warn: warn})))) return;
+    if (plan !== selectedPlan || JSON.stringify(payload()) !== JSON.stringify(p)) return;
     execBtn.disabled = true;
+    executing = true;
+    inputControls.forEach((input) => { input.disabled = true; });
     execBtn.textContent = t("执行中…");
     try {
-      const r = await api("/import/execute", { method: "POST", body: { ...p, confirm: true } });
-      toast(t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", {v0: r.done.hardlink, v1: r.done.copy, v2: r.done.move, v3: r.done.skip, v4: r.done.error}), "ok");
-      renderDone(r, out);
+      const retry = ["partial", "cancelled", "interrupted"].includes(selectedPlan.state);
+      const r = await api(`/import/plans/${selectedPlan.plan_id}/execute`, { method: "POST", body: { confirm: true, retry } });
+      selectedPlan.state = r.state;
+      toast(t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", {v0: r.done.hardlink, v1: r.done.copy, v2: r.done.move, v3: r.done.skip, v4: r.done.error}), r.state === "succeeded" ? "ok" : "error");
+      if (plan === selectedPlan && out.isConnected) renderDone(r, out);
     } catch (e) {
       toast(e.message, "error");
     } finally {
-      execBtn.disabled = false;
-      execBtn.textContent = t("执行");
+      executing = false;
+      inputControls.forEach((input) => { input.disabled = false; });
+      execBtn.disabled = !plan;
+      execBtn.textContent = ["partial", "cancelled", "interrupted"].includes(plan?.state) ? t("重试未完成项") : t("执行");
     }
   });
 }
 
-function renderPlan(plan, out) {
+function renderPlan(plan, out, isCurrent) {
   const s = plan.stats;
   const labels = { hardlink: t("硬链"), copy: t("复制"), move: t("移动"), skip: t("跳过"), error: t("错误") };
-  const rows = plan.items.slice(0, 100).map((it) => `
+  const rows = plan.items.map((it) => `
     <tr><td>${labels[it.action] || it.action}</td>
       <td class="src">${escapeHtml(it.src)}</td>
       <td class="dst">${escapeHtml(it.dst || "—")}</td>
       <td>${escapeHtml(it.reason || "")}</td></tr>`).join("");
-  out.innerHTML = t("\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">以上为预演结果，未改动任何文件。确认后点「执行」。</p>", {v0: plan.items_total, v1: s.hardlink + s.copy + s.move, v2: s.skip, v3: s.error, v4: plan.items_truncated ? t("（列表只显示前 {n} 项）", {n: plan.items.length}) : "", rows: rows});
+  out.innerHTML = t("\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">预演已保存，源文件与目标文件未改动。确认后点「执行」。</p>", {v0: plan.items_total, v1: s.hardlink + s.copy + s.move, v2: s.skip, v3: s.error, v4: t("显示第 {start}–{end} 项，共 {total} 项", {start: plan.items.length ? plan.offset + 1 : 0, end: plan.offset + plan.items.length, total: plan.items_total}), rows: rows});
+  const navigation = document.createElement("div");
+  navigation.className = "form-row";
+  for (const [label, offset] of [[t("上一页"), plan.offset > 0 ? Math.max(0, plan.offset - plan.limit) : null], [t("下一页"), plan.next_offset]]) {
+    const button = document.createElement("button");
+    button.className = "btn";
+    button.textContent = label;
+    button.disabled = offset === null;
+    button.addEventListener("click", async () => {
+      if (!isCurrent()) return;
+      navigation.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+      try {
+        const next = await api(`/import/plans/${plan.plan_id}?offset=${offset}&limit=${plan.limit}`);
+        if (isCurrent()) renderPlan(next, out, isCurrent);
+      } catch (error) {
+        if (isCurrent()) { toast(error.message, "error"); renderPlan(plan, out, isCurrent); }
+      }
+    });
+    navigation.appendChild(button);
+  }
+  out.appendChild(navigation);
 }
 
 function renderDone(r, out) {
   const d = r.done;
   out.innerHTML = t("<p>执行完成：硬链 <b>{v0}</b>，复制 <b>{v1}</b>，移动 <b>{v2}</b>，跳过 <b>{v3}</b>，错误 <b>{v4}</b>。\n  {v5}</p>\n  {v6}", {v0: d.hardlink, v1: d.copy, v2: d.move, v3: d.skip, v4: d.error, v5: r.scan ? t("已扫描入库：新增 <b>{v0}</b> 张。", {v0: r.scan.added}) : "", v6: d.errors && d.errors.length ? `<details><summary>${t("错误明细（{v0}）", {v0: d.errors.length})}</summary><pre>${escapeHtml(d.errors.join("\n"))}</pre></details>` : ""});
+  if (r.scan?.errors?.length) {
+    const scanErrors = document.createElement("pre");
+    scanErrors.textContent = t("扫描错误：") + "\n" + r.scan.errors.join("\n");
+    out.appendChild(scanErrors);
+  }
 }

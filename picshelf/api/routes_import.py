@@ -5,17 +5,15 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, ConfigDict
 
-from .. import auth, importer, indexer
+from .. import import_plans
+from ..access import AccessContext
 from .deps import Db, User, ensure_library_access
 from ..i18n import t
 
 router = APIRouter(prefix="/import", tags=["import"])
-
-MAX_ITEMS_IN_RESPONSE = 300
-
 
 class ImportBody(BaseModel):
     source_dir: str
@@ -36,35 +34,49 @@ def _target_library(conn, user, library_id: int):
     return lib
 
 
-def _trim_plan(plan: dict) -> dict:
-    total = len(plan["items"])
-    plan["items_truncated"] = total > MAX_ITEMS_IN_RESPONSE
-    plan["items"] = plan["items"][:MAX_ITEMS_IN_RESPONSE]
-    plan["items_total"] = total
-    return plan
-
-
 @router.post("/plan")
 def plan_import(body: ImportBody, conn: Db, user: User):
-    lib = _target_library(conn, user, body.library_id)
+    _target_library(conn, user, body.library_id)
     try:
-        p = importer.plan_import(conn, lib, body.source_dir, mode=body.mode, rename=body.rename)
+        return import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
+                                        body.source_dir, mode=body.mode, rename=body.rename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    return _trim_plan(p)
 
 
 @router.post("/execute")
 def execute_import(body: ExecuteBody, request: Request, conn: Db, user: User):
     if not body.confirm:
         raise HTTPException(status_code=400, detail=t("执行需要 confirm=true 明确确认"))
-    lib = _target_library(conn, user, body.library_id)
+    _target_library(conn, user, body.library_id)
     try:
-        p = importer.plan_import(conn, lib, body.source_dir, mode=body.mode, rename=body.rename)
+        plan = import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
+                                          body.source_dir, mode=body.mode, rename=body.rename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    done = importer.execute_import(p, apply=True)
-    scan = None
-    if done["hardlink"] or done["copy"] or done["move"]:
-        scan = indexer.scan_library(conn, request.app.state.cfg, int(lib["id"]))
-    return {"planned": p["stats"], "done": done, "scan": scan}
+    return {**import_plans.execute_plan(conn, request.app.state.cfg, AccessContext(user["id"]), plan["plan_id"]),
+            "execution_semantics": "immediate_plan"}
+
+
+class ConfirmPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: bool = False
+    retry: bool = False
+
+
+@router.get("/plans/{plan_id}")
+def get_plan(plan_id: str, conn: Db, user: User, offset: int = Query(0, ge=0),
+             limit: int = Query(300, ge=1, le=1000)):
+    return import_plans.get_plan(conn, AccessContext(user["id"]), plan_id, offset=offset, limit=limit)
+
+
+@router.post("/plans/{plan_id}/execute")
+def execute_saved_plan(plan_id: str, body: ConfirmPlan, request: Request, conn: Db, user: User):
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail=t("执行需要 confirm=true 明确确认"))
+    return import_plans.execute_plan(conn, request.app.state.cfg, AccessContext(user["id"]), plan_id, retry=body.retry)
+
+
+@router.post("/plans/{plan_id}/cancel")
+def cancel_saved_plan(plan_id: str, conn: Db, user: User):
+    return import_plans.cancel_plan(conn, AccessContext(user["id"]), plan_id)

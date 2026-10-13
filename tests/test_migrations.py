@@ -15,6 +15,8 @@ from picshelf.errors import ServiceError
 from tests.scenario_support import cli, metadata_snapshot
 
 V1 = Path(__file__).parent / "fixtures/schema_v1.sql"
+CURRENT_VERSION = db.SCHEMA_VERSION
+CURRENT_MIGRATIONS = dict(db.MIGRATIONS)
 
 
 def old_database(path: Path):
@@ -55,9 +57,11 @@ def observe(path):
 
 
 def add_migrations(monkeypatch, *scripts):
-    monkeypatch.setattr(db, "SCHEMA_VERSION", 1 + len(scripts))
-    monkeypatch.setattr(db, "MIGRATIONS", {1: V1.read_text().split("INSERT INTO meta")[0],
-                                           **dict(enumerate(scripts, 2))})
+    # Exercise future migrations after the complete current schema, starting
+    # from the frozen v1 fixture. Production validation remains active.
+    monkeypatch.setattr(db, "SCHEMA_VERSION", CURRENT_VERSION + len(scripts))
+    monkeypatch.setattr(db, "MIGRATIONS", {**CURRENT_MIGRATIONS,
+                                           **dict(enumerate(scripts, CURRENT_VERSION + 1))})
 
 
 def test_upgrade_and_reopen_preserve_all_released_metadata(tmp_path, monkeypatch):
@@ -68,7 +72,7 @@ def test_upgrade_and_reopen_preserve_all_released_metadata(tmp_path, monkeypatch
                    "CREATE INDEX fixture_state_index ON images(fixture_state);")
     for _ in range(2):
         conn = db.open_db(path)
-        assert db.schema_version(conn) == 3
+        assert db.schema_version(conn) == CURRENT_VERSION + 2
         assert list(map(tuple, conn.execute("SELECT id,fixture_state FROM images ORDER BY id"))) == [
             (31, "unreviewed"), (47, "unreviewed")]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -216,7 +220,7 @@ def test_trigger_and_quoted_semicolons_migrate_without_splitting_sql(tmp_path, m
         conn.close()
 
 
-def test_process_interruption_during_ddl_rolls_back_on_reopen(tmp_path):
+def test_process_interruption_during_ddl_rolls_back_on_reopen(tmp_path, monkeypatch):
     path = old_database(tmp_path / "old.db")
     before = observe(path)
     script = """
@@ -232,6 +236,7 @@ db.migrate(c)
     result = subprocess.run([sys.executable, "-c", script, str(path)], capture_output=True, timeout=20)
     assert result.returncode == 73
     assert observe(path) == before
+    monkeypatch.setattr(db, "SCHEMA_VERSION", 1)
     db.open_db(path).close()
     assert observe(path) == before
 
@@ -240,6 +245,7 @@ def test_missing_migration_and_snapshot_failure_do_not_change_old_data(tmp_path,
     path = old_database(tmp_path / "old.db")
     before = observe(path)
     monkeypatch.setattr(db, "SCHEMA_VERSION", 2)
+    monkeypatch.setattr(db, "MIGRATIONS", {1: db.MIGRATIONS[1]})
     with pytest.raises(ServiceError) as caught:
         db.open_db(path)
     assert caught.value.code == "migration_unavailable"
@@ -274,3 +280,15 @@ def test_restore_rejects_future_schema_before_replacing_current_library(tmp_path
     assert result.returncode != 0 and "unsupported_schema" in result.stderr
     assert "Traceback" not in result.stderr
     assert observe(cfg.db_path) == before
+
+
+def test_current_schema_upgrades_released_catalog_without_losing_metadata(tmp_path):
+    path = old_database(tmp_path / "old.db")
+    before = observe(path)
+    conn = db.open_db(path)
+    assert db.schema_version(conn) == db.SCHEMA_VERSION
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+    after = observe(path)
+    for key in before.keys() - {"version", "schema"}:
+        assert after[key] == before[key]

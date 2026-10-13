@@ -58,11 +58,51 @@ picshelf library add collection /path/to/managed/library --mkdir
 picshelf import /path/to/incoming collection            # dry run
 picshelf import /path/to/incoming collection --apply    # review and confirm
 picshelf import /path/to/incoming collection --mode copy --apply
+picshelf import /path/to/incoming collection --mode copy --json
+picshelf import-status <plan-id> --offset 0 --limit 300
+picshelf import-execute <plan-id> --yes --json
+picshelf import-execute <plan-id> --retry --yes --json
+picshelf import-cancel <plan-id>
 ```
 
 The default is `hardlink`. Hardlinks share file contents with their source: editing either link edits the same file. Use `copy` for an independent copy. Cross-device hardlinks fall back to copying. `move` removes the source only after creating the destination. `--yes` explicitly accepts the import confirmation for automation.
 
 Import deduplicates by SHA-256, reserves destination names within each plan and never overwrites a file that appears after planning. A source changed after the dry run requires a new plan. Sources and destinations must not contain one another; links escaping the source or library directory are rejected.
+
+Previews save a complete plan in the data directory without changing source or
+destination files. Use the returned ID with `import-status` and `import-execute`
+to execute exactly that preview. `import --apply` remains a convenience command
+that creates and executes a fresh plan in the same invocation. Creating a preview
+and later calling `import --apply` creates a new plan; use `import-execute` to bind
+the two steps. JSON output includes pagination and per-item states.
+
+A preview expires after 24 hours. A started operation can be resumed after expiry
+only with explicit `--retry`; it still checks the original source fingerprints,
+destination identity and current access. Successful items are never repeated.
+Cancellation preserves completed work and takes effect between files. Retry
+continues unfinished items; source changes, occupied destinations and unrecognized
+partial files are conflicts that require inspection or a new preview. Pic Shelf
+does not delete these files automatically. Owned partial copies are excluded from
+scanning until the import completes. Inspect the plan before resolving a conflict;
+keep the source or another verified copy of its content.
+
+Names are normalized to Unicode NFC; reserved names and overlong components are
+made portable, and case-insensitive collisions receive a suffix. Directory name
+normalization is also shown in the preview. Move rejects symbolic-link sources;
+use copy or select the ordinary source file directly. A same-device move preserves
+file identity using a hardlink before removing the source. Unsupported hardlinks
+fall back to a verified copy. Hardlinks remain shared after import.
+
+Concurrent scans and imports of the same physical root return `library_busy` for
+the competing operation; wait and retry. Other libraries remain available. Locks
+coordinate processes using the same Pic Shelf data directory. File locking is
+currently implemented for POSIX platforms. Do not run separate installations as
+uncoordinated writers of the same directory.
+
+Import results distinguish completed files from scan errors. An undecodable file
+can have a catalog record without derivatives; it is reported as an error, not as
+missing. The plan is `partial` when file operations or the final scan have errors.
+CLI execution returns a nonzero status for partial, interrupted or cancelled work.
 
 Scanning preserves image IDs, ratings, tags and notes when an unchanged file moves to a different path. Missing images are marked as missing, not erased. Read or decode errors are reported without treating an existing image as deleted. Folder albums follow current directory membership; manual albums remain under user control.
 
@@ -92,9 +132,20 @@ Interactive documentation is available at `/api/docs`; the machine-readable sche
 | Authenticated media | `GET /media/{thumb,preview,original}/{id}` |
 | Tags and artists | `GET /tags`, `GET /artists` |
 | Import preview / execution | `POST /import/plan`, `POST /import/execute` |
+| Saved import plan / pages | `GET /import/plans/{plan-id}?offset=0&limit=300` |
+| Execute or retry the saved plan | `POST /import/plans/{plan-id}/execute` with `confirm: true`, optionally `retry: true` |
+| Cancel at the next file boundary | `POST /import/plans/{plan-id}/cancel` |
 | Playback queue | `POST /play/sessions` |
 
 Image counts and associated tags/artists follow the caller's library grants and exclude missing images. Administrators can also browse unassigned tags and artists. The global user count is only exposed to administrators. Authentication is required for metadata and all media; health is public. Import execution requires management access and explicit confirmation.
+
+`POST /import/plan` includes a persistent `plan_id`. The saved execution endpoint
+accepts only confirmation and retry options; it does not accept replacement source,
+library or naming options. The Web importer uses this endpoint and invalidates its
+preview when options change. The legacy `/import/execute` endpoint explicitly uses
+`execution_semantics: "immediate_plan"`: it creates a new plan from its input.
+Plan access is limited to its creator and administrators, and current library
+management access is checked again before execution and between items.
 
 Shared service errors preserve the existing `detail` message and HTTP status, and
 add `error.code`, `error.retryable`, `error.next_step` and `error.objects`. Codes
