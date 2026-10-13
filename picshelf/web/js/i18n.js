@@ -2,6 +2,7 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "请等待正在运行的任务结束；需要排队时请使用后台入口": "Wait for running tasks to finish; use a background endpoint if you need to queue the work",
     "请运行 check --full 查看具体问题；先核对备份，再单独修复": "Run check --full for details; verify backups before a separate repair",
     "同时核对原图哈希；默认检查可达性": "Also verify original hashes; check availability by default",
     "输出脱敏的本地诊断 JSON，不上传或自动修复。": "Output redacted local diagnostic JSON without uploading or automatic repair.",

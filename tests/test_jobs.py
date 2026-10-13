@@ -386,3 +386,26 @@ def test_existing_local_scan_works_before_account_creation(cfg, conn, library):
     assert result.returncode == 0, result.stderr
     assert "新增 4" in result.stdout
     assert conn.execute("SELECT COUNT(*) FROM images").fetchone()[0] == 4
+
+
+def test_legacy_sync_scan_respects_decode_slots_and_keeps_metadata(catalog):
+    from picshelf import indexer
+    from fastapi.testclient import TestClient
+    from picshelf.api import create_app
+    from picshelf.coordination import worker_slot
+    conn = db.open_db(catalog.cfg.db_path)
+    before = metadata_snapshot(conn)
+    with held_process(catalog.cfg, 'slot'), held_process(catalog.cfg, 'slot'):
+        with TestClient(create_app(catalog.cfg), headers={'Origin':'http://testserver'}) as client:
+            assert client.post('/api/v1/auth/login',json={'username':'curator','password':catalog.password}).status_code == 200
+            response = client.post(f"/api/v1/libraries/{catalog.libraries['north']}/scan")
+            assert response.status_code == 409
+            assert response.json()['error']['code'] == 'workers_busy'
+            assert response.json()['error']['retryable']
+        assert metadata_snapshot(conn) == before
+    # A nested scan must reuse its worker slot while another process holds the other.
+    with held_process(catalog.cfg, 'slot'), worker_slot(catalog.cfg):
+        result = indexer.scan_library(conn, catalog.cfg, catalog.libraries['north'])
+        assert result['unchanged'] == 12 and not result['errors']
+    assert metadata_snapshot(conn) == before
+    conn.close()

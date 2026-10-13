@@ -17,7 +17,7 @@ from typing import Callable
 
 from . import hashing, metadata
 from .config import Config
-from .coordination import library_write_lock
+from .coordination import library_write_lock, worker_slot
 from .db import utcnow
 from .errors import ServiceError
 from .i18n import t
@@ -74,7 +74,7 @@ def scan_library(
     root = Path(lib["root_path"]).resolve()
     if not root.is_dir():
         raise ValueError(t("库目录不存在：{root}", root=root))
-    with library_write_lock(cfg, root):
+    with library_write_lock(cfg, root), worker_slot(cfg):
         try:
             return _scan_library(conn, cfg, library_id, full=full, progress=progress,
                                  check=check, item_result=item_result, only_paths=only_paths)

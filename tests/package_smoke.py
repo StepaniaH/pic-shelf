@@ -54,6 +54,7 @@ def run(python, root):
     assert (source/'sample.png').stat().st_ino != (root/'managed/sample.png').stat().st_ino
     report=json.loads(command('--data',restored,'check','--full').stdout)
     assert not report['counts']
+    assert json.loads(command('--data',restored,'doctor','--full').stdout)['ready']
     return {'installed_version':info['version'],'source_imported':False,'static_resources':True,
             'images':2,'managed_copy_independent':True,'rating_zero_preserved':True,
             'backup_inspected_and_restored':True,'read_only_check_passed':True}

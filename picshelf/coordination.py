@@ -65,6 +65,12 @@ def library_write_lock(cfg: Config, root: Path):
 
 @contextmanager
 def worker_slot(cfg: Config):
+    held = getattr(_local, 'held', set())
+    for number in range(2):
+        key = (os.getpid(), f'{cfg.data_dir.resolve()}:worker:{number}', False)
+        if key in held:
+            yield
+            return
     for number in range(2):
         from contextlib import ExitStack
         stack = ExitStack()
@@ -79,4 +85,4 @@ def worker_slot(cfg: Config):
             yield
         return
     raise ServiceError("workers_busy", t("后台执行单元正在使用中"), status=409,
-                       retryable=True, next_step=t("任务已排队，请稍后查看进度"))
+                       retryable=True, next_step=t("请等待正在运行的任务结束；需要排队时请使用后台入口"))
