@@ -13,6 +13,7 @@ import time
 from . import batches, db, jobs
 from .config import Config
 from .errors import ServiceError
+from .i18n import t
 
 
 def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
@@ -34,8 +35,12 @@ def work(cfg, *, once=False, parent_pid=None, idle_timeout=None):
     while not should_stop():
         try:
             worked = jobs.run_next(cfg, should_stop=should_stop) or batches.run_next(cfg, should_stop=should_stop)
-        except (ServiceError, OSError):
+        except (ServiceError, OSError) as exc:
             if once:
+                if isinstance(exc, ServiceError):
+                    print(f'{exc.code}: {exc.detail}; {exc.next_step}', file=sys.stderr)
+                else:
+                    print(t('请停止服务并检查数据库备份；不要删除原图或数据库'), file=sys.stderr)
                 return 1
             worked = False
         if once:

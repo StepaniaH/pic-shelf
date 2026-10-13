@@ -11,9 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import tempfile
 import time
-import zipfile
 from pathlib import Path
 
 import click
@@ -175,8 +173,8 @@ class _I18nGroup(click.Group):
 
 def _json_requested(command, args):
     """Inspect Click's parsed options without invoking callbacks or opening data."""
-    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest"}
-    json_commands = {"organize", "rebuild", "import-status", "import-execute", "import-cancel"}
+    json_groups = {"batch", "queries", "play-rules", "play-sessions", "job", "metadata", "import-sources", "manifest", "backup"}
+    json_commands = {"check", "organize", "rebuild", "import-status", "import-execute", "import-cancel"}
     path = []
     machine = False
     while command is not None:
@@ -1220,45 +1218,13 @@ BACKUP_MAGIC = b"PICSHELF1"  # 备份格式魔数；切片偏移一律用 len()�
 @click.pass_obj
 def export_cmd(cfg: Config, out_path: str, encrypt: bool, passphrase_stdin: bool, with_thumbs: bool):
     """导出备份（数据库快照，可选加密）。"""
-    conn = _conn(cfg)
-    out = Path(out_path).expanduser()
-    with tempfile.TemporaryDirectory() as tmp:
-        snap = Path(tmp) / "picshelf.db"
-        dst = sqlite3.connect(str(snap))
-        conn.backup(dst)
-        dst.close()
-        meta = {
-            "app": "picshelf", "version": __version__,
-            "schema": dbm.schema_version(conn),
-            "exported_at": dbm.utcnow(),
-        }
-        zip_path = Path(tmp) / "backup.zip"
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(snap, "picshelf.db")
-            zf.writestr("meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
-            if with_thumbs:
-                for sub in ("thumbs", "previews"):
-                    base = cfg.media_dir / sub
-                    if base.is_dir():
-                        for f in base.rglob("*.webp"):
-                            zf.write(f, f"media/{sub}/{f.relative_to(base).as_posix()}")
-        data = zip_path.read_bytes()
-    if encrypt:
-        from cryptography.fernet import Fernet
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        import base64 as b64
-        passphrase = _read_password(passphrase_stdin, t("设置备份口令"), confirm=not passphrase_stdin)
-        salt = os.urandom(16)
-        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=200_000)
-        key = b64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
-        token = Fernet(key).encrypt(data)
-        out = out if out.suffix == ".fernet" else out.with_suffix(out.suffix + ".fernet")
-        out.write_bytes(BACKUP_MAGIC + salt + token)
-        click.echo(t("已导出加密备份：{out}（{v0}）", out=out, v0=_fmt_size(out.stat().st_size)))
-    else:
-        out.write_bytes(data)
-        click.echo(t("已导出备份：{out}（{v0}）", out=out, v0=_fmt_size(out.stat().st_size)))
+    from . import backups
+    _conn(cfg).close()
+    passphrase = (_read_password(passphrase_stdin, t("设置备份口令"), confirm=not passphrase_stdin)
+                  if encrypt else None)
+    result = backups.export(cfg, out_path, with_thumbs=with_thumbs, passphrase=passphrase)
+    message = "已导出加密备份：{out}（{v0}）" if encrypt else "已导出备份：{out}（{v0}）"
+    click.echo(t(message, out=result['path'], v0=_fmt_size(result['size_bytes'])))
 
 
 @main.command("import-backup")
@@ -1268,64 +1234,43 @@ def export_cmd(cfg: Config, out_path: str, encrypt: bool, passphrase_stdin: bool
 @click.pass_obj
 def import_backup(cfg: Config, backup_path: str, passphrase_stdin: bool, force: bool):
     """从备份恢复数据库。"""
-    raw = Path(backup_path).expanduser().read_bytes()
-    if raw.startswith(BACKUP_MAGIC):
-        from cryptography.fernet import Fernet
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-        import base64 as b64
-        salt, token = raw[len(BACKUP_MAGIC):len(BACKUP_MAGIC) + 16], raw[len(BACKUP_MAGIC) + 16:]
-        passphrase = _read_password(passphrase_stdin, t("输入备份口令"))
-        kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=200_000)
-        key = b64.urlsafe_b64encode(kdf.derive(passphrase.encode("utf-8")))
-        try:
-            raw = Fernet(key).decrypt(token)
-        except Exception:
-            raise click.ClickException(t("口令错误或备份文件损坏"))
-    import io
-    try:
-        with zipfile.ZipFile(io.BytesIO(raw)) as zf:
-            if "picshelf.db" not in zf.namelist():
-                raise click.ClickException(t("备份格式不正确（缺少 picshelf.db）"))
-            db_bytes = zf.read("picshelf.db")
-    except zipfile.BadZipFile as exc:
-        raise click.ClickException(t("备份文件损坏，请选择有效的 Pic Shelf 备份")) from exc
-    if not db_bytes.startswith(b"SQLite format 3"):
-        raise click.ClickException(t("数据库文件无效"))
+    from . import backups
+    with Path(backup_path).open('rb') as stream:
+        encrypted = stream.read(len(backups.MAGIC)) == backups.MAGIC
+    passphrase = _read_password(passphrase_stdin, t("输入备份口令")) if encrypted else None
     cfg.ensure()
-    if cfg.db_path.exists() and not force:
-        raise click.ClickException(t("数据目录已有数据库。如确认覆盖请加 --force（现有库会先自动备份）"))
-    # 先验证快照，再由 SQLite 自己恢复；直接覆盖主文件会混入旧 WAL。
-    with operation_lock(cfg, "catalog"), tempfile.TemporaryDirectory(dir=cfg.data_dir) as tmp:
-        snap = Path(tmp) / "restore.db"
-        snap.write_bytes(db_bytes)
-        source = sqlite3.connect(str(snap))
-        target = None
-        try:
-            if source.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise sqlite3.DatabaseError("integrity_check failed")
-            source.execute("SELECT id FROM images LIMIT 1")
-            source.execute("SELECT id FROM users LIMIT 1")
-            dbm.validate_schema(source)
-            if cfg.db_path.exists():
-                target = sqlite3.connect(str(cfg.db_path))
-                bak = cfg.db_path.with_name(f"picshelf.db.bak-{time.time_ns()}")
-                snapshot = sqlite3.connect(str(bak))
-                try:
-                    target.backup(snapshot)
-                finally:
-                    snapshot.close()
-                click.echo(t("现有数据库已备份到：{bak}", bak=bak))
-            else:
-                target = sqlite3.connect(str(cfg.db_path))
-            source.backup(target)
-        except sqlite3.DatabaseError as exc:
-            raise click.ClickException(t("无法恢复数据库，请检查备份完整性并停止正在写入的服务后重试")) from exc
-        finally:
-            source.close()
-            if target is not None:
-                target.close()
+    result = backups.restore(cfg, backup_path, force=force, passphrase=passphrase)
+    if result['safety_backup']:
+        click.echo(t("现有数据库已备份到：{bak}", bak=result['safety_backup']))
     click.echo(t("已恢复数据库到：{v0}", v0=cfg.db_path))
+
+
+@main.group('backup')
+def backup_group():
+    """检查备份清单、校验和与恢复边界。"""
+
+
+@backup_group.command('inspect')
+@click.argument('file', type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option('--passphrase-stdin', is_flag=True)
+def backup_inspect(file, passphrase_stdin):
+    from . import backups
+    with file.open('rb') as stream:
+        encrypted = stream.read(len(backups.MAGIC)) == backups.MAGIC
+    passphrase = _read_password(passphrase_stdin, t("输入备份口令")) if encrypted else None
+    click.echo(json.dumps(backups.inspect(file, passphrase=passphrase), ensure_ascii=False, indent=2))
+
+
+@main.command('check')
+@click.option('--full', is_flag=True, help='逐个核对原图 SHA-256；默认只检查可达性')
+@click.pass_obj
+def check_cmd(cfg, full):
+    """只读检查原图、派生图、关联与封面；输出 JSON。"""
+    from . import checks
+    result = checks.check(cfg, full=full)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+    if set(result['counts']) - {'derivative_unreferenced'}:
+        raise click.exceptions.Exit(1)
 
 
 # ---------------------------------------------------------------- 托管库导入

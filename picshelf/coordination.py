@@ -15,7 +15,7 @@ _local = threading.local()
 
 
 @contextmanager
-def operation_lock(cfg: Config, name: str, *, shared=False, reentrant=True):
+def operation_lock(cfg: Config, name: str, *, shared=False, reentrant=True, independent=False):
     try:
         import fcntl
     except ImportError as exc:
@@ -24,7 +24,7 @@ def operation_lock(cfg: Config, name: str, *, shared=False, reentrant=True):
     identity = f"{cfg.data_dir.resolve()}:{name}"
     key = (os.getpid(), identity, shared)
     held = getattr(_local, "held", set())
-    if key in held:
+    if key in held and not independent:
         if not reentrant:
             raise ServiceError("operation_busy", t("操作正在由其他进程执行"), status=409,
                                retryable=True, next_step=t("请等待当前任务结束后重试"))
@@ -39,11 +39,13 @@ def operation_lock(cfg: Config, name: str, *, shared=False, reentrant=True):
         except BlockingIOError as exc:
             raise ServiceError("operation_busy", t("操作正在由其他进程执行"), status=409,
                                retryable=True, next_step=t("请等待当前任务结束后重试")) from exc
-        _local.held = held | {key}
+        if not independent:
+            _local.held = held | {key}
         try:
             yield
         finally:
-            _local.held = held
+            if not independent:
+                _local.held = held
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 

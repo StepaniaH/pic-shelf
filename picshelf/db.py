@@ -484,12 +484,40 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+class CatalogConnection(sqlite3.Connection):
+    """Keep a maintenance lease until the application connection is closed."""
+    _lease = None
+
+    def close(self):
+        try:
+            super().close()
+        finally:
+            if self._lease is not None:
+                self._lease.__exit__(None, None, None)
+                self._lease = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass  # Modules may already be unloaded during interpreter shutdown.
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    from .config import Config
+    from .coordination import operation_lock
+    lease = operation_lock(Config(db_path.parent), 'catalog', shared=True, independent=True)
+    lease.__enter__()
     # check_same_thread=False：FastAPI 的同步依赖与端点在同一个线程池的“不同工作线程”里
     # 依次执行（依赖建连 → 端点使用），必须允许跨线程顺序使用；并发请求各持独立连接，
     # WAL + busy_timeout 保证互不干扰。
-    conn = sqlite3.connect(str(db_path), timeout=15, check_same_thread=False)
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=15, check_same_thread=False, factory=CatalogConnection)
+    except BaseException:
+        lease.__exit__(None, None, None)
+        raise
+    conn._lease = lease
     conn.row_factory = sqlite3.Row
     from .names import match_key
     conn.create_function("picshelf_name_key", 1, match_key, deterministic=True)
@@ -554,6 +582,18 @@ def validate_schema(conn: sqlite3.Connection) -> int:
             required |= {"import_plans", "import_plan_items"}
         if current >= 3:
             required |= {"jobs", "job_items"}
+        if current >= 6:
+            required |= {"image_sources", "image_workflow", "tag_claims", "tag_aliases", "artist_aliases"}
+        if current >= 7:
+            required |= {"revoked_tokens", "login_attempts", "import_source_roots"}
+        if current >= 8:
+            required |= {"metadata_batches", "metadata_batch_items", "metadata_versions"}
+        if current >= 9:
+            required |= {"saved_queries"}
+        if current >= 10:
+            required |= {"play_rules", "play_candidates", "play_requests"}
+        if current >= 11:
+            required |= {"portable_ids", "portable_import_ids", "manifest_plans"}
         if not required <= tables:
             raise _invalid_schema()
     return current

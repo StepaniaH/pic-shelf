@@ -65,6 +65,13 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    "备份无法安全恢复": "The backup cannot be restored safely",
+    "请检查口令、归档校验和与程序版本；停止所有 Pic Shelf 服务后重试": "Check the passphrase, archive checksums and application version; stop all Pic Shelf services before retrying",
+    "检查备份清单、校验和与恢复边界。": "Inspect the backup inventory, checksums and recovery scope.",
+    "只读检查原图、派生图、关联与封面；输出 JSON。": "Check originals, derivatives, relationships and covers without modifying them; output JSON.",
+    "逐个核对原图 SHA-256；默认只检查可达性": "Verify each original SHA-256; check availability by default",
+    "数据库完整性检查未完成": "The database integrity check did not finish",
+    "请停止服务并检查数据库备份；不要删除原图或数据库": "Stop the service and check your database backup; preserve originals and the database",
     "元数据清单无法安全导入": "The metadata manifest cannot be imported safely",
     "请检查格式版本、校验和、显式映射及预演冲突；修正后重新预演": "Check the format version, checksum, explicit mappings and preview conflicts, then create a new preview",
     "请先检查元数据导入预演，再明确确认执行": "Inspect the metadata import preview before explicitly confirming execution",

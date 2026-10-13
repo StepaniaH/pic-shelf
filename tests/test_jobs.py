@@ -368,12 +368,15 @@ def test_exclusive_maintenance_blocks_queue_writes_and_workers(catalog):
     try:
         job = jobs.submit(conn, access, "scan", catalog.libraries["north"])
         before = tuple(conn.execute("SELECT * FROM jobs WHERE id=?", (job["id"],)).fetchone())
+        conn.close()
         with held_process(catalog.cfg, "operation", "catalog"):
-            assert worker(catalog.cfg, "--once").returncode == 0
+            refused = worker(catalog.cfg, "--once")
+            assert refused.returncode == 1 and 'operation_busy' in refused.stderr
             with pytest.raises(ServiceError) as caught:
-                jobs.cancel(conn, access, job["id"])
+                db.open_db(catalog.cfg.db_path)
             assert caught.value.code == "operation_busy"
-            assert tuple(conn.execute("SELECT * FROM jobs WHERE id=?", (job["id"],)).fetchone()) == before
+        conn = db.open_db(catalog.cfg.db_path)
+        assert tuple(conn.execute("SELECT * FROM jobs WHERE id=?", (job["id"],)).fetchone()) == before
     finally:
         conn.close()
 

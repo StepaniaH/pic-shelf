@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 
 import pytest
 from click.testing import CliRunner
@@ -184,7 +185,9 @@ def test_restore_includes_wal_in_safety_backup(workdir):
     data = str(workdir["data"])
     backup = workdir["tmp"] / "before.zip"
     run_ok(["--data", data, "export", str(backup)])
-    live = dbm.open_db(workdir["data"] / "picshelf.db")
+    # This raw observer deliberately bypasses the application's maintenance lease
+    # to keep committed WAL pages open while the offline restore runs.
+    live = sqlite3.connect(workdir["data"] / "picshelf.db")
     live.execute("UPDATE libraries SET description='committed in WAL'")
     live.commit()
     assert (workdir["data"] / "picshelf.db-wal").stat().st_size > 0

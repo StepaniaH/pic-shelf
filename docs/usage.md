@@ -603,7 +603,7 @@ picshelf export ./data/exports/catalog.fernet --encrypt
 picshelf import-backup ./data/exports/catalog.zip --force
 ```
 
-Exports contain a consistent database snapshot and optionally derivatives. They do not contain original images or the session-signing key. Back up the library directories separately. Stop active writers before restoring. `--force` first saves a consistent copy of the current database, including committed WAL contents. Restore loads the database; scan each library with `--full` to rebuild derivatives. A plain ZIP contains metadata and password hashes, so store it with the same care as the live data directory.
+Exports contain a consistent database snapshot and optionally derivatives. They do not contain originals, the signing key or configuration. Back up library directories separately. Use `backup inspect` before an offline restore; `--force` first saves the current database, including committed WAL. Included derivatives are restored; omitted derivatives can be recreated with `rebuild`. Sessions are invalidated, and restored pending jobs require explicit retry. `check --full` reports integrity and file problems without repair. See [Backup and recovery](backups.md) for limits, legacy compatibility and recovery steps.
 
 ## Database upgrades
 
