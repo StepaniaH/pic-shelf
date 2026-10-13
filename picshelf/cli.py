@@ -23,7 +23,7 @@ from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
 from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
-from . import batches, entity_edits, metadata as metasvc, names as catalog_names, source_access
+from . import batches, entity_edits, metadata as metasvc, names as catalog_names, source_access, saved_queries
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -544,6 +544,7 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
         album_id=album, artist_id=artist, tag=tag, favorites=favorites, rating_min=min_rating))
     if as_json:
         click.echo(json.dumps(res, ensure_ascii=False, indent=2))
+        if res['errors']: raise click.exceptions.Exit(2)
         return
     for error in res["errors"]:
         click.echo(error, err=True)
@@ -554,9 +555,86 @@ def ls_cmd(cfg, query, library, album, artist, tag, min_rating, favorites, sort,
         click.echo(t("共 {v0} 张（显示前 {v1}）", v0=res['total'], v1=len(res['items'])))
     for item in res["items"]:
         click.echo(_print_image_row(item))
+    if res['errors']: raise click.exceptions.Exit(2)
 
 
 main.add_command(ls_cmd, "search")
+
+
+@main.group('queries')
+def queries_group():
+    """保存查询与智能专辑（动态结果；JSON 输出）。"""
+
+
+@queries_group.command('save')
+@click.argument('name')
+@click.option('--query', '-q', default='')
+@click.option('--sort', default='newest', type=click.Choice(list(search.SORTS)))
+@click.option('--kind', default='query', type=click.Choice(['query','smart']))
+@click.option('--display', default='{}', help='显示偏好 JSON')
+@click.option('--user', default=None)
+@click.pass_obj
+def query_save(cfg,name,query,sort,kind,display,user):
+    conn=_conn(cfg)
+    try: preferences=json.loads(display)
+    except ValueError: raise click.ClickException(t("JSON 格式无效，请检查输入"))
+    value=saved_queries.create(conn,AccessContext(_acting_user(conn,user)['id']),
+                              name=name,query=query,sort=sort,kind=kind,display=preferences)
+    click.echo(json.dumps(value,ensure_ascii=False,indent=2))
+
+
+@queries_group.command('list')
+@click.option('--user',default=None)
+@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.pass_obj
+def query_list(cfg,user,offset):
+    conn=_conn(cfg)
+    click.echo(json.dumps(saved_queries.list_queries(conn,AccessContext(_acting_user(conn,user)['id']),offset=offset),ensure_ascii=False,indent=2))
+
+
+@queries_group.command('show')
+@click.argument('query_id',type=click.IntRange(min=1))
+@click.option('--user',default=None)
+@click.pass_obj
+def query_show(cfg,query_id,user):
+    conn=_conn(cfg)
+    click.echo(json.dumps(saved_queries.get(conn,AccessContext(_acting_user(conn,user)['id']),query_id),ensure_ascii=False,indent=2))
+
+
+@queries_group.command('run')
+@click.argument('query_id',type=click.IntRange(min=1))
+@click.option('--user',default=None)
+@click.option('--limit',default=60,type=click.IntRange(0,10000))
+@click.option('--offset',default=0,type=click.IntRange(min=0))
+@click.pass_obj
+def query_run(cfg,query_id,user,limit,offset):
+    conn=_conn(cfg)
+    click.echo(json.dumps(saved_queries.run(conn,AccessContext(_acting_user(conn,user)['id']),query_id,limit=limit,offset=offset),ensure_ascii=False,indent=2))
+
+
+@queries_group.command('edit')
+@click.argument('query_id',type=click.IntRange(min=1))
+@click.option('--version',required=True,type=click.IntRange(min=1))
+@click.option('--changes',required=True,help='要修改的规则字段 JSON')
+@click.option('--user',default=None)
+@click.pass_obj
+def query_edit(cfg,query_id,version,changes,user):
+    conn=_conn(cfg)
+    try: fields=json.loads(changes)
+    except ValueError: raise click.ClickException(t("JSON 格式无效，请检查输入"))
+    if not isinstance(fields,dict) or 'version' in fields:
+        raise click.ClickException(t("更新字段或版本无效，请重新打开查询编辑"))
+    click.echo(json.dumps(saved_queries.update(conn,AccessContext(_acting_user(conn,user)['id']),query_id,
+                                              version=version,**fields),ensure_ascii=False,indent=2))
+
+
+@queries_group.command('export')
+@click.argument('query_id',type=click.IntRange(min=1))
+@click.option('--user',default=None)
+@click.pass_obj
+def query_export(cfg,query_id,user):
+    conn=_conn(cfg)
+    click.echo(json.dumps(saved_queries.export(conn,AccessContext(_acting_user(conn,user)['id']),query_id),ensure_ascii=False,indent=2))
 
 
 @main.command()

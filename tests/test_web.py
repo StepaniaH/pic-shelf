@@ -363,3 +363,39 @@ def test_cross_page_selection_preview_undo_and_later_edit_conflict(page,tmp_path
         with dbm.open_db(catalog.cfg.db_path) as conn:
             assert {r[0] for r in conn.execute("SELECT it.image_id FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE t.name='Web selected only'")}=={first}
             assert conn.execute("SELECT 1 FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE it.image_id=? AND t.name='Later manual annotation'",(first,)).fetchone()
+
+
+def test_saved_smart_search_updates_members_and_repairs_invalid_rule(page,tmp_path):
+    from playwright.sync_api import expect
+    from tests.scenario_support import build_catalog,http_server
+    catalog=build_catalog(tmp_path)
+    with http_server(catalog.cfg) as client:
+        page.add_init_script("localStorage.setItem('picshelf.lang','en')")
+        page.goto(str(client.base_url))
+        page.locator('#login-username').fill('reader');page.locator('#login-password').fill(catalog.password)
+        page.locator('#login-form button').click()
+        expect(page.locator('.lib-card')).to_have_count(1)
+        page.locator('#search-input').fill('rated:false')
+        page.locator('#search-input').press('Enter')
+        expect(page.locator('#grid .card')).to_have_count(1)
+        expect(page.locator('#grid .fname')).to_have_text('02 unrated.png')
+        page.locator('.query-editor summary').click()
+        page.locator('.query-editor [name=name]').fill('Unrated collection')
+        page.locator('.query-editor [name=kind]').select_option('smart')
+        page.locator('[data-save]').click()
+        expect(page.locator('h1')).to_have_text('Unrated collection')
+        with dbm.open_db(catalog.cfg.db_path) as conn:
+            ops.set_rating(conn,catalog.images['n03'],catalog.users['reader'],None)
+        page.locator('[data-reload-rule]').click()
+        expect(page.locator('#grid .card')).to_have_count(2)
+        page.locator('.query-editor [name=expression]').fill('tag:')
+        page.locator('[data-save]').click()
+        expect(page.locator('[data-rule-error]')).to_contain_text('Invalid search condition')
+        page.locator('.query-editor [name=expression]').fill('rated:true rating:0')
+        page.locator('[data-save]').click()
+        expect(page.locator('#grid .card')).to_have_count(1)
+        expect(page.locator('#grid .fname')).to_have_text('01 zero.png')
+        with dbm.open_db(catalog.cfg.db_path) as conn:
+            conn.execute('DELETE FROM library_grants');conn.commit()
+        page.locator('[data-reload-rule]').click()
+        expect(page.locator('#grid .card')).to_have_count(0)

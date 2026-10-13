@@ -276,7 +276,7 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
                     if (not isinstance(query,dict) or any(key not in catalog.ImageQuery.__dataclass_fields__ or key in ("limit","offset") for key in query)
                             or any(key in query and query[key] is not None and (type(query[key]) is not int or query[key]<1) for key in ("library_id","album_id","artist_id"))
                             or ("favorites" in query and type(query["favorites"]) is not bool)
-                            or not isinstance(query.get("query",""),str) or len(query.get("query",""))>2000
+                            or not isinstance(query.get("query",""),str) or len(query.get("query",""))>search.MAX_QUERY_LENGTH
                             or query.get("sort","newest") not in search.SORTS
                             or (query.get("tag") is not None and (not isinstance(query["tag"],str) or len(query["tag"])>300))
                             or (query.get("rating_min") is not None and (type(query["rating_min"]) is not int or not 0<=query["rating_min"]<=10))):

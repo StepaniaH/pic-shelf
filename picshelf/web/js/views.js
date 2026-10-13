@@ -46,10 +46,10 @@ export class Source {
       q: this.q, sort: this.sort, limit: 120, offset, ...this.filters,
     }));
     if (revision !== this.revision) return res;
-    this.total = res.total;
-    this.errors = res.errors || [];
+    this.total = this.ruleErrors?.length ? 0 : res.total;
+    this.errors = [...new Set([...(this.ruleErrors || []), ...(res.errors || [])])];
     if (reset) this.items = [];
-    this.items.push(...res.items);
+    if(!this.ruleErrors?.length)this.items.push(...res.items);
     return res;
   }
   async loadMore() {
@@ -71,7 +71,7 @@ function cardHtml(item) {
   const fav = item.favorite ? `<span class="badge fav">★</span>` : "";
   return `<figure class="card" data-id="${item.id}" tabindex="0" aria-label="${escapeHtml(item.filename)}">
     <label class="card-selection"><input type="checkbox" data-select-image="${item.id}" aria-label="${escapeHtml(t("选择 {name}",{name:item.filename}))}"></label>
-    <img src="${imageMediaUrl("thumb", item)}" alt="" loading="lazy" decoding="async">
+    ${item.missing?`<div class="missing-image">${t("文件缺失")}</div>`:`<img src="${imageMediaUrl("thumb", item)}" alt="" loading="lazy" decoding="async">`}
     <figcaption><span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
     <span class="badges">${rating}${fav}</span></figcaption></figure>`;
 }
@@ -86,11 +86,16 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   warnings.className = "error";
   warnings.setAttribute("role", "status");
   grid.before(warnings);
+  const paging=document.createElement("div");paging.className="form-row paging-policy";
+  const policy=document.createElement("span");policy.className="hint";
+  const refresh=document.createElement("button");refresh.className="btn";refresh.textContent=t("刷新结果");
+  paging.append(policy,refresh);grid.before(paging);
   let updateSelection = () => {};
   const paint = () => {
-    grid.innerHTML = source.items.map(cardHtml).join("") || `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
+    grid.innerHTML = source.items.map(cardHtml).join("") || (source.errors.length?"":`<p class="empty">${escapeHtml(source.emptyText)}</p>`);
     view.querySelector("#count").textContent = t("共 {v0} 张", {v0: source.total});
-    moreBtn.hidden = source.loadedAll;
+    moreBtn.hidden = source.loadedAll || source.sort === "random";
+    policy.textContent=t(source.sort==="random"?"随机发现每次重新抽样；播放会另建稳定队列。":"列表按当前目录分页；扫描或编辑改变结果后，请刷新再继续浏览。");
     warnings.textContent = source.errors.join(" ");
     warnings.hidden = !source.errors.length;
     view.querySelector("#slideshow-btn").disabled = source.total === 0;
@@ -98,6 +103,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   };
   updateSelection = attachBatchControls(view,source,grid,async()=>{await source.load(true);paint();});
   paint();
+  refresh.onclick=async()=>{refresh.disabled=true;try{await source.load(true);paint();}catch(e){toast(e.message,"error");}finally{refresh.disabled=false;}};
 
   moreBtn.addEventListener("click", async () => {
     moreBtn.disabled = true;
@@ -119,6 +125,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
     card.focus();
+    if (source.items[idx]?.missing) {toast(t("文件已缺失，请恢复原文件并重新扫描"),"error");return;}
     if (idx >= 0) openViewer(source, idx);
   });
   grid.addEventListener("keydown", (e) => {
@@ -128,6 +135,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     const card = e.target.closest(".card");
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
+    if (source.items[idx]?.missing) {toast(t("文件已缺失，请恢复原文件并重新扫描"),"error");return;}
     if (idx >= 0) openViewer(source, idx);
   });
 
@@ -318,10 +326,12 @@ export async function renderInbox(view) {
   renderGridInto(view,source);
 }
 
-export async function renderSearch(view, q) {
-  const source = new Source(q ? t("搜索：{q}", {q: q}) : t("搜索（全部）"), { title: t("搜索：{q}", {q: q}), q }, { q });
+export async function renderSearch(view, q, sort="newest") {
+  const source = new Source(q ? t("搜索：{q}", {q: q}) : t("搜索（全部）"), { title: t("搜索：{q}", {q: q}), q }, { q, sort });
   await source.load(true);
   renderGridInto(view, source, { headerExtraHtml: t("<a class=\"btn small\" href=\"#/home\">← 首页</a>") });
+  const {attachSearchTools}=await import("./queries.js");
+  await attachSearchTools(view,source);
 }
 
 export async function renderLibrary(view, libraryId) {

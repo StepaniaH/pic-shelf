@@ -64,12 +64,15 @@ def build_queue(
     limit = int(spec.get("limit") or 0)
     limit = min(limit, MAX_QUEUE) if limit > 0 else MAX_QUEUE
     where, params = _source_clauses(spec)
+    where.append('i.missing=0')
     res = search.search_images(
         conn, user_id, allowed_library_ids,
         query=spec.get("query") or "",
         sort=sort, limit=limit, offset=0,
         extra_where=where or None, extra_params=params or None,
     )
+    if res['errors']:
+        raise search.invalid_query(res['errors'])
     return [int(it["id"]) for it in res["items"]]
 
 

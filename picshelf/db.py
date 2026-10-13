@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -395,7 +395,17 @@ BEGIN
 END;
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8}
+_SCHEMA_V9 = """
+CREATE TABLE saved_queries (
+ id INTEGER PRIMARY KEY, owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('query','smart')),
+ query TEXT NOT NULL, sort TEXT NOT NULL, display TEXT NOT NULL,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX idx_saved_query_owner ON saved_queries(owner_id,updated_at,id);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9}
 
 
 def utcnow() -> str:

@@ -109,12 +109,75 @@ Whitespace combines conditions with AND. Commas within a condition mean OR. Pref
 | `album:12` | Album ID 12 |
 | `album:none` | Images without any album association |
 | `rating:>=8` | Your rating at least 8 |
+| `rated:false` | Explicitly unrated by you |
+| `rated:true rating:0` | Explicitly rated zero by you |
+| `width:>=1920 height:>=1080` | Decoded dimensions in pixels |
+| `orientation:portrait` | Height greater than width (`landscape` and `square` also supported) |
+| `imported:>=now-7d` | First cataloged within the last seven days or later |
+| `imported:>=2026-10-13T00:00:00+08:00` | First cataloged at or after this instant, with an explicit time zone |
+| `workflow:inbox` / `workflow:done` | Your organization state |
+| `missing:true` / `missing:any` | Missing records / both present and missing records |
 | `avg:>=8` | Average rating at least 8 |
 | `fav:` / `fav:false` | Your favorites / non-favorites |
 | `ext:png,jpg` | Either file extension |
 | `file:portrait` | Filename substring only |
 
 Ratings range from 0 to 10. An unrated image is displayed separately from a zero rating, but numeric search treats an unrated image as zero. Invalid numeric filters and unmatched quotes return an error message and do not silently select every image. `%` and `_` are literal characters in substring searches.
+
+Empty values (except the existing `fav:` shorthand), unknown enum values, invalid
+numeric bounds, malformed comma lists and expressions over 4096 characters are
+errors. The entire expression fails; a valid branch does not hide an invalid OR
+branch. An empty expression intentionally means all visible, present images.
+Unknown colon prefixes retain their existing namespaced-tag/filename meaning;
+they are never ignored as filters. Use `tag:namespace:name` when a namespace
+collides with a reserved field. The condition editor accepts only fields from
+the server's grammar and uses the same parser as CLI, TUI and HTTP search.
+
+Quote a comma to treat it literally, such as `file:"comma,name.png"`; unquoted
+commas remain OR. Queries accept up to 128 conditions and 100 values per
+condition. Pixel comparisons use integers from 0 to 1,000,000,000; rating
+comparisons use finite numbers from 0 to 10. Dates use comparisons with an
+ISO 8601 instant containing a time zone, `now`, `now-Nd` or `now-Nh` (N up to
+36500). Relative dates are evaluated once per read. `imported` refers to first
+catalog insertion, including directory scans; it does not mean file mtime,
+creation date or the time of a later import of the same image. Missing records
+are excluded by default and cannot play until their original files return.
+
+Static result sets have stable offset pagination for every non-random sort,
+using the image ID to break ties. Each response reads its count and rows from
+one database snapshot. Separate pages use the current catalog: refresh after
+scanning, editing or permission changes. Random discovery takes a new sample
+on each request and may repeat; the Web view offers refresh instead of appending
+random pages. Playback creates a separate queue.
+
+### Saved queries and smart albums
+
+Open **Saved queries** in Web, or search and expand the rule editor. Save a name,
+expression, sort and display preferences. Smart albums evaluate the rule on
+each read; they do not modify manual or folder albums. New matches appear and
+current permissions filter every result. Rules are personal, including for
+administrators; the local CLI may explicitly select a user's perspective.
+Open or reload a rule to use its latest saved version. Invalid rules remain
+editable and report errors instead of appearing as successful empty albums.
+Saving checks the editing version to avoid overwriting another tab's changes.
+
+```sh
+picshelf queries save 'Unrated portraits' --kind smart --query 'rated:false orientation:portrait' --sort path
+picshelf queries list
+picshelf queries show 1
+picshelf queries run 1 --limit 60 --offset 0
+picshelf queries edit 1 --version 1 --changes '{"query":"rated:false"}'
+picshelf queries export 1 > query.json
+```
+
+These commands emit JSON. `--user NAME` selects the same personal ratings,
+favorites and permissions as that user. Export contains the expression (with
+its original date offset), sort and preferences, not a frozen image list.
+HTTP provides `/api/v1/queries`, `/{id}`, `/{id}/images` and `/{id}/export`;
+PATCH updates require `version`. `/api/v1/search/fields` describes condition
+fields and POST `/api/v1/search/append` safely appends one condition. Legacy
+`GET /images` keeps `errors` and `error_codes`; invalid expressions return no
+items. CLI search emits the same JSON error fields and exits nonzero.
 
 ## Import and scanning
 
