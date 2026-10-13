@@ -8,6 +8,7 @@ from . import ops, search
 from .access import AccessContext
 from .errors import ServiceError
 from .i18n import t
+from .names import match_key
 
 
 @dataclass(frozen=True)
@@ -38,8 +39,9 @@ def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQue
             params[field] = value
     if spec.tag:
         clauses.append("EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-                       "WHERE it.image_id=i.id AND lower(tg.name)=lower(:f_tag))")
-        params["f_tag"] = spec.tag
+                       "WHERE it.image_id=i.id AND (picshelf_name_key(tg.name)=:f_tag OR EXISTS("
+                       "SELECT 1 FROM tag_aliases ta WHERE ta.entity_id=tg.id AND ta.match_key=:f_tag)))")
+        params["f_tag"] = match_key(spec.tag)
     if spec.favorites:
         clauses.append("EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)")
     if spec.rating_min is not None:

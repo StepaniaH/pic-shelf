@@ -14,7 +14,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
@@ -295,7 +295,53 @@ ALTER TABLE libraries ADD COLUMN default_import_mode TEXT NOT NULL DEFAULT 'hard
   CHECK(default_import_mode IN ('hardlink','copy','move'));
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5}
+_SCHEMA_V6 = """
+ALTER TABLE import_plan_items ADD COLUMN completed_at TEXT;
+CREATE TABLE image_sources (
+ id INTEGER PRIMARY KEY, image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+ origin TEXT NOT NULL CHECK(origin IN ('manual','imported','extracted')),
+ original_filename TEXT, collected_at TEXT, created_time TEXT, url TEXT, note TEXT,
+ created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL, event_key TEXT UNIQUE
+);
+CREATE INDEX idx_image_sources_image ON image_sources(image_id);
+CREATE TABLE image_workflow (
+ image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+ user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK(state IN ('inbox','done')), updated_at TEXT NOT NULL,
+ PRIMARY KEY(image_id,user_id)
+);
+CREATE INDEX idx_workflow_user_state ON image_workflow(user_id,state,image_id);
+CREATE TABLE tag_claims (
+ id INTEGER PRIMARY KEY, image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+ tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+ origin TEXT NOT NULL CHECK(origin IN ('manual','imported','suggested')),
+ confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0,1)), source_ref TEXT NOT NULL DEFAULT '',
+ created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
+ confirmed_by INTEGER REFERENCES users(id), confirmed_at TEXT, retired_at TEXT
+);
+CREATE UNIQUE INDEX idx_tag_claim_active ON tag_claims(image_id,tag_id,origin,source_ref) WHERE retired_at IS NULL;
+INSERT INTO tag_claims(image_id,tag_id,origin,confirmed,created_by,created_at,confirmed_by,confirmed_at)
+ SELECT image_id,tag_id,'manual',1,CASE WHEN added_by IN (SELECT id FROM users) THEN added_by END,
+ added_at,CASE WHEN added_by IN (SELECT id FROM users) THEN added_by END,added_at FROM image_tags;
+CREATE TABLE tag_aliases (
+ id INTEGER PRIMARY KEY, entity_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, match_key TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
+ UNIQUE(entity_id,match_key)
+);
+CREATE INDEX idx_tag_alias_match ON tag_aliases(match_key);
+CREATE TABLE artist_aliases (
+ id INTEGER PRIMARY KEY, entity_id INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+ name TEXT NOT NULL, match_key TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created_at TEXT NOT NULL,
+ UNIQUE(entity_id,match_key)
+);
+CREATE INDEX idx_artist_alias_match ON artist_aliases(match_key);
+CREATE TABLE entity_edit_plans (
+ id TEXT PRIMARY KEY, created_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL, snapshot TEXT NOT NULL, result TEXT
+);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6}
 
 
 def utcnow() -> str:
@@ -309,6 +355,8 @@ def connect(db_path: Path) -> sqlite3.Connection:
     # WAL + busy_timeout 保证互不干扰。
     conn = sqlite3.connect(str(db_path), timeout=15, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    from .names import match_key
+    conn.create_function("picshelf_name_key", 1, match_key, deterministic=True)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 10000")

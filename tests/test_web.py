@@ -162,6 +162,25 @@ def test_empty_catalog_guides_server_path_registration_scan_and_tasks(page, tmp_
     assert (root / "only.png").read_bytes() == original
 
 
+def test_viewer_organization_and_provenance_keep_literal_text(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.locator('.lib-card a[href="#/library/1"]').click()
+    page.locator("#grid .card").first.click()
+    expect(page.locator("[data-workflow]")).to_have_attribute("data-workflow", "done")
+    page.locator("[data-workflow]").click()
+    expect(page.locator("[data-workflow]")).to_have_attribute("data-workflow", "inbox")
+    note = '<img src=x onerror="window.unexpectedMetadataScript=true">'
+    form = page.locator("[data-source-form]")
+    form.locator('[name="note"]').fill(note)
+    form.locator('[name="collected_at"]').fill("2026-10-10T21:35:00+08:00")
+    form.locator('button[type="submit"]').click()
+    expect(page.get_by_text(note, exact=True)).to_be_visible()
+    expect(page.get_by_text("Collected 2026-10-10 13:35:00 UTC", exact=False)).to_be_visible()
+    assert page.evaluate("window.unexpectedMetadataScript === undefined")
+    page.locator("#v-close").click()
+
+
 @pytest.mark.parametrize("language", ["zh", "en"])
 @pytest.mark.parametrize("width", [390, 1280])
 def test_gallery_viewer_and_nested_dialogs(page, web_server, language, width):

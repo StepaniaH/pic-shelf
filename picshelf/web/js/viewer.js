@@ -3,6 +3,8 @@ import { api, mediaUrl, imageMediaUrl } from "./api.js";
 import { escapeHtml, toast, can, state, uiConfirm } from "./app.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
+import {metadataHtml, bindMetadata} from "./metadata.js";
+import {formatTimestamp} from "./format.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
 
 const SIZE_LABEL = { fit: t("适应"), fill: t("填满"), original: t("原图") };
@@ -86,7 +88,7 @@ export function openViewer(source, index) {
   function panelHtml(item) {
     if (!detail) return t("<p class=\"muted\">加载中…</p>");
     const d = detail;
-    return t("\n      <section>\n        <h3>评分 <span class=\"muted\">（平均 {v0} · {v1} 人）</span></h3>\n        {v2}\n      </section>\n      <section>\n        <h3>标签</h3>\n        <div>{v3}\n        </div>\n        {v4}\n      </section>\n      <section>\n        <h3>艺术家</h3>\n        <div>{v5}\n        </div>\n        {v6}\n      </section>\n      <section>\n        <h3>专辑</h3>\n        <div>{v7}</div>\n        {v8}\n      </section>\n      <section>\n        <h3>评论（{v9}）</h3>\n        <div id=\"comment-list\">{v10}</div>\n        {v11}\n      </section>\n      <section>\n        <h3>笔记（{v12}）</h3>\n        {v13}\n        {v14}\n      </section>\n      <section>\n        <h3>信息</h3>\n        <div class=\"kv\">\n          <div>文件名：<b>{v15}</b></div>\n          <div>尺寸：<b>{v16}×{v17}</b> · 大小：<b>{v18} KB</b> · 格式：<b>{v19}</b></div>\n          <div>库：<b>{v20}</b></div>\n          <div>路径：<b>{v21}</b></div>\n          <div>导入时间：<b>{v22}</b></div>\n          <div>指纹：<b title=\"{v23}\">{v24}…</b> / pHash <b>{v25}</b></div>\n        </div>\n      </section>", {v0: d.avg_rating ?? "—", v1: d.rating_count, v2: can("rate") ? `<div class="rate-row">${Array.from({ length: 11 }, (_, i) => i).map((v) =>
+    return metadataHtml(d) + t("\n      <section>\n        <h3>评分 <span class=\"muted\">（平均 {v0} · {v1} 人）</span></h3>\n        {v2}\n      </section>\n      <section>\n        <h3>标签</h3>\n        <div>{v3}\n        </div>\n        {v4}\n      </section>\n      <section>\n        <h3>艺术家</h3>\n        <div>{v5}\n        </div>\n        {v6}\n      </section>\n      <section>\n        <h3>专辑</h3>\n        <div>{v7}</div>\n        {v8}\n      </section>\n      <section>\n        <h3>评论（{v9}）</h3>\n        <div id=\"comment-list\">{v10}</div>\n        {v11}\n      </section>\n      <section>\n        <h3>笔记（{v12}）</h3>\n        {v13}\n        {v14}\n      </section>\n      <section>\n        <h3>信息</h3>\n        <div class=\"kv\">\n          <div>文件名：<b>{v15}</b></div>\n          <div>尺寸：<b>{v16}×{v17}</b> · 大小：<b>{v18} KB</b> · 格式：<b>{v19}</b></div>\n          <div>库：<b>{v20}</b></div>\n          <div>路径：<b>{v21}</b></div>\n          <div>首次入库时间：<b>{v22}</b></div>\n          <div>指纹：<b title=\"{v23}\">{v24}…</b> / pHash <b>{v25}</b></div>\n        </div>\n      </section>", {v0: d.avg_rating ?? "—", v1: d.rating_count, v2: can("rate") ? `<div class="rate-row">${Array.from({ length: 11 }, (_, i) => i).map((v) =>
           `<button class="rate-btn ${d.my_rating === v ? "on" : ""}" data-rate="${v}" title="${t("{n} 分", {n: v})}">${v}</button>`).join("")}
           <button class="rate-btn" data-rate="clear" style="width:auto;padding:0 10px" title="${t("清除评分")}">${t("清除")}</button></div>`
         : `<p class="muted">${t("我的评分：{v0}", {v0: d.my_rating >= 0 ? d.my_rating : t("未评")})}</p>`, v3: (d.tags || []).map((tag) => `
@@ -95,10 +97,10 @@ export function openViewer(source, index) {
           <span class="tag-chip pill">${escapeHtml(a.name)}${can("tag_edit") ? `<button data-unartist="${a.id}" title="${t("取消关联")}">✕</button>` : ""}</span>`).join("") || `<span class="muted">${t("（无）")}</span>`, v6: can("tag_edit") ? `<div class="add-row"><input list="artist-dl" id="artist-input" placeholder="${t("关联艺术家")}">
           <datalist id="artist-dl"></datalist><button class="btn small" id="artist-add">${t("关联")}</button></div>` : "", v7: (d.albums || []).map((al) => `<span class="tag-chip pill">${escapeHtml(al.name)}</span>`).join("") || `<span class="muted">${t("（无）")}</span>`, v8: can("tag_edit") ? `<div class="add-row"><select id="album-select"><option value="">${t("加入手工专辑…")}</option></select>
           <button class="btn small" id="album-add">${t("加入")}</button></div>` : "", v9: (d.comments || []).length, v10: (d.comments || []).map((c) => `
-          <div class="comment"><div class="meta">${escapeHtml(c.username)} · ${c.created_at.replace("T", " ").slice(0, 16)}
+          <div class="comment"><div class="meta">${escapeHtml(c.username)} · ${formatTimestamp(c.created_at)}
           ${(c.user_id === state.user.id || state.user.is_admin) ? `<button class="icon-btn" data-del-comment="${c.id}" title="${t("删除")}">✕</button>` : ""}</div>
           ${escapeHtml(c.body)}</div>`).join("") || `<p class="muted">${t("（暂无评论）")}</p>`, v11: can("comment") ? `<div class="add-row"><textarea id="comment-input" rows="2" placeholder="${t("写评论…")}" style="flex:1"></textarea>
-          <button class="btn small" id="comment-add">${t("发表")}</button></div>` : "", v12: (d.notes || []).length, v13: (d.notes || []).map((n) => `<div class="comment"><div class="meta">${escapeHtml(n.username)}</div>${escapeHtml(n.body)}</div>`).join(""), v14: can("note") ? `<div class="add-row"><input id="note-input" placeholder="${t("写笔记…")}"><button class="btn small" id="note-add">${t("添加")}</button></div>` : "", v15: escapeHtml(d.filename), v16: d.width, v17: d.height, v18: (d.size_bytes / 1024).toFixed(1), v19: escapeHtml(d.ext), v20: escapeHtml(d.library?.name || "—"), v21: escapeHtml(d.rel_path), v22: (d.imported_at || "").replace("T", " ").slice(0, 16), v23: escapeHtml(d.sha256 || ""), v24: (d.sha256 || "").slice(0, 12), v25: escapeHtml(d.phash || "—")});
+          <button class="btn small" id="comment-add">${t("发表")}</button></div>` : "", v12: (d.notes || []).length, v13: (d.notes || []).map((n) => `<div class="comment"><div class="meta">${escapeHtml(n.username)}</div>${escapeHtml(n.body)}</div>`).join(""), v14: can("note") ? `<div class="add-row"><input id="note-input" placeholder="${t("写笔记…")}"><button class="btn small" id="note-add">${t("添加")}</button></div>` : "", v15: escapeHtml(d.filename), v16: d.width, v17: d.height, v18: (d.size_bytes / 1024).toFixed(1), v19: escapeHtml(d.ext), v20: escapeHtml(d.library?.name || "—"), v21: escapeHtml(d.rel_path), v22: formatTimestamp(d.imported_at), v23: escapeHtml(d.sha256 || ""), v24: (d.sha256 || "").slice(0, 12), v25: escapeHtml(d.phash || "—")});
   }
 
   // ---------------------------------------------------------------- 事件
@@ -132,6 +134,7 @@ export function openViewer(source, index) {
     });
 
     if (!detail) return;
+    bindMetadata(backdrop, detail, refresh);
     backdrop.querySelectorAll("[data-rate]").forEach((btn) => btn.addEventListener("click", async () => {
       const v = btn.dataset.rate === "clear" ? null : Number(btn.dataset.rate);
       try {

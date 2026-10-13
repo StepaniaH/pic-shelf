@@ -29,6 +29,8 @@ HTTP 负责读取并验证登录凭据；共享服务显式接收 `AccessContext
 
 CLI/TUI 视为拥有数据目录权限的本地管理工具。查询选择某用户视角时遵守该用户的可见范围；本地评分显式使用管理上下文并把评分归给所选用户。HTTP 不能从请求参数开启这个本地管理模式。文件导入与扫描继续由各自服务负责文件不变量，播放负责队列快照，`jobs.py` 和 `worker.py` 负责持久任务与本机执行器。Web 没有构建步骤，不加载远程字体、脚本或统计服务。
 
+名称显示保留原文，`names.py` 统一 NFC、空白和大小写匹配；旧名称不自动合并。`metadata.py` 管理来源、每用户待整理状态及标签证据，`entity_edits.py` 在单事务内核对预演与当前关联后转移明确选中的关系。来源实体保留，目标已有关联的作者和时间不变；详情及来源遵守当前库权限。
+
 ## 数据流
 
 ```text
@@ -66,7 +68,7 @@ Web 生命周期最多启动两个本机子进程；同一数据目录的所有�
 
 恢复数据库使用排他维护锁，与扫描、导入和任务队列写入互斥。该文件锁不能约束直接打开 SQLite 的其他软件；恢复前仍须停止 Web、TUI 和其他元数据写入命令。任务记录随数据库备份恢复，恢复后先检查库路径与任务，再显式重试。
 
-## 数据库（schema v5）
+## 数据库（schema v6）
 
 SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
 
@@ -79,6 +81,8 @@ SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；�
 | `tags`, `image_tags` | 标签和图片关联 |
 | `artists`, `image_artists` | 艺术家资料和图片关联 |
 | `ratings`, `favorites` | 每用户评分与收藏 |
+| `image_sources`, `image_workflow`, `tag_claims` | 来源、每用户整理状态、标签来源与确认/移除记录 |
+| `tag_aliases`, `artist_aliases`, `entity_edit_plans` | 结构化别名及固定范围的关联变更预演 |
 | `comments`, `notes` | 评论、文本笔记及软删除；geometry 为后续区域笔记预留 |
 | `play_sessions`, `play_items` | 队列条件、游标与物化的图片顺序 |
 | `scans`, `meta` | 扫描记录与 schema 版本 |

@@ -15,7 +15,7 @@ import sqlite3
 from pathlib import Path
 from typing import Callable
 
-from . import hashing
+from . import hashing, metadata
 from .config import Config
 from .coordination import library_write_lock
 from .db import utcnow
@@ -326,6 +326,7 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                      st.st_size, None, None, st.st_mtime, sha, None, utcnow()),
                 )
                 iid = int(cur2.lastrowid)
+                metadata.record_indexed_import(conn, library_id, iid, path, sha)
                 conn.commit()  # Decode does not hold SQLite's writer lock.
                 try:
                     encode(iid, path, st, sha)

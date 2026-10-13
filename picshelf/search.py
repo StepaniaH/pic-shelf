@@ -19,6 +19,7 @@ import sqlite3
 import math
 from dataclasses import dataclass, field
 from .i18n import t
+from .names import match_key
 
 SORTS = {
     "newest": "i.id DESC",
@@ -144,9 +145,11 @@ def build_where(
         elif kind in ("tag", "term"):
             subs = []
             for v in values:
+                key = nparam(match_key(v))
                 tag_expr = (
                     "EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-                    "WHERE it.image_id=i.id AND lower(tg.name)=lower(" + nparam(v) + "))"
+                    f"WHERE it.image_id=i.id AND (picshelf_name_key(tg.name)={key} OR EXISTS("
+                    f"SELECT 1 FROM tag_aliases ta WHERE ta.entity_id=tg.id AND ta.match_key={key})))"
                 )
                 if kind == "tag":
                     subs.append(f"({tag_expr})")
@@ -159,11 +162,12 @@ def build_where(
         elif kind == "artist":
             subs = []
             for v in values:
-                pat = nparam(f"%{_like(v.lower())}%")
+                pat = nparam(f"%{_like(match_key(v))}%")
                 subs.append(
                     "EXISTS(SELECT 1 FROM image_artists ia JOIN artists a ON a.id=ia.artist_id "
-                    f"WHERE ia.image_id=i.id AND (lower(a.name) LIKE {pat} ESCAPE '\\' "
-                    f"OR lower(COALESCE(a.aliases,'')) LIKE {pat} ESCAPE '\\'))"
+                    f"WHERE ia.image_id=i.id AND (picshelf_name_key(a.name) LIKE {pat} ESCAPE '\\' "
+                    f"OR picshelf_name_key(a.aliases) LIKE {pat} ESCAPE '\\' OR EXISTS("
+                    f"SELECT 1 FROM artist_aliases aa WHERE aa.entity_id=a.id AND aa.match_key LIKE {pat} ESCAPE '\\')))"
                 )
             piece = "(" + " OR ".join(subs) + ")"
 
@@ -230,6 +234,7 @@ _SELECT = """
 SELECT i.id, i.library_id, i.rel_path, i.filename, i.ext, i.size_bytes,
        i.width, i.height, i.mtime, i.sha256, i.phash, i.thumb_rel, i.preview_rel, i.imported_at,
        i.phash_version, i.derivative_version, i.scan_error_code, i.scan_error_detail, i.verified_at,
+       COALESCE((SELECT w.state FROM image_workflow w WHERE w.image_id=i.id AND w.user_id=:uid), 'inbox') AS workflow_state,
        COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id AND r.user_id=:uid), -1) AS my_rating,
        (SELECT ROUND(AVG(r.value), 2) FROM ratings r WHERE r.image_id=i.id) AS avg_rating,
        (SELECT COUNT(*) FROM ratings r WHERE r.image_id=i.id) AS rating_count,

@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import uuid
 
-from . import hashing, importer, indexer, libsvc
+from . import hashing, importer, indexer, libsvc, metadata
 from .access import AccessContext
 from .config import Config
 from .coordination import library_write_lock
@@ -113,9 +113,10 @@ def cancel_plan(conn, access, plan_id) -> dict:
 
 
 def _record_item(conn, plan_id, position, state, *, identity=None, action=None, error=None):
-    conn.execute("UPDATE import_plan_items SET state=?,destination_identity=COALESCE(?,destination_identity), "
+    conn.execute("UPDATE import_plan_items SET state=?,completed_at=COALESCE(completed_at,?),destination_identity=COALESCE(?,destination_identity), "
                  "actual_action=COALESCE(?,actual_action),error_code=?,detail=? WHERE plan_id=? AND position=?",
-                 (state, json.dumps(identity) if identity is not None else None, action,
+                 (state, datetime.now(timezone.utc).isoformat() if state == "succeeded" else None,
+                  json.dumps(identity) if identity is not None else None, action,
                   error.code if error else None, error.detail if error else None, plan_id, position))
     conn.commit()
 
@@ -307,6 +308,7 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
             current = _authorized_plan(conn, access, plan_id)
             if sum(result["done"][key] for key in importer.MODES):
                 result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check)
+                metadata.record_import(conn, row["library_id"], plan_id, snapshot, row["created_by"])
             scan_errors = len(result["scan"]["errors"]) if result["scan"] else 0
             result["scan_error_count"] = scan_errors
             result["resumed_after_expiry"] = expired

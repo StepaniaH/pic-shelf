@@ -25,3 +25,20 @@ assert.equal(imageMediaUrl('preview', {...image, preview_url: '/api/v1/media/pre
     result = subprocess.run([node, "--input-type=module", "-e", script, module], text=True,
                             capture_output=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_displayed_times_use_explicit_utc_without_guessing_naive_dates():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for frontend module contracts")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/format.js").as_uri()
+    script = """
+const {formatTimestamp} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+assert.equal(formatTimestamp('2026-10-10T21:35:00+08:00'), '2026-10-10 13:35:00 UTC');
+assert.equal(formatTimestamp('2020-01-02T03:04:05-05:00'), '2020-01-02 08:04:05 UTC');
+assert.equal(formatTimestamp('2020-01-02T03:04:05'), '—');
+assert.equal(formatTimestamp(null), '—');
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script, module], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

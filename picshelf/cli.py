@@ -23,6 +23,7 @@ from .access import AccessContext
 from .config import DEFAULT_HOST, DEFAULT_PORT, Config
 from .coordination import library_write_lock, operation_lock
 from .errors import ServiceError
+from . import entity_edits, metadata as metasvc, names as catalog_names
 from .i18n import set_lang, t
 
 # 语言预扫描（必须早于各装饰器求值）：--lang / 环境变量决定界面语言
@@ -585,6 +586,86 @@ def note(cfg, image_id, body, user_name):
 
 # ---------------------------------------------------------------- 艺术家
 
+@main.command("organize")
+@click.argument("image_ids", type=click.IntRange(min=1), nargs=-1, required=True)
+@click.option("--state", type=click.Choice(["inbox", "done"]), required=True)
+@click.option("--user", "user_name", default=None)
+@click.pass_obj
+def organize(cfg, image_ids, state, user_name):
+    """标记明确选中的图片为待整理或已整理，输出 JSON。"""
+    conn = _conn(cfg)
+    result = metasvc.mark(conn, AccessContext(_acting_user(conn, user_name)["id"]), list(image_ids), state)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
+@main.group("metadata")
+def metadata_commands():
+    """查看来源与整理状态，预演共享名称和关联合并。"""
+
+
+@metadata_commands.command("show")
+@click.argument("image_id", type=click.IntRange(min=1))
+@click.option("--user", "user_name", default=None)
+@click.pass_obj
+def metadata_show(cfg, image_id, user_name):
+    """导出单图元数据 JSON（不包含原图内容）。"""
+    conn = _conn(cfg)
+    result = metasvc.get(conn, AccessContext(_acting_user(conn, user_name)["id"]), image_id)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@metadata_commands.command("source")
+@click.argument("image_id", type=click.IntRange(min=1))
+@click.option("--original-filename", default=None)
+@click.option("--collected-at", default=None)
+@click.option("--created-time", default=None)
+@click.option("--url", default=None)
+@click.option("--note", default=None)
+@click.pass_obj
+def metadata_source(cfg, image_id, **fields):
+    """添加人工来源记录；不访问来源地址。"""
+    conn = _conn(cfg)
+    result = metasvc.add_source(conn, AccessContext(_acting_user(conn)["id"]), image_id, **fields)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
+
+@metadata_commands.command("alias-preview")
+@click.argument("kind", type=click.Choice(["tag", "artist"]))
+@click.argument("entity_id", type=click.IntRange(min=1))
+@click.argument("alias")
+@click.pass_obj
+def alias_preview(cfg, kind, entity_id, alias):
+    """预演添加别名，显示匹配和受影响的图片。"""
+    conn = _conn(cfg)
+    result = entity_edits.preview_alias(conn, AccessContext(_acting_user(conn)["id"]), kind, entity_id, alias)
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@metadata_commands.command("merge-preview")
+@click.argument("kind", type=click.Choice(["tag", "artist"]))
+@click.argument("source_id", type=click.IntRange(min=1))
+@click.argument("target_id", type=click.IntRange(min=1))
+@click.argument("image_ids", type=click.IntRange(min=1), nargs=-1, required=True)
+@click.pass_obj
+def merge_preview(cfg, kind, source_id, target_id, image_ids):
+    """预演转移所选图片的标签或艺术家关联，保留来源实体。"""
+    conn = _conn(cfg)
+    result = entity_edits.preview_merge(conn, AccessContext(_acting_user(conn)["id"]), kind, source_id, target_id, list(image_ids))
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@metadata_commands.command("execute")
+@click.argument("plan_id")
+@click.option("--yes", is_flag=True)
+@click.pass_obj
+def metadata_execute(cfg, plan_id, yes):
+    """确认执行已保存的元数据预演。"""
+    if not yes:
+        raise click.ClickException(t("结构化执行需要 --yes；请先检查预演结果"))
+    conn = _conn(cfg)
+    result = entity_edits.execute(conn, AccessContext(_acting_user(conn)["id"]), plan_id)
+    click.echo(json.dumps(result, ensure_ascii=False))
+
 @main.group()
 def artist():
     """艺术家管理。"""
@@ -619,10 +700,10 @@ def artist_list(cfg, query):
 @click.pass_obj
 def artist_link(cfg, image_id, artist_name):
     conn = _conn(cfg)
-    row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (artist_name,)).fetchone()
-    if row is None:
+    artist_id = catalog_names.resolve(conn, "artist", artist_name)
+    if artist_id is None:
         raise click.ClickException(t("艺术家不存在：{artist_name}（先 artist add）", artist_name=artist_name))
-    ops.link_artist(conn, image_id, int(row["id"]), True)
+    ops.link_artist(conn, image_id, artist_id, True)
     click.echo(f"#{image_id} ← {artist_name}")
 
 
@@ -632,10 +713,10 @@ def artist_link(cfg, image_id, artist_name):
 @click.pass_obj
 def artist_unlink(cfg, image_id, artist_name):
     conn = _conn(cfg)
-    row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (artist_name,)).fetchone()
-    if row is None:
+    artist_id = catalog_names.resolve(conn, "artist", artist_name)
+    if artist_id is None:
         raise click.ClickException(t("艺术家不存在：{artist_name}", artist_name=artist_name))
-    ops.link_artist(conn, image_id, int(row["id"]), False)
+    ops.link_artist(conn, image_id, artist_id, False)
     click.echo(t("#{image_id} 已取消关联 {artist_name}", image_id=image_id, artist_name=artist_name))
 
 

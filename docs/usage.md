@@ -83,6 +83,13 @@ an actionable `error.code` such as `library_path_invalid`, `library_root_overlap
 or `library_root_unwritable`; importing into an indexed library returns
 `library_indexed` with HTTP 409.
 
+## Metadata and organization
+
+See [Metadata and provenance](metadata.md) for Unicode name matching, aliases,
+source records, tag evidence, personal inbox/done state and confirmed association
+merges. The viewer can mark organization state and add provenance; CLI `metadata`
+commands expose the same records and saved previews.
+
 ## Search
 
 Whitespace combines conditions with AND. Commas within a condition mean OR. Prefix a condition with `-` to exclude it. Quote values containing spaces.

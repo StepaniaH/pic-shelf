@@ -11,6 +11,7 @@ import sqlite3
 from .db import utcnow
 from .i18n import t
 from .search import visible_images_sql
+from . import names as entity_names
 
 
 def _get_image(conn: sqlite3.Connection, image_id: int) -> sqlite3.Row:
@@ -87,10 +88,11 @@ def ensure_tag(conn: sqlite3.Connection, name: str, category: str | None = None)
     name = name.strip()
     if not name:
         raise ValueError(t("标签不能为空"))
+    resolved = entity_names.resolve(conn, "tag", name)
+    if resolved is not None:
+        return resolved
+    name = entity_names.display(name)
     ns, _ = split_namespace(name)
-    row = conn.execute("SELECT id FROM tags WHERE name=?", (name,)).fetchone()
-    if row:
-        return int(row["id"])
     cur = conn.execute(
         "INSERT INTO tags(name, namespace, category, created_at) VALUES(?,?,?,?)",
         (name, ns, category, utcnow()),
@@ -99,6 +101,7 @@ def ensure_tag(conn: sqlite3.Connection, name: str, category: str | None = None)
 
 
 def add_tags(conn: sqlite3.Connection, image_id: int, names: list[str], user_id: int) -> list[dict]:
+    from .metadata import record_manual_tag
     _get_image(conn, image_id)
     out = []
     for raw in names:
@@ -110,7 +113,9 @@ def add_tags(conn: sqlite3.Connection, image_id: int, names: list[str], user_id:
             "INSERT OR IGNORE INTO image_tags(image_id, tag_id, added_by, added_at) VALUES(?,?,?,?)",
             (image_id, tag_id, user_id, utcnow()),
         )
-        out.append({"id": tag_id, "name": name})
+        record_manual_tag(conn, image_id, tag_id, user_id, utcnow())
+        display_name = conn.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()[0]
+        out.append({"id": tag_id, "name": display_name})
     conn.commit()
     return out
 
@@ -120,15 +125,19 @@ def remove_tags(conn: sqlite3.Connection, image_id: int, names: list[str]) -> in
     n = 0
     for raw in names:
         name = raw.strip()
+        target = entity_names.resolve(conn, "tag", name)
+        if target is None and name.isdecimal():
+            target = int(name)
         for row in conn.execute(
-            "SELECT t.id FROM tags t JOIN image_tags it ON it.tag_id=t.id "
-            "WHERE it.image_id=? AND (t.name=? OR CAST(t.id AS TEXT)=?)",
-            (image_id, name, name),
+            "SELECT tag_id AS id FROM image_tags WHERE image_id=? AND tag_id=?",
+            (image_id, target),
         ).fetchall():
             n += conn.execute(
                 "DELETE FROM image_tags WHERE image_id=? AND tag_id=?",
                 (image_id, row["id"]),
             ).rowcount
+            conn.execute("UPDATE tag_claims SET retired_at=? WHERE image_id=? AND tag_id=? AND retired_at IS NULL",
+                         (utcnow(), image_id, row["id"]))
     conn.commit()
     return n
 
@@ -143,20 +152,21 @@ def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50,
         "LEFT JOIN visible i ON i.id=it.image_id "
     )
     if q:
-        sql += "WHERE t.name LIKE ? "
-        params.append(f"%{q}%")
+        sql += "WHERE picshelf_name_key(t.name) LIKE ? OR EXISTS(SELECT 1 FROM tag_aliases a WHERE a.entity_id=t.id AND a.match_key LIKE ?) "
+        params += [f"%{entity_names.match_key(q)}%"] * 2
     sql += "GROUP BY t.id "
     if allowed_library_ids is not None:
         sql += "HAVING COUNT(i.id)>0 "
     sql += "ORDER BY count DESC, t.name LIMIT ?"
     params.append(max(1, min(limit, 500)))
-    return [dict(r) for r in conn.execute(sql, params).fetchall()]
+    return [{**dict(r), "name_aliases": entity_names.aliases(conn, "tag", r["id"])} for r in conn.execute(sql, params).fetchall()]
 
 
 def rename_tag(conn: sqlite3.Connection, tag_id: int, new_name: str) -> dict:
     new_name = new_name.strip()
     if not new_name:
         raise ValueError(t("新名称不能为空"))
+    new_name = entity_names.display(new_name)
     exists = conn.execute("SELECT id FROM tags WHERE name=? AND id!=?", (new_name, tag_id)).fetchone()
     if exists:
         raise ValueError(t("标签已存在：{new_name}", new_name=new_name))
@@ -173,9 +183,10 @@ def create_artist(conn: sqlite3.Connection, name: str, *, aliases: str | None = 
     name = name.strip()
     if not name:
         raise ValueError(t("艺术家名不能为空"))
-    row = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (name,)).fetchone()
-    if row:
-        return get_artist(conn, int(row["id"]))
+    resolved = entity_names.resolve(conn, "artist", name)
+    if resolved is not None:
+        return get_artist(conn, resolved)
+    name = entity_names.display(name)
     cur = conn.execute(
         "INSERT INTO artists(name, aliases, links, note, created_at) VALUES(?,?,?,?,?)",
         (name, aliases, json.dumps(links or [], ensure_ascii=False), note, utcnow()),
@@ -189,6 +200,7 @@ def update_artist(conn: sqlite3.Connection, artist_id: int, **fields) -> dict:
         fields["name"] = fields["name"].strip()
         if not fields["name"]:
             raise ValueError(t("艺术家名不能为空"))
+        fields["name"] = entity_names.display(fields["name"])
     allowed = {"name", "aliases", "links", "note"}
     sets, params = [], []
     for k, v in fields.items():
@@ -211,6 +223,7 @@ def get_artist(conn: sqlite3.Connection, artist_id: int,
     if row is None:
         raise ValueError(t("艺术家 #{artist_id} 不存在", artist_id=artist_id))
     d = dict(row)
+    d["name_aliases"] = entity_names.aliases(conn, "artist", artist_id)
     try:
         d["links"] = json.loads(d.get("links") or "[]")
     except Exception:
@@ -239,8 +252,8 @@ def list_artists(conn: sqlite3.Connection, q: str | None = None, limit: int = 10
         "LEFT JOIN visible i ON i.id=ia.image_id "
     )
     if q:
-        sql += "WHERE a.name LIKE ? OR COALESCE(a.aliases,'') LIKE ? "
-        params += [f"%{q}%", f"%{q}%"]
+        sql += "WHERE picshelf_name_key(a.name) LIKE ? OR picshelf_name_key(a.aliases) LIKE ? OR EXISTS(SELECT 1 FROM artist_aliases aa WHERE aa.entity_id=a.id AND aa.match_key LIKE ?) "
+        params += [f"%{entity_names.match_key(q)}%"] * 3
     sql += "GROUP BY a.id "
     if allowed_library_ids is not None:
         sql += "HAVING COUNT(i.id)>0 "

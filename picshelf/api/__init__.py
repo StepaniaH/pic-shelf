@@ -13,7 +13,7 @@ from ..config import Config
 from ..errors import ServiceError
 from ..i18n import set_lang as _set_lang
 from ..worker import WorkerManager
-from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs
+from . import routes_admin, routes_auth, routes_core, routes_import, routes_interact, routes_play, routes_jobs, routes_metadata
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
@@ -73,6 +73,7 @@ def create_app(cfg: Config) -> FastAPI:
         routes_import.router,
         routes_admin.router,
         routes_jobs.router,
+        routes_metadata.router,
     ):
         api.include_router(router)
     app.include_router(api)

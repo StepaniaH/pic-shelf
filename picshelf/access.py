@@ -43,12 +43,12 @@ class AccessContext:
         return access
 
     def require_image(self, conn: sqlite3.Connection, image_id: int,
-                      minimum: str = "view", capability: str | None = None) -> sqlite3.Row:
+                      minimum: str = "view", capability: str | None = None, *, include_missing=False) -> sqlite3.Row:
         self.user(conn)
         if capability:
             self.require_capability(conn, capability)
         row = conn.execute("SELECT * FROM images WHERE id=?", (image_id,)).fetchone()
-        if row is None or (row["missing"] and not self.local_admin):
+        if row is None or (row["missing"] and not self.local_admin and not include_missing):
             raise ServiceError("image_not_found", t("图片不存在"), status=404,
                                next_step=t("请刷新图片列表，或扫描库后重试"),
                                objects={"image_id": image_id})

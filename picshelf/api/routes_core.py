@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
-from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, ops, search
+from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, metadata, names, ops, search
 from ..access import AccessContext
 from ..errors import ServiceError
 from .deps import Db, User, ensure_catalog_access, ensure_library_access, image_and_access, require_cap, serialize_image
@@ -270,6 +270,9 @@ def image_detail(image_id: int, conn: Db, user: User):
         raise HTTPException(status_code=404, detail=t("图片不存在"))
     detail["comments"] = ops.list_comments(conn, image_id)
     detail["notes"] = ops.list_notes(conn, image_id)
+    detail["metadata"] = metadata.get(conn, AccessContext(user["id"]), image_id)
+    detail["metadata_editable"] = (auth.has_cap(conn, user, "tag_edit") and
+                                   auth.library_access(conn, user, detail["library_id"]) in ("edit", "manage"))
     return serialize_image(detail)
 
 
@@ -348,7 +351,7 @@ def create_tag(body: TagBody, conn: Db, user: User):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     conn.commit()
-    return {"id": tag_id, "name": body.name.strip()}
+    return {"id": tag_id, "name": conn.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()[0]}
 
 
 @router.patch("/tags/{tag_id}")
@@ -387,9 +390,9 @@ def list_artists(conn: Db, user: User, q: str | None = None, limit: int = 100):
 def create_artist(body: ArtistBody, conn: Db, user: User):
     if not auth.has_cap(conn, user, "tag_edit"):
         raise HTTPException(status_code=403, detail=t("缺少权限：tag_edit"))
-    existing = conn.execute("SELECT id FROM artists WHERE lower(name)=lower(?)", (body.name.strip(),)).fetchone()
+    existing = names.resolve(conn, "artist", body.name)
     if existing:
-        ensure_catalog_access(conn, user, "artist", existing["id"])
+        ensure_catalog_access(conn, user, "artist", existing)
     try:
         artist = ops.create_artist(conn, body.name, aliases=body.aliases,
                                    links=body.links, note=body.note)
