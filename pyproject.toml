@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "StepaniaH" }]
 dependencies = [
   "fastapi>=0.115",
+  "pydantic>=2,<3",
   "uvicorn[standard]>=0.30",
   "pillow>=10.4",
   "imagehash>=4.3",
@@ -23,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "httpx>=0.27"]
+dev = ["pytest>=8.0", "httpx>=0.27", "httpx2>=2.13.1"]
 browser = ["playwright>=1.45"]
 
 [project.scripts]
@@ -33,4 +34,4 @@ picshelf = "picshelf.cli:main"
 packages = ["picshelf"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/AGENTS.md", "/TASKS.md", "/docs/decisions.md", "/docs/research"]
+exclude = ["/AGENTS.md", "/TASKS.md", "/docs/decisions.md", "/docs/research", "/data", "/.uv-cache", "/.venv", "/.codex", "/.agents"]

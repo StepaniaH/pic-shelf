@@ -1,5 +1,6 @@
 # Pic Shelf — container image (self-hosted image library: Web / TUI / CLI)
-FROM python:3.11-slim
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,8 +11,10 @@ WORKDIR /app
 
 # Install the package (hatchling build; README is referenced by pyproject metadata)
 COPY pyproject.toml README.md LICENSE ./
+COPY requirements/runtime.txt ./requirements/runtime.txt
 COPY picshelf ./picshelf
-RUN pip install .
+RUN pip install --require-hashes -r requirements/runtime.txt \
+ && pip install --no-deps .
 
 # Run as a non-root user; /data is the persistent volume mount point.
 # If the host UID is not 1000, override with `user: "UID:GID"` in compose or chown ./data.

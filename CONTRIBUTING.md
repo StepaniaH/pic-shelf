@@ -5,12 +5,16 @@ Pic Shelf is a Python application with a static JavaScript frontend. No frontend
 ## Development setup
 
 ```sh
-uv venv .venv --python 3.11
-uv pip install --python .venv/bin/python -e ".[dev]"
+uv sync --locked --extra dev --python 3.11
 .venv/bin/python -m pytest tests/ -q
 ```
 
 Use a separate data directory for development. Initialize it with `picshelf --data <directory> init --admin <name>`, then use the same `--data` argument for subsequent commands. `picshelf serve --reload` reloads the API during development.
+
+Use `make check`, `make migrations`, `make browser` and `make package` for local
+checks. See [packaging](docs/packaging.md) for lock maintenance and independent
+wheel/source installation, and [performance](docs/performance.md) for reproducible
+benchmarks. Keep generated data and reports outside version control.
 
 The CLI and TUI operate as a local administrator. The HTTP API authenticates each request and passes an explicit `AccessContext` to shared services. Query and rating operations live in `picshelf/catalog.py`; current account and library permissions are checked in `picshelf/access.py`. Keep transport validation in `picshelf/api/` and business invariants in services. Low-level storage helpers retain their existing interfaces and require the caller to enforce access.
 
@@ -19,7 +23,7 @@ The CLI and TUI operate as a local administrator. The HTTP API authenticates eac
 Browser tests are optional and launch an isolated local service with generated image fixtures. They do not use an existing library.
 
 ```sh
-uv pip install --python .venv/bin/python -e ".[dev,browser]"
+uv sync --locked --extra dev --extra browser
 .venv/bin/python -m playwright install chromium
 PICSHELF_BROWSER_TESTS=1 .venv/bin/python -m pytest tests/test_web.py -q
 ```
