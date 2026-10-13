@@ -1,0 +1,51 @@
+{
+  "format": 1,
+  "source": "generated",
+  "seed": 20261013,
+  "users": {
+    "curator": {"admin": true, "libraries": ["north", "south"]},
+    "reader": {"admin": false, "libraries": ["north"]},
+    "outsider": {"admin": false, "libraries": []}
+  },
+  "images": [
+    {"key":"n01","library":"north","path":"01 zero.png","tags":["色彩:红色","night sky"],"rating":0,"favorite":true,"artist":"Jane Doe","album":"Selections","comment":"First comment","note":"Keep the original"},
+    {"key":"n02","library":"north","path":"02 unrated.png","tags":["色彩:蓝色"],"rating":null},
+    {"key":"n03","library":"north","path":"03 one.png","tags":["色彩:红色"],"rating":1},
+    {"key":"n04","library":"north","path":"04 ten.png","tags":["色彩:蓝色","night sky"],"rating":10,"favorite":true,"artist":"Jane Doe","album":"Selections"},
+    {"key":"n05","library":"north","path":"05 100%.png","tags":[],"rating":2},
+    {"key":"n06","library":"north","path":"06 under_score.png","tags":[],"rating":3},
+    {"key":"n07","library":"north","path":"07 中文.png","tags":["draft"],"rating":4},
+    {"key":"n08","library":"north","path":"08 comma,name.png","tags":["draft"],"rating":5},
+    {"key":"n09","library":"north","path":"09 space name.png","tags":[],"rating":6},
+    {"key":"n10","library":"north","path":"10 quote'name.png","tags":[],"rating":7},
+    {"key":"n11","library":"north","path":"11 eleven.png","tags":[],"rating":8},
+    {"key":"n12","library":"north","path":"12 twelve.png","tags":[],"rating":9},
+    {"key":"s01","library":"south","path":"01 zero.png","tags":["private","night sky"],"rating":0,"artist":"Private Artist","album":"Private album"},
+    {"key":"s02","library":"south","path":"02 unrated.png","tags":["private"],"rating":null},
+    {"key":"s03","library":"south","path":"03 one.png","tags":["private"],"rating":1},
+    {"key":"s04","library":"south","path":"04 ten.png","tags":["private"],"rating":10},
+    {"key":"s05","library":"south","path":"05 five.png","tags":[],"rating":2},
+    {"key":"s06","library":"south","path":"06 six.png","tags":[],"rating":3},
+    {"key":"s07","library":"south","path":"07 seven.png","tags":[],"rating":4},
+    {"key":"s08","library":"south","path":"08 eight.png","tags":[],"rating":5},
+    {"key":"s09","library":"south","path":"09 nine.png","tags":[],"rating":6},
+    {"key":"s10","library":"south","path":"10 ten.png","tags":[],"rating":7},
+    {"key":"s11","library":"south","path":"11 eleven.png","tags":[],"rating":8},
+    {"key":"s12","library":"south","path":"12 twelve.png","tags":[],"rating":9}
+  ],
+  "queries": [
+    {"query":"tag:色彩:红色","expected":["n01","n03"]},
+    {"query":"tag:色彩:红色,色彩:蓝色 -file:unrated","expected":["n01","n03","n04"]},
+    {"query":"tag:\"night sky\"","expected":["n01","n04"]},
+    {"query":"artist:\"Jane Doe\"","expected":["n01","n04"]},
+    {"query":"album:Selections","expected":["n01","n04"]},
+    {"query":"rating:0","expected":["n01","n02"]},
+    {"query":"rating:>=8","expected":["n04","n11","n12"]},
+    {"query":"fav:","expected":["n01","n04"]},
+    {"query":"file:%","expected":["n05"]},
+    {"query":"file:_","expected":["n06"]},
+    {"query":"tag:private","expected":[]},
+    {"query":"rating:wrong","expected":[],"error":true},
+    {"query":"\"unfinished","expected":[],"error":true}
+  ]
+}
