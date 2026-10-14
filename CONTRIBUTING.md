@@ -11,8 +11,20 @@ uv sync --locked --extra dev --python 3.11
 
 Use a separate data directory for development. Initialize it with `picshelf --data <directory> init --admin <name>`, then use the same `--data` argument for subsequent commands. `picshelf serve --reload` reloads the API during development.
 
-Use `make check`, `make migrations`, `make browser` and `make package` for local
-checks. See [packaging](docs/packaging.md) for lock maintenance and independent
+Use `make check` for the default Python regression suite and `make verify` for
+complete local acceptance. The complete command runs regular tests, Node.js
+module contracts, real loopback HTTP tests and Chromium tests. Each required
+suite must collect tests and pass without skips. Exit code 1 means failure;
+2 means an incomplete check, such as a missing runtime or skipped test. Other
+suites continue when one environment is unavailable. Logs, JUnit reports and
+the code/dependency summary are saved under the ignored `data/verification/`.
+Run verification while the checkout is stable; changing code during the run
+makes the result incomplete.
+
+`make http`, `make browser` and `make modules` run individual required suites
+with the same gate. `make migrations` and `make package` provide focused
+checks. Installation, Docker lifecycle and personal image quality are separate
+checks and are not implied by `make verify`. See [packaging](docs/packaging.md) for lock maintenance and independent
 wheel/source installation, and [performance](docs/performance.md) for reproducible
 benchmarks. Keep generated data and reports outside version control.
 
@@ -26,9 +38,13 @@ Browser tests are optional and launch an isolated local service with generated i
 uv sync --locked --extra dev --extra browser
 .venv/bin/python -m playwright install chromium
 PICSHELF_BROWSER_TESTS=1 .venv/bin/python -m pytest tests/test_web.py -q
+make verify
 ```
 
 To use an existing Chromium executable, set `PICSHELF_TEST_BROWSER` to its path. Browser tests cover both languages, desktop and phone layouts, pagination, ratings, tagged images, and nested dialogs.
+
+The GitHub workflow uses the same `make verify` command with locked dependencies
+on Linux. The setup follows the [uv GitHub Actions guide](https://docs.astral.sh/uv/guides/integration/github/).
 
 ## Changes
 

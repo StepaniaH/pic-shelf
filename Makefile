@@ -1,13 +1,22 @@
 PYTHON ?= .venv/bin/python
 export UV_CACHE_DIR := $(CURDIR)/.uv-cache
 
-.PHONY: check browser migrations package benchmark
+.PHONY: check verify http browser modules migrations package benchmark
 check:
 	$(PYTHON) -m pytest tests/ -q
 	git diff --check
 
 browser:
-	PICSHELF_BROWSER_TESTS=1 $(PYTHON) -m pytest tests/test_web.py -q
+	$(PYTHON) scripts/verify.py --suite browser
+
+http:
+	$(PYTHON) scripts/verify.py --suite http
+
+modules:
+	$(PYTHON) scripts/verify.py --suite modules
+
+verify:
+	$(PYTHON) scripts/verify.py
 
 migrations:
 	$(PYTHON) -m pytest tests/test_migrations.py tests/test_manifest.py tests/test_backup_checks.py -q

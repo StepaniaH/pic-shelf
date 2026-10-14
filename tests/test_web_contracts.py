@@ -5,6 +5,8 @@ import subprocess
 
 import pytest
 
+pytestmark = pytest.mark.module_contract
+
 
 def test_algorithm_rebuild_changes_gallery_cache_key_but_keeps_original_url():
     node = shutil.which("node")

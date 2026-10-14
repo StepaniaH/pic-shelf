@@ -129,6 +129,7 @@ def test_backup_restores_committed_wal_and_rejects_truncated_archive(catalog, tm
 
 
 @pytest.mark.skipif(os.environ.get("PICSHELF_HTTP_TESTS") != "1", reason="opt-in real HTTP suite")
+@pytest.mark.http
 def test_real_http_permissions_and_queries(catalog):
     with http_server(catalog.cfg) as client:
         assert client.get("/api/v1/images").status_code == 401

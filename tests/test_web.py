@@ -15,9 +15,9 @@ from picshelf.api import create_app
 from picshelf.config import Config
 from tests.conftest import make_image
 
-pytestmark = pytest.mark.skipif(
+pytestmark = [pytest.mark.browser, pytest.mark.skipif(
     os.environ.get("PICSHELF_BROWSER_TESTS") != "1", reason="opt-in browser suite",
-)
+)]
 
 
 @dataclass
