@@ -1,14 +1,13 @@
 """Permission-checked playback snapshots, navigation and explicit random modes."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import random
 import secrets
 import sqlite3
 
 from . import search
-from .db import utcnow
+from .db import transaction, utcnow
 from .errors import ServiceError
 from .i18n import t
 from .names import match_key
@@ -46,20 +45,6 @@ def validate_spec(spec):
     parsed = search.parse(value['query'])
     if parsed.errors: raise search.invalid_query(parsed.errors)
     return value
-
-
-@contextmanager
-def transaction(conn):
-    nested = conn.in_transaction
-    conn.execute('SAVEPOINT play_write' if nested else 'BEGIN IMMEDIATE')
-    try:
-        yield
-        conn.execute('RELEASE play_write') if nested else conn.commit()
-    except BaseException:
-        if nested:
-            conn.execute('ROLLBACK TO play_write'); conn.execute('RELEASE play_write')
-        else: conn.rollback()
-        raise
 
 
 def check_source(conn, access, spec):

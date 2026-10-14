@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,23 @@ from .errors import ServiceError
 from .i18n import t
 
 SCHEMA_VERSION = 14
+
+
+@contextmanager
+def transaction(conn):
+    """A short write transaction, preserving an existing caller transaction."""
+    nested = conn.in_transaction
+    conn.execute('SAVEPOINT catalog_write' if nested else 'BEGIN IMMEDIATE')
+    try:
+        yield
+        conn.execute('RELEASE catalog_write') if nested else conn.commit()
+    except BaseException:
+        if nested:
+            conn.execute('ROLLBACK TO catalog_write')
+            conn.execute('RELEASE catalog_write')
+        else:
+            conn.rollback()
+        raise
 
 _SCHEMA_V1 = """
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);

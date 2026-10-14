@@ -1,7 +1,7 @@
 """Manual work membership; each file retains its own identity and organization."""
 import sqlite3
 
-from . import db, names, play
+from . import db, names
 from .errors import ServiceError
 from .i18n import t
 
@@ -65,7 +65,7 @@ def _members(conn, access, members):
 
 def create(conn, access, name, members, preferred=None):
     name = names.display(name)
-    with play.transaction(conn):
+    with db.transaction(conn):
         _members(conn, access, members)
         if preferred is not None and (type(preferred) is not int or preferred not in {item['image_id'] for item in members}):
             raise _error()
@@ -79,7 +79,7 @@ def create(conn, access, name, members, preferred=None):
 
 
 def link(conn, access, work_id, members):
-    with play.transaction(conn):
+    with db.transaction(conn):
         _edit(conn, access, work_id)
         _members(conn, access, members)
         for item in members:
@@ -92,7 +92,7 @@ def link(conn, access, work_id, members):
 
 
 def unlink(conn, access, work_id, image_id):
-    with play.transaction(conn):
+    with db.transaction(conn):
         _edit(conn, access, work_id)
         if conn.execute('SELECT 1 FROM work_images WHERE work_id=? AND image_id=?', (work_id, image_id)).fetchone() is None:
             raise _error('work_member_not_found', 404)
@@ -101,7 +101,7 @@ def unlink(conn, access, work_id, image_id):
 
 
 def prefer(conn, access, work_id, image_id):
-    with play.transaction(conn):
+    with db.transaction(conn):
         _edit(conn, access, work_id)
         if type(image_id) is not int or conn.execute('SELECT 1 FROM work_images WHERE work_id=? AND image_id=?', (work_id, image_id)).fetchone() is None:
             raise _error('work_member_not_found', 404)
@@ -117,7 +117,7 @@ def pending(conn, access, work_id):
 
 
 def drop_pending(conn, access, work_id, image_uid):
-    with play.transaction(conn):
+    with db.transaction(conn):
         _edit(conn, access, work_id)
         conn.execute('DELETE FROM pending_work_images WHERE work_id=? AND image_uid=?', (work_id, image_uid))
     return pending(conn, access, work_id)

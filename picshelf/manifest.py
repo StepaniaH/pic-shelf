@@ -150,7 +150,7 @@ def _query_export(conn, expression, selected_albums):
 def export(conn, access, library_ids=None):
     """Export one user's personal records and shared metadata in selected libraries."""
     access.require_capability(conn, 'view')
-    with play.transaction(conn):
+    with db.transaction(conn):
         allowed = access.allowed_libraries(conn)
         selected = set(library_ids if library_ids is not None else
                        (allowed if allowed is not None else [row[0] for row in conn.execute('SELECT id FROM libraries')]))
@@ -570,7 +570,7 @@ def _apply(conn, access, records, mappings):
 
 def preview(conn, access, manifest, mappings):
     records, unknown = validate(manifest)
-    with play.transaction(conn):
+    with db.transaction(conn):
         _mappings(conn, access, records, mappings)
         fingerprint = _fingerprint(conn)
         conn.execute('SAVEPOINT manifest_preview')
@@ -612,7 +612,7 @@ def execute(conn, cfg, access, plan_id):
         for library_id in sorted(set(mappings['libraries'].values())):
             root = conn.execute('SELECT root_path FROM libraries WHERE id=?', (library_id,)).fetchone()[0]
             stack.enter_context(library_write_lock(cfg, Path(root)))
-        with play.transaction(conn):
+        with db.transaction(conn):
             row, records = _plan(conn, access, plan_id)
             if row['state'] == 'succeeded':
                 return get_plan(conn, access, plan_id)
