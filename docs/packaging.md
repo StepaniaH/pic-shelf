@@ -8,7 +8,7 @@ The build backend is pinned independently. Use the lock for a repeatable checkou
 uv sync --locked --extra dev --extra browser --python 3.11
 make check
 make migrations
-make browser
+make verify
 ```
 
 Browser tests additionally require an installed Chromium executable. Runtime
@@ -50,7 +50,10 @@ The driver clears `PYTHONPATH`, runs from a directory without the source package
 checks the actual import location and static resources, and exercises initialization,
 indexed/managed libraries, copy preview/execution, zero rating, metadata export,
 archive inspection, restore and read-only checking. It confirms original bytes
-and independent copy identity. An installed package requires an explicit data path.
+and independent copy identity, interrupted pending jobs and session invalidation
+after restore. A frozen schema-v1 database is also upgraded through the installed
+package, checking image identity, zero ratings, favorites, memberships, grants
+and the private pre-migration snapshot. An installed package requires an explicit data path.
 
 Wheel and source archive have been run on macOS arm64 with Python 3.11.15.
 Lock resolution includes markers for other Python versions and platforms; that is

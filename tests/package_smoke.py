@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import sqlite3
 import subprocess
 
 
@@ -43,6 +44,7 @@ def run(python, root):
     command('--data',data,'tag','add',image_id,'sample')
     exported=json.loads(command('--data',data,'manifest','export','--library','managed').stdout)
     assert exported['records']['ratings'][0]['value']==0
+    queued=json.loads(command('--data',data,'scan','indexed','--background','--json').stdout)
     archive=root/'backup.zip'
     command('--data',data,'export',archive,'--with-thumbs')
     inspected=json.loads(command('--data',data,'backup','inspect',archive).stdout)
@@ -55,9 +57,38 @@ def run(python, root):
     report=json.loads(command('--data',restored,'check','--full').stdout)
     assert not report['counts']
     assert json.loads(command('--data',restored,'doctor','--full').stdout)['ready']
+    with sqlite3.connect(restored/'picshelf.db') as conn:
+        assert conn.execute('SELECT state FROM jobs WHERE id=?',(queued['id'],)).fetchone()[0]=='interrupted'
+        assert conn.execute('SELECT MIN(token_version) FROM users').fetchone()[0]>0
+    upgrade=root/'upgrade';upgrade.mkdir()
+    with sqlite3.connect(upgrade/'picshelf.db') as conn:
+        conn.executescript((Path(__file__).parent/'fixtures/schema_v1.sql').read_text())
+        conn.execute("INSERT INTO users VALUES(7,'legacy','invalid-fixture-hash','Legacy',1,0,'2026-10-01T00:00:00+00:00')")
+        conn.execute("INSERT INTO groups(id,name,created_at) VALUES(13,'legacy-group','2026-10-01T00:00:00+00:00')")
+        conn.execute('INSERT INTO user_groups VALUES(7,13)')
+        conn.execute("INSERT INTO libraries VALUES(19,'legacy',?,NULL,'2026-10-01T00:00:00+00:00')",(str(source),))
+        conn.execute("INSERT INTO library_grants VALUES(13,19,'manage')")
+        conn.execute("INSERT INTO images(id,library_id,rel_path,filename,ext,size_bytes,mtime,sha256,imported_at) VALUES(31,19,'sample.png','sample.png','png',?,?,?,'2026-10-01T00:00:00+00:00')",(len(original),(source/'sample.png').stat().st_mtime,digest))
+        conn.execute("INSERT INTO ratings VALUES(31,7,0,'2026-10-01T00:00:00+00:00')")
+        conn.execute("INSERT INTO favorites VALUES(31,7,'2026-10-01T00:00:00+00:00')")
+        conn.commit()
+        before={name:list(conn.execute(f'SELECT * FROM {name}')) for name in ('ratings','favorites','user_groups','library_grants')}
+    upgraded=json.loads(command('--data',upgrade,'ls','--json').stdout)
+    assert upgraded['items'][0]['id']==31 and upgraded['items'][0]['my_rating']==0
+    with sqlite3.connect(upgrade/'picshelf.db') as conn:
+        upgraded_schema=int(conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0])
+        assert upgraded_schema==14
+        assert {name:list(conn.execute(f'SELECT * FROM {name}')) for name in before}==before
+    snapshots=list((upgrade/'migration-backups').glob('*.db'))
+    assert len(snapshots)==1 and snapshots[0].stat().st_mode & 0o077==0
+    with sqlite3.connect(snapshots[0]) as conn:
+        assert conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0]=='1'
+        assert {name:list(conn.execute(f'SELECT * FROM {name}')) for name in before}==before
     return {'installed_version':info['version'],'source_imported':False,'static_resources':True,
             'images':2,'managed_copy_independent':True,'rating_zero_preserved':True,
-            'backup_inspected_and_restored':True,'read_only_check_passed':True}
+            'backup_inspected_and_restored':True,'read_only_check_passed':True,
+            'restored_jobs_interrupted':True,'restored_sessions_invalidated':True,
+            'upgrade_from_schema':1,'upgraded_schema':upgraded_schema,'upgrade_metadata_preserved':True}
 
 
 if __name__=='__main__':
