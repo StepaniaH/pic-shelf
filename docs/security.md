@@ -20,6 +20,11 @@ Pic Shelf is a private, trusted shared catalog. It has no open registration or t
 
 Capabilities are read from current group membership on each operation. Library grants alone do not replace `view`. Legacy albums without a library can be read when they contain visible images; editing them requires global administration. Counts and covers respect visible images. Tags and artist names remain shared catalog entities, not private per-user objects.
 
+The Web group editor adds or removes one membership at a time through
+`PUT/DELETE /api/v1/groups/{group_id}/members/{user_id}`. These administrator-only
+operations are idempotent and preserve the user's other groups. The existing
+`PUT /api/v1/users/{user_id}/groups` endpoint replaces the complete group list.
+
 A playback queue whose library access was revoked returns `play_scope_changed`; create a new session using current access. Its owner can still delete the old session. Background file work checks current authority at each file boundary. Revocation stops subsequent files, not an already completed operation.
 
 ## Sessions and upgrades

@@ -25,6 +25,31 @@ def client_for(catalog, username="reader", *, base_url="http://testserver"):
     return client, response.json()["token"]
 
 
+def test_group_membership_changes_preserve_other_grants_and_require_admin(catalog):
+    reader, _ = client_for(catalog)
+    admin, _ = client_for(catalog, 'curator')
+    uid = catalog.users['reader']
+    with db.open_db(catalog.cfg.db_path) as conn:
+        original = {r[0] for r in conn.execute('SELECT group_id FROM user_groups WHERE user_id=?', (uid,))}
+        gid = conn.execute("INSERT INTO groups(name,capabilities,created_at) VALUES('Reviewers','[]',?)", (db.utcnow(),)).lastrowid
+        conn.commit()
+    endpoint = f'/api/v1/groups/{gid}/members/{uid}'
+    with reader, admin:
+        assert reader.put(endpoint).status_code == 403
+        assert reader.delete(endpoint).status_code == 403
+        for _ in range(2):
+            assert admin.put(endpoint).status_code == 200
+        with db.open_db(catalog.cfg.db_path) as conn:
+            assert {r[0] for r in conn.execute('SELECT group_id FROM user_groups WHERE user_id=?', (uid,))} == original | {gid}
+            assert not auth.has_cap(conn, auth.get_user(conn, uid), 'admin')
+        assert admin.put(f'/api/v1/groups/{gid}/members/999999').status_code == 404
+        assert admin.put(f'/api/v1/groups/999999/members/{uid}').status_code == 404
+        for _ in range(2):
+            assert admin.delete(endpoint).status_code == 200
+        with db.open_db(catalog.cfg.db_path) as conn:
+            assert {r[0] for r in conn.execute('SELECT group_id FROM user_groups WHERE user_id=?', (uid,))} == original
+
+
 def test_password_change_revokes_all_old_cookie_and_bearer_sessions(catalog):
     first, first_token = client_for(catalog)
     second, second_token = client_for(catalog)

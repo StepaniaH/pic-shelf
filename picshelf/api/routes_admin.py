@@ -7,7 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import StrictBool, BaseModel, Field
 
-from .. import auth, source_access
+from .. import auth, db, source_access
 from ..access import AccessContext
 from .types import Identifier, BodyIdentifier
 from .deps import Db, User, ensure_library_access, require_cap
@@ -152,6 +152,28 @@ def set_user_groups(user_id: Identifier, body: GroupsBody, conn: Db, admin: Admi
 
 
 # ---------------------------------------------------------------- 组
+
+def _membership(conn, group_id, user_id, *, remove=False):
+    with db.transaction(conn):
+        if not conn.execute('SELECT 1 FROM groups WHERE id=?', (group_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=t("组不存在"))
+        if not conn.execute('SELECT 1 FROM users WHERE id=?', (user_id,)).fetchone():
+            raise HTTPException(status_code=404, detail=t("用户不存在"))
+        if remove:
+            conn.execute('DELETE FROM user_groups WHERE user_id=? AND group_id=?', (user_id, group_id))
+        else:
+            conn.execute('INSERT OR IGNORE INTO user_groups(user_id,group_id) VALUES(?,?)', (user_id, group_id))
+    return {"ok": True}
+
+
+@router.put('/groups/{group_id}/members/{user_id}')
+def add_group_member(group_id: Identifier, user_id: Identifier, conn: Db, admin: Admin):
+    return _membership(conn, group_id, user_id)
+
+
+@router.delete('/groups/{group_id}/members/{user_id}')
+def remove_group_member(group_id: Identifier, user_id: Identifier, conn: Db, admin: Admin):
+    return _membership(conn, group_id, user_id, remove=True)
 
 class GroupBody(BaseModel):
     name: str

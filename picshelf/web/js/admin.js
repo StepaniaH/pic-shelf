@@ -146,9 +146,8 @@ async function renderGroups(body) {
   body.querySelectorAll(".grant-item[data-gid]").forEach((card) => {
     const g = groups.find((x) => String(x.id) === card.dataset.gid);
     card.querySelectorAll("[data-rm-user]").forEach((btn) => btn.addEventListener("click", async () => {
-      const remaining = g.members.map((m) => m.id).filter((id) => id !== Number(btn.dataset.rmUser));
       try {
-        await api(`/users/${btn.dataset.rmUser}/groups`, { method: "PUT", body: { group_ids: remaining } });
+        await api(`/groups/${g.id}/members/${btn.dataset.rmUser}`, { method: "DELETE" });
         await renderGroups(body);
       } catch (e) { toast(e.message, "error"); }
     }));
@@ -156,9 +155,8 @@ async function renderGroups(body) {
       const name = card.querySelector(".add-user").value.trim();
       const u = users.find((x) => x.username === name);
       if (!u) { toast(t("找不到该用户"), "error"); return; }
-      const ids = [...new Set([...g.members.map((m) => m.id), u.id])];
       try {
-        await api(`/users/${u.id}/groups`, { method: "PUT", body: { group_ids: ids } });
+        await api(`/groups/${g.id}/members/${u.id}`, { method: "PUT" });
         await renderGroups(body);
       } catch (e) { toast(e.message, "error"); }
     });
