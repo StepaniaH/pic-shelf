@@ -53,7 +53,7 @@ export class Source {
     return res;
   }
   async loadMore() {
-    if (this.items.length >= this.total) return false;
+    if (this.loadedAll) return false;
     if (!this.pending) {
       const pending = this.load(false).finally(() => { if (this.pending === pending) this.pending = null; });
       this.pending = pending;
@@ -61,7 +61,7 @@ export class Source {
     await this.pending;
     return true;
   }
-  get loadedAll() { return this.items.length >= this.total; }
+  get loadedAll() { return this.sort === "random" || this.items.length >= this.total; }
 }
 
 // ---------------------------------------------------------------- 网格

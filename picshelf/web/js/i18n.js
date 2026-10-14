@@ -2,6 +2,18 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "本次抽样 {n} / 匹配 {total}": "Sample {n} / matching {total}",
+    "库名": "Library name",
+    "描述（可选）": "Description (optional)",
+    "注册库": "Register library",
+    "操作": "Actions",
+    "刷新": "Refresh",
+    "检索表达式": "Search expression",
+    "幻灯片": "Slideshow",
+    "信息": "Info",
+    "下载原图": "Download original",
+    "导入": "Import",
+    "扫描": "Scan",
     "请等待正在运行的任务结束；需要排队时请使用后台入口": "Wait for running tasks to finish; use a background endpoint if you need to queue the work",
     "请运行 check --full 查看具体问题；先核对备份，再单独修复": "Run check --full for details; verify backups before a separate repair",
     "同时核对原图哈希；默认检查可达性": "Also verify original hashes; check availability by default",

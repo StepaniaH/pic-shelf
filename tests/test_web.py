@@ -90,11 +90,78 @@ def page(browser):
 def sign_in(page, web_server, language="en"):
     page.add_init_script(f"localStorage.setItem('picshelf.lang', '{language}')")
     page.goto(web_server.url)
-    page.wait_for_load_state("networkidle")
+    page.locator("#login-username").wait_for(state="visible")
     page.locator("#login-username").fill("browser-test")
     page.locator("#login-password").fill(web_server.password)
     page.locator("#login-form button").click()
     page.locator(".lib-card").first.wait_for()
+
+
+def test_group_editor_changes_only_the_selected_membership(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    base = web_server.url + '/api/v1'
+    headers = {'Origin': web_server.url}
+    admin_id = page.request.get(base + '/auth/me').json()['id']
+    created = page.request.post(base + '/users', headers=headers,
+                                data={'username': 'group-member', 'password': secrets.token_urlsafe(24)}).json()
+    uid = created['id']
+    original = {group['id'] for group in created['groups']}
+    group = page.request.post(base + '/groups', headers=headers,
+                              data={'name': 'Review group', 'capabilities': ['view']}).json()
+    gid = group['id']
+    assert page.request.put(f'{base}/groups/{gid}/members/{admin_id}', headers=headers).status == 200
+    page.goto(web_server.url + '/#/admin?tab=groups')
+    card = page.locator(f'[data-gid="{gid}"]')
+    card.locator('.add-user').fill('group-member')
+    card.locator('[data-add-user]').click()
+    expect(card.locator(f'[data-rm-user="{uid}"]')).to_be_visible()
+    current = next(user for user in page.request.get(base + '/users').json() if user['id'] == uid)
+    assert {group['id'] for group in current['groups']} == original | {gid}
+    assert 'admins' not in {group['name'] for group in current['groups']}
+    card.locator(f'[data-rm-user="{uid}"]').click()
+    expect(card.locator(f'[data-rm-user="{uid}"]')).to_have_count(0)
+    current = next(user for user in page.request.get(base + '/users').json() if user['id'] == uid)
+    assert {group['id'] for group in current['groups']} == original
+
+
+def test_condition_editor_preserves_or_and_literal_commas(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.goto(web_server.url + '/#/search')
+    page.locator('.query-editor summary').click()
+    page.locator('[name="field"]').select_option('ext')
+    page.locator('[name="value"]').fill('png,jpg')
+    page.locator('[data-add]').click()
+    expect(page.locator('[name="expression"]')).to_have_value('ext:"png","jpg"')
+    page.locator('[name="field"]').select_option('tag')
+    page.locator('[name="value"]').fill('"comma,name",night sky')
+    page.locator('[data-add]').click()
+    expect(page.locator('[name="expression"]')).to_have_value('ext:"png","jpg" tag:"comma,name","night sky"')
+    expect(page.locator('[data-rule-error]')).to_be_empty()
+
+
+def test_random_viewer_stops_at_sample_boundary(page, web_server):
+    from urllib.parse import parse_qs, urlsplit
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    page.goto(web_server.url + '/#/search?sort=random')
+    cards = page.locator('#grid .card')
+    expect(cards).to_have_count(120)
+    expect(page.locator('#more-btn')).to_be_hidden()
+    requests = []
+    page.on('request', lambda request: requests.append(request.url))
+    name = cards.last.locator('.fname').text_content()
+    cards.last.click()
+    expect(page.locator('.viewer-stage img')).to_have_attribute('alt', name)
+    expect(page.locator('.nav-btn.next')).to_be_disabled()
+    expect(page.locator('.meta-count')).to_contain_text('Sample 120')
+    page.keyboard.press('ArrowRight')
+    page.keyboard.press('ArrowRight')
+    expect(page.locator('.viewer-stage img')).to_have_attribute('alt', name)
+    page.locator('#v-close').click()
+    assert not any(int(parse_qs(urlsplit(url).query).get('offset', ['0'])[0]) > 0
+                   for url in requests if urlsplit(url).path == '/api/v1/images')
 
 
 def test_import_executes_saved_preview_and_requires_new_preview_after_option_change(page, web_server):
@@ -275,14 +342,20 @@ def test_viewer_ignores_late_response_for_previous_image(page, web_server):
       window.fetch = async (...args) => {
         const response = await original(...args);
         if (String(args[0]).endsWith('/images/' + id)) {
-          await new Promise(resolve => setTimeout(resolve, 400));
+          const body = await response.text();
+          window.slowResponseReady = true;
+          await new Promise(resolve => { window.releaseSlowResponse = resolve; });
           window.slowResponseFinished = true;
+          return new Response(body, {status: response.status, headers: response.headers});
         }
         return response;
       };
     }""", first_id)
     page.locator("#grid .card").first.click()
+    page.wait_for_function("window.slowResponseReady === true")
     page.keyboard.press("ArrowRight")
+    expect(page.locator(".viewer-stage img")).to_have_attribute("alt", expected)
+    page.evaluate("window.releaseSlowResponse()")
     page.wait_for_function("window.slowResponseFinished === true")
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", expected)
     expect(page.locator(".viewer-panel .kv")).to_contain_text(expected)
@@ -293,7 +366,7 @@ def test_concurrent_load_more_does_not_duplicate_images(page, web_server):
     sign_in(page, web_server)
     result = page.evaluate("""async () => {
       const { Source } = await import('/js/views.js');
-      const source = new Source('Test', {}, { sort: 'path' });
+      const source = new Source('Test', {library_id: 1}, { sort: 'path', filters: {library_id: 1} });
       await source.load();
       await Promise.all([source.loadMore(), source.loadMore(), source.loadMore()]);
       return { total: source.total, loaded: source.items.length,
@@ -421,7 +494,7 @@ def test_play_rule_pause_bad_image_skip_and_resume_cursor(page,tmp_path):
         expect(page.locator('#ss-img')).to_have_attribute('alt','01 zero.png')
         page.wait_for_function("document.querySelector('#ss-img').naturalWidth > 0")
         page.locator('#ss-pause').click()
-        expect(page.locator('#ss-pause')).to_contain_text('Continue')
+        expect(page.locator('#ss-pause')).to_contain_text('Resume')
         page.wait_for_timeout(1400)
         expect(page.locator('#ss-img')).to_have_attribute('alt','01 zero.png')
         page.route(f"**/api/v1/media/preview/{catalog.images['n02']}?*",lambda route:route.abort())
@@ -433,7 +506,7 @@ def test_play_rule_pause_bad_image_skip_and_resume_cursor(page,tmp_path):
         page.locator('a[href="#/play-rules"]').click()
         page.locator('[data-resume]').click()
         expect(page.locator('#ss-img')).to_have_attribute('alt','03 one.png')
-        expect(page.locator('#ss-pause')).to_contain_text('Continue')
+        expect(page.locator('#ss-pause')).to_contain_text('Resume')
         page.wait_for_timeout(1400)
         expect(page.locator('#ss-img')).to_have_attribute('alt','03 one.png')
         with dbm.open_db(catalog.cfg.db_path) as conn:

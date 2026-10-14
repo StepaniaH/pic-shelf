@@ -1,6 +1,6 @@
 // One interval after a successful display; hidden, paused and pending work stop it.
 export class PlaybackClock {
-  constructor(seconds,onTick,{setTimer=setTimeout,clearTimer=clearTimeout}={}) {
+  constructor(seconds,onTick,{setTimer=(fn,ms)=>setTimeout(fn,ms),clearTimer=id=>clearTimeout(id)}={}) {
     this.delay=seconds*1000;this.onTick=onTick;this.setTimer=setTimer;this.clearTimer=clearTimer;
     this.flags={paused:false,hidden:false,busy:false,ready:false};this.timer=null;this.closed=false;
   }

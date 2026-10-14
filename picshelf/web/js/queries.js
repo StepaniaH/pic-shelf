@@ -75,7 +75,7 @@ export async function attachSearchTools(view,source,rule=null) {
     try {
       const before=fields.expression.value;
       const appended=await api("/search/append",{method:"POST",body:{query:before,
-        kind:fields.field.value,values:[fields.value.value],neg:fields.exclude.checked}});
+        kind:fields.field.value,values:fields.value.value,neg:fields.exclude.checked}});
       if(fields.expression.value===before)fields.expression.value=appended.query;
     }catch(e){error.textContent=e.message;}
     finally{button.disabled=false;}

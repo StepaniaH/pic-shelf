@@ -135,7 +135,9 @@ export function openViewer(source, index) {
     const item = source.items[current];
     if (!item) return;
     const panelScroll = renderedId === item.id ? backdrop.querySelector(".viewer-panel")?.scrollTop || 0 : 0;
-    const loaded = source.loadedAll ? t("共 {v0}", {v0: source.total}) : t("已加载 {v0} / 共 {v1}", {v0: source.items.length, v1: source.total});
+    const loaded = source.sort === "random"
+      ? t("本次抽样 {n} / 匹配 {total}", {n: source.items.length, total: source.total})
+      : source.loadedAll ? t("共 {v0}", {v0: source.total ?? source.items.length}) : t("已加载 {v0} / 共 {v1}", {v0: source.items.length, v1: source.total});
     backdrop.innerHTML = `<div class="viewer-top">
       <span class="title">${escapeHtml(item.filename)}</span><span class="muted meta-count">${current + 1} / ${source.items.length} (${loaded})</span>
       <div class="viewer-actions">
@@ -151,7 +153,7 @@ export function openViewer(source, index) {
       <button class="btn" id="v-retry" hidden>${t("重试")}</button>
       <div class="viewer-body"><div class="viewer-stage size-${zoom} ${transparent ? "checkerboard" : ""}">
         <button class="nav-btn prev" aria-label="${t("上一张")}" ${current === 0 ? "disabled" : ""}>‹</button>
-        <button class="nav-btn next" aria-label="${t("下一张")}" ${current >= source.total - 1 ? "disabled" : ""}>›</button>
+        <button class="nav-btn next" aria-label="${t("下一张")}" ${source.loadedAll && current >= source.items.length - 1 ? "disabled" : ""}>›</button>
       </div><aside id="viewer-details" class="viewer-panel" ${panelOpen ? "" : "hidden"}>${detail ? panelHtml(item) : ""}</aside></div>`;
     if (frame) {
       frame.alt = detail.filename;
