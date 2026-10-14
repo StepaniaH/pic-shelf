@@ -48,6 +48,20 @@ quality assessment. Full rescans now decode each image once and perform two
 content reads for integrity. New-path and move matching retain their separate
 hash verification.
 
+TUI playback was measured separately with 100, 500 and 10,000 generated queue
+items. The 500-row page previously read 502 image details and issued 3,048
+SELECTs per same-page switch, including settled UI events. Reusing the current
+summary page reduces this to two current-image detail reads and 56 SELECTs.
+Thirty switch samples measured handler p95 of 0.74, 0.83 and 4.45 ms respectively
+on macOS arm64, Python 3.11.15 and Textual 8.2.8. The working investigation budget
+is 10 ms for this handler; asynchronous redraw, terminal transport and preview
+renderers require separate end-to-end measurement. No page holds more than 500
+rows, and authorization is checked during each navigation. Reproduce with:
+
+```sh
+.venv/bin/python -m tests.benchmarks.tui --output data/benchmarks/tui.json
+```
+
 These are observations, not capacity or hardware guarantees. Synthetic
 fingerprints do not assess perceptual recommendation quality. Geometric images
 are highly compressible and do not represent photography or illustration. ASGI

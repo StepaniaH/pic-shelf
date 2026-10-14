@@ -153,6 +153,7 @@ class PicShelfTUI(App):
         self.preview_worker = None
         self.detail_version = 0
         self._queue_offset = 0
+        self._playback_page_key = None
         self._last_batch = None
         self._last_batch_state = None
         self._shutting_down = False
@@ -277,7 +278,7 @@ class PicShelfTUI(App):
         for error in res["errors"]:
             self.notify(error, severity="warning")
 
-    def _paint_table(self):
+    def _paint_table(self, *, update_detail=True):
         table = self.query_one("#image-table",DataTable)
         table.clear()
         for index,item in enumerate(self.current_items):
@@ -286,7 +287,8 @@ class PicShelfTUI(App):
                           "—" if item['my_rating'] < 0 else str(item['my_rating']), "★" if item['favorite'] else "", key=self._row_key(item,index))
         self.sub_title = t("{v0} — {v1} 张",v0=self.current_title,v1=self.total)
         self._status()
-        self._update_detail()
+        if update_detail:
+            self._update_detail()
 
     def _status(self):
         if self._shutting_down: return
@@ -333,7 +335,16 @@ class PicShelfTUI(App):
             "SELECT i.rel_path, l.root_path FROM images i JOIN libraries l ON l.id=i.library_id WHERE i.id=?",
             (image_id,),
         ).fetchone()
-        return Path(row["root_path"]) / row["rel_path"] if row else None
+        if row is None:
+            return None
+        root = Path(row['root_path'])
+        path = root / row['rel_path']
+        try:
+            if path.is_file() and path.resolve(strict=True).is_relative_to(root):
+                return path
+        except (OSError, RuntimeError):
+            pass
+        return None
 
     def _update_detail(self) -> None:
         self.detail_version += 1
@@ -398,7 +409,14 @@ class PicShelfTUI(App):
         selected = self._selected_id()
         tree = self.query_one("#nav-tree", Tree)
         tree.clear()
-        self._build_tree(tree)
+        try:
+            self._build_tree(tree)
+        except ServiceError as error:
+            if self.playback:
+                self._playback_error(error)
+            else:
+                self.notify(f'{error.detail} {error.next_step}', severity='error')
+            return
         self._reload()
         if selected is not None:
             self._select_row(selected)
@@ -647,7 +665,7 @@ class PicShelfTUI(App):
 
     def _reload(self):
         selected = self._selected_id()
-        if self.playback: self._display_playback(); return
+        if self.playback: self._display_playback(force=True); return
         else: self.load_images(getattr(self,'_current_sel',{'kind':'all'}))
         if selected is not None: self._select_row(selected)
 
@@ -664,6 +682,7 @@ class PicShelfTUI(App):
         if self.slideshow_timer: self.slideshow_timer.stop()
         self.slideshow_timer = None
         self.playback = None
+        self._playback_page_key = None
 
     def action_slideshow(self):
         if self.playback:
@@ -686,6 +705,7 @@ class PicShelfTUI(App):
     def _activate_playback(self,state,*,paused=True):
         if self.slideshow_timer: self.slideshow_timer.stop()
         self.playback = state
+        self._playback_page_key = None
         if not state['total']:
             self.notify(t("当前列表为空"),severity="warning");self._stop_playback();return
         if state['cursor'] < 0: self._play_control('next',paint=False)
@@ -697,19 +717,38 @@ class PicShelfTUI(App):
         if state['warnings']:
             self.notify(t("播放队列 {n} 张；匹配 {matched} 张；上限 10000",n=state['total'],matched=state['matched_total']),severity='warning')
 
-    def _display_playback(self):
-        state = self.playback
+    def _display_playback(self, *, force=False):
+        # Session access and the current item remain live even when rows are reused.
+        try:
+            state = play.session_state(self.conn, self.access, self.playback['token'])
+        except ServiceError as error:
+            self._playback_error(error)
+            return
+        self.playback = state
         self._queue_offset = max(0,state['cursor']) // self.PAGE_SIZE * self.PAGE_SIZE
-        ids = play.queue_items(self.conn,state['session_id'],self._queue_offset,self.PAGE_SIZE)
-        self.current_items = []
-        for iid in ids:
-            item = search.get_image(self.conn,iid,self.user['id'],self.access.allowed_libraries(self.conn))
-            self.current_items.append(item or {'id':iid,'filename':t('文件缺失'),'my_rating':-1,'favorite':False})
+        revision = self.conn.execute("SELECT value FROM meta WHERE key='catalog_revision'").fetchone()[0]
+        key = (self.access.user_id, self.access.local_admin, state['session_id'], self._queue_offset,
+               revision, state['cycle'], state['spec'].get('seed'))
+        repaint = force or key != self._playback_page_key
+        if repaint:
+            try:
+                self.current_items = play.queue_rows(self.conn, self.access, state['token'],
+                                                     offset=self._queue_offset, limit=self.PAGE_SIZE)
+            except ServiceError as error:
+                self._playback_error(error)
+                return
+            for item in self.current_items:
+                item['filename'] = item['filename'] or t('文件缺失')
+            self._playback_page_key = key
         self.total = state['total'];self.page_offset = self._queue_offset
         self.current_title = t("播放会话")
-        self._paint_table()
+        if repaint:
+            self._paint_table(update_detail=False)
+        else:
+            self._status()
         self.query_one("#image-table",DataTable).move_cursor(row=max(0,state['cursor']-self._queue_offset))
-        if state['unavailable']:
+        self._update_detail()
+        if state['unavailable'] or state['image_id'] is not None and self._current_path(state['image_id']) is None:
             self._pause_playback();self.notify(t("文件缺失，播放已暂停；可手动跳到下一张。"),severity='warning')
 
     def _play_control(self,action,*,paint=True,**kwargs):
@@ -721,9 +760,19 @@ class PicShelfTUI(App):
             if paint: self._display_playback()
             else: self._status()
         except ServiceError as error:
-            if self.slideshow_timer: self.slideshow_timer.pause()
-            self.slideshow_paused = True
-            self.notify(f"{error.detail} {error.next_step}",severity='error')
+            self._playback_error(error)
+
+    def _playback_error(self, error):
+        self._playback_page_key = None
+        self.current_items = []
+        self.slideshow_paused = True
+        if self.slideshow_timer:
+            self.slideshow_timer.pause()
+        if self._shutting_down:
+            return
+        self.query_one('#image-table', DataTable).clear()
+        self.query_one('#detail', Static).update(Text(f'{error.detail} {error.next_step}'))
+        self.notify(f'{error.detail} {error.next_step}', severity='error')
 
     def _slideshow_next(self):
         if self.slideshow_paused or isinstance(self.screen,ModalScreen) or isinstance(self.focused,Input): return

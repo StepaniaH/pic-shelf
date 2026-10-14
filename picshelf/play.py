@@ -10,6 +10,7 @@ from . import search
 from .db import transaction, utcnow
 from .errors import ServiceError
 from .i18n import t
+from .inputs import integer_in_range
 from .names import match_key
 
 MAX_QUEUE = 10000
@@ -284,3 +285,24 @@ def queue_items(conn,session_id,offset=0,limit=50):
     rows=conn.execute('SELECT image_id FROM play_items WHERE session_id=? ORDER BY position LIMIT ? OFFSET ?',
                       (session_id,max(0,limit),max(0,offset))).fetchall()
     return [r[0] for r in rows]
+
+
+def queue_rows(conn, access, token, *, offset=0, limit=500):
+    """Read a bounded table page without fetching each image's relationships."""
+    if not integer_in_range(offset, 0) or not integer_in_range(limit, 1, 500):
+        raise _invalid()
+    with transaction(conn):
+        session = session_for(conn, access, token)
+        rows = conn.execute('''
+            SELECT p.position,p.image_id AS id,
+                   CASE WHEN i.missing=0 THEN i.filename END AS filename,
+                   CASE WHEN i.missing=0 THEN i.width END AS width,
+                   CASE WHEN i.missing=0 THEN i.height END AS height,
+                   CASE WHEN i.missing=0 THEN COALESCE(r.value,-1) ELSE -1 END AS my_rating,
+                   CASE WHEN i.missing=0 THEN COALESCE(f.user_id IS NOT NULL,0) ELSE 0 END AS favorite
+            FROM play_items p LEFT JOIN images i ON i.id=p.image_id
+            LEFT JOIN ratings r ON r.image_id=i.id AND r.user_id=?
+            LEFT JOIN favorites f ON f.image_id=i.id AND f.user_id=?
+            WHERE p.session_id=? ORDER BY p.position LIMIT ? OFFSET ?
+        ''', (access.user_id, access.user_id, session['id'], limit, offset)).fetchall()
+    return [dict(row) for row in rows]
