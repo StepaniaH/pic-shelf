@@ -493,6 +493,11 @@ def _apply(conn, access, records, mappings):
                             if row:
                                 raise _error('manifest_name_conflict', 409)
                         target_id = row[0] if row else None
+                    if table == 'albums' and target_id is not None:
+                        access.require_album(conn, target_id, 'edit')
+                    if table == 'album_images':
+                        access.require_album(conn, record['album_id'], 'edit')
+                        access.require_image(conn, record['image_id'], 'edit', include_missing=True)
                     if table in ('tags', 'artists') and target_id is None and names.find(conn, 'tag' if table == 'tags' else 'artist', record['name']):
                         raise _error('manifest_name_conflict', 409)
                     if table.endswith('_aliases'):
