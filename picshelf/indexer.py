@@ -171,15 +171,14 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                 (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) or hashing.sha256_file(path) != sha):
             raise ServiceError("image_changed", t("扫描期间图片内容变化，请保存文件后重新扫描"), retryable=True)
 
-    def encode(image_id, path, st, sha):
-        ph = hashing.phash_file(path)
-        thumb, preview, width, height = hashing.make_derivatives(path, cfg.thumbs_dir, cfg.previews_dir, image_id)
-        verify_unchanged(path, st, sha)
+    def encode(image_id, path, st, sha=None):
+        result = hashing.encode_image(path, cfg.thumbs_dir, cfg.previews_dir, image_id,
+                                      expected_sha256=sha, source_stat=st)
         conn.execute(
             "UPDATE images SET size_bytes=?,mtime=?,sha256=?,phash=?,thumb_rel=?,preview_rel=?,width=?,height=?,"
             "missing=0,scan_error_code=NULL,scan_error_detail=NULL,phash_version=?,derivative_version=?,verified_at=? WHERE id=?",
-            (st.st_size, st.st_mtime, sha, ph, thumb, preview, width, height,
-             hashing.PHASH_VERSION if ph is not None else 0, hashing.DERIVATIVE_VERSION, utcnow(), image_id))
+            (st.st_size, st.st_mtime, result.sha256, result.phash, result.thumb_rel, result.preview_rel,
+             result.width, result.height, result.phash_version, result.derivative_version, utcnow(), image_id))
 
     if only_paths is not None:
         # A retry has an explicit scope. Other records and folder memberships
@@ -256,8 +255,7 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                     conn.execute("UPDATE images SET missing=0 WHERE id=?", (row["id"],))
                 stats["unchanged"] += 1
             elif row is not None:
-                sha = hashing.sha256_file(path)
-                encode(int(row["id"]), path, st, sha)
+                encode(int(row["id"]), path, st)
                 stats["updated"] += 1
             else:
                 pending_new.append((rel, rel_dir, path, st))

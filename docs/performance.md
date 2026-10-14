@@ -38,6 +38,16 @@ The progress comparison uses SQLite `total_changes` in memory, excluding file
 journal updates and initial/final reconciliation. The regression test also
 checks failed-to-successful retries and repeated notifications.
 
+With the same six geometric image workload, three independent process runs
+before and after sharing decoded pixels measured median initial scans of
+0.762 s and 0.674 s, and warm full scans of 0.635 s and 0.558 s. Median process
+peak RSS stayed approximately 380 MB; this change does not establish a memory
+reduction. Both pipelines produced 33,116 bytes of derivatives. These are local
+observations with warm OS caches, not a general speedup guarantee or image
+quality assessment. Full rescans now decode each image once and perform two
+content reads for integrity. New-path and move matching retain their separate
+hash verification.
+
 These are observations, not capacity or hardware guarantees. Synthetic
 fingerprints do not assess perceptual recommendation quality. Geometric images
 are highly compressible and do not represent photography or illustration. ASGI

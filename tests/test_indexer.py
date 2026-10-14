@@ -110,14 +110,14 @@ def test_decode_failure_does_not_hide_or_reassign_existing_image(conn, cfg, libr
     indexer.scan_library(conn, cfg, library["id"])
     row = conn.execute("SELECT * FROM images WHERE filename='red.png'").fetchone()
     shutil.copyfile(library["root"] / row["rel_path"], library["root"] / "copy.png")
-    original = hashing.make_derivatives
+    original = hashing.encode_image
 
-    def fail_red(src, *args):
+    def fail_red(src, *args, **kwargs):
         if src.name == "red.png":
             raise OSError("temporary decoder failure")
-        return original(src, *args)
+        return original(src, *args, **kwargs)
 
-    monkeypatch.setattr(hashing, "make_derivatives", fail_red)
+    monkeypatch.setattr(hashing, "encode_image", fail_red)
     stats = indexer.scan_library(conn, cfg, library["id"], full=True)
     assert stats["missing"] == 0 and stats["moved"] == 0 and stats["added"] == 1
     assert stats["errors"]

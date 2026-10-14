@@ -6,6 +6,7 @@ import io
 import os
 import tempfile
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
@@ -98,16 +99,24 @@ def phash_file(path: Path) -> str | None:
     try:
         with _open_image(path) as img:
             with _normalized_color(img) as base:
-                # Normalize hidden transparent color onto white at hash size.
-                small = base.resize((32, 32), Image.Resampling.LANCZOS)
-                if small.mode == "RGBA":
-                    background = Image.new("RGBA", small.size, "white")
-                    flattened = Image.alpha_composite(background, small).convert("RGB")
-                    small.close()
-                    background.close()
-                    small = flattened
-                with small:
-                    return str(imagehash.phash(small, hash_size=8))
+                return _phash_pixels(base)
+    except Exception:
+        return None
+
+
+def _phash_pixels(base):
+    if imagehash is None:  # pragma: no cover
+        return None
+    try:
+        # Normalize hidden transparent color onto white at hash size.
+        small = base.resize((32, 32), Image.Resampling.LANCZOS)
+        if small.mode == 'RGBA':
+            with Image.new('RGBA', small.size, 'white') as background:
+                flattened = Image.alpha_composite(background, small).convert('RGB')
+            small.close()
+            small = flattened
+        with small:
+            return str(imagehash.phash(small, hash_size=8))
     except Exception:
         return None
 
@@ -136,30 +145,71 @@ def _save_webp(img: Image.Image, path: Path, quality: int) -> None:
         Path(name).unlink(missing_ok=True)
 
 
-def make_derivatives(
+@dataclass(frozen=True)
+class EncodedImage:
+    sha256: str
+    phash: str | None
+    thumb_rel: str
+    preview_rel: str
+    width: int
+    height: int
+    phash_version: int
+    derivative_version: int
+
+
+def _source_identity(stat):
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns
+
+
+def _changed():
+    return ServiceError('image_changed', t('扫描期间图片内容变化，请保存文件后重新扫描'), retryable=True,
+                        next_step=t('请等待文件保存完成后重新扫描；原文件未更改'))
+
+
+def encode_image(
     src: Path,
     thumbs_dir: Path,
     previews_dir: Path,
     image_id: int,
-) -> tuple[str | None, str | None, int | None, int | None]:
-    """生成缩略图与预览图（WebP）。
-
-    返回 (thumb_rel, preview_rel, width, height)；thumb/preview 相对 media_dir。
-    无法解码时抛异常，由调用方记录为扫描错误。
-    """
+    *, expected_sha256: str | None = None, source_stat=None,
+) -> EncodedImage:
+    """Decode once; publish derivatives only after the source is verified again."""
+    before = src.stat()
+    if source_stat is not None and _source_identity(before) != _source_identity(source_stat):
+        raise _changed()
     digest = sha256_file(src)
-    with _open_image(src) as img, _normalized_color(img) as base:
-        width, height = img.size
-        name = f"{image_id}-v{DERIVATIVE_VERSION}-{digest}.webp"
-        tpath = _shard_dir(thumbs_dir, image_id) / name
-        ppath = _shard_dir(previews_dir, image_id) / name
-        with base.copy() as thumb:
-            thumb.thumbnail((THUMB_MAX, THUMB_MAX), Image.Resampling.LANCZOS)
-            _save_webp(thumb, tpath, quality=82)
-        with base.copy() as preview:
-            preview.thumbnail((PREVIEW_MAX, PREVIEW_MAX), Image.Resampling.LANCZOS)
-            _save_webp(preview, ppath, quality=85)
+    if expected_sha256 is not None and digest != expected_sha256:
+        raise _changed()
+    staged = []
+    try:
+        with _open_image(src) as img, _normalized_color(img) as base:
+            width, height = img.size
+            phash = _phash_pixels(base)
+            name = f'{image_id}-v{DERIVATIVE_VERSION}-{digest}.webp'
+            tpath = _shard_dir(thumbs_dir, image_id) / name
+            ppath = _shard_dir(previews_dir, image_id) / name
+            for target, bound, quality in ((tpath, THUMB_MAX, 82), (ppath, PREVIEW_MAX, 85)):
+                fd, temporary = tempfile.mkstemp(prefix='.encode-', suffix='.webp', dir=target.parent)
+                os.close(fd)
+                temporary = Path(temporary)
+                staged.append((temporary, target))
+                with base.copy() as derivative:
+                    derivative.thumbnail((bound, bound), Image.Resampling.LANCZOS)
+                    _save_webp(derivative, temporary, quality)
+        verified_digest = sha256_file(src)
+        if _source_identity(src.stat()) != _source_identity(before) or verified_digest != digest:
+            raise _changed()
+        for temporary, target in staged:
+            os.replace(temporary, target)
+        return EncodedImage(digest, phash, str(tpath.relative_to(thumbs_dir.parent)),
+                            str(ppath.relative_to(previews_dir.parent)), width, height,
+                            PHASH_VERSION if phash is not None else 0, DERIVATIVE_VERSION)
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
-    thumb_rel = str(tpath.relative_to(thumbs_dir.parent))
-    preview_rel = str(ppath.relative_to(previews_dir.parent))
-    return thumb_rel, preview_rel, width, height
+
+def make_derivatives(src: Path, thumbs_dir: Path, previews_dir: Path, image_id: int):
+    """Compatibility entry returning paths relative to media_dir and dimensions."""
+    result = encode_image(src, thumbs_dir, previews_dir, image_id)
+    return result.thumb_rel, result.preview_rel, result.width, result.height
