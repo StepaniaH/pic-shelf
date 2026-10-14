@@ -181,7 +181,7 @@ def append_condition(query, *, kind, values, neg=False):
             else:
                 values[-1] += char
         values = [value.strip() for value in values]
-    if not isinstance(query, str) or kind not in _KEYWORDS or type(neg) is not bool or not isinstance(values, list) or not values or any(
+    if not isinstance(query, str) or not isinstance(kind, str) or kind not in _KEYWORDS or type(neg) is not bool or not isinstance(values, list) or not values or any(
             not isinstance(v, str) or not v.strip() for v in values):
         raise invalid_query([t("搜索字段或参数无效，请使用条件列表中的字段")])
     def quote(value):

@@ -65,6 +65,7 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    '查询参数无效：{field}；请检查类型与范围': 'Invalid query parameter: {field}; check its type and bounds',
     "请等待正在运行的任务结束；需要排队时请使用后台入口": "Wait for running tasks to finish; use a background endpoint if you need to queue the work",
     "请运行 check --full 查看具体问题；先核对备份，再单独修复": "Run check --full for details; verify backups before a separate repair",
     "同时核对原图哈希；默认检查可达性": "Also verify original hashes; check availability by default",

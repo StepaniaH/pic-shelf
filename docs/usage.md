@@ -297,6 +297,17 @@ condition editor's comma and quote syntax. Legacy
 `GET /images` keeps `errors` and `error_codes`; invalid expressions return no
 items. CLI search emits the same JSON error fields and exits nonzero.
 
+URL filters parse numeric and boolean strings before entering the shared query
+rules. JSON identifiers and booleans keep strict types: `true`, `1.0` and `"1"`
+cannot stand in for an integer ID. IDs range from 1 to the signed 64-bit maximum;
+limits range from 0 to 10,000 (0 requests only the count), and offsets are
+nonnegative signed 64-bit integers. Tag filters accept at most 300 characters.
+Shared query construction rejects malformed field types with `query_invalid`;
+HTTP transport validation still returns 422 / `invalid_arguments`, while a
+domain filter error returns 400 / `query_invalid`. Batch scope errors retain
+400 / `batch_invalid`. Invalid search expressions retain the existing empty
+result with `errors` and `error_codes`; they never broaden the selection.
+
 ## Import and scanning
 
 ```sh

@@ -8,6 +8,7 @@ from . import ops, search
 from .access import AccessContext
 from .errors import ServiceError
 from .i18n import t
+from .inputs import MAX_IMAGE_LIMIT, integer_in_range
 from .names import match_key
 
 
@@ -24,6 +25,29 @@ class ImageQuery:
     favorites: bool = False
     rating_min: int | None = None
     workflow: str | None = None
+
+    def __post_init__(self):
+        # Adapters parse their transport first; the domain never coerces types.
+        invalid = []
+        for field in ('library_id', 'album_id', 'artist_id'):
+            value = getattr(self, field)
+            if value is not None and not integer_in_range(value):
+                invalid.append(field)
+        for field, valid in (
+            ('query', isinstance(self.query, str)),
+            ('sort', isinstance(self.sort, str) and self.sort in search.SORTS),
+            ('limit', integer_in_range(self.limit, 0, MAX_IMAGE_LIMIT)),
+            ('offset', integer_in_range(self.offset, 0)),
+            ('favorites', type(self.favorites) is bool),
+            ('rating_min', self.rating_min is None or integer_in_range(self.rating_min, 0, 10)),
+            ('tag', self.tag is None or isinstance(self.tag, str) and len(self.tag) <= 300),
+            ('workflow', self.workflow is None or isinstance(self.workflow, str) and self.workflow in ('inbox', 'done')),
+        ):
+            if not valid:
+                invalid.append(field)
+        if invalid:
+            raise ServiceError('query_invalid', t('查询参数无效：{field}；请检查类型与范围', field=invalid[0]),
+                               next_step=t('请检查搜索条件后重试'), objects={'field': invalid[0]})
 
 
 def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQuery) -> dict:

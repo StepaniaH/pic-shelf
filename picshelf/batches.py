@@ -1,20 +1,20 @@
 """Fixed metadata selections, chunked transactions and conflict-aware undo."""
-from dataclasses import asdict
 from contextlib import closing
 from datetime import datetime,timedelta,timezone
 import json
 from pathlib import Path
 import uuid
 
-from . import auth,catalog,db,metadata,names,ops,search
+from . import auth,catalog,db,metadata,names,ops
 from .access import AccessContext
 from .config import Config
 from .coordination import operation_lock,worker_slot
 from .errors import ServiceError
 from .i18n import t
+from .inputs import MAX_IMAGE_LIMIT, integer_in_range
 
 CHUNK_SIZE = 100
-MAX_ITEMS = 10000
+MAX_ITEMS = MAX_IMAGE_LIMIT
 KINDS = {"tags_add","tags_remove","artist_add","artist_remove","album_add","album_remove","rating","favorite","workflow"}
 
 
@@ -49,17 +49,17 @@ def _action(conn,access,value):
             if identity:
                 access.require_entity(conn,"tag",identity)
     elif key == "artist_id":
-        if type(target) is not int or not 1 <= target <= 2**63-1:
+        if not integer_in_range(target):
             raise _error("batch_invalid","批量操作类型或参数无效",400)
         access.require_entity(conn,"artist",target)
     elif key == "album_id":
-        if type(target) is not int or not 1 <= target <= 2**63-1:
+        if not integer_in_range(target):
             raise _error("batch_invalid","批量操作类型或参数无效",400)
         album = access.require_album(conn,target,"edit")
         if album["kind"] != "manual":
             raise _error("batch_invalid","批量关联只能使用手工专辑",400)
     elif kind == "rating":
-        if target is not None and (type(target) is not int or not 0 <= target <= 10):
+        if target is not None and not integer_in_range(target, 0, 10):
             raise _error("batch_invalid","评分范围 0–10",400)
     elif kind == "favorite":
         if type(target) is not bool:
@@ -273,25 +273,22 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
             if (image_ids is None) == (query is None):raise _error("batch_invalid","请选择明确图片或固定查询范围",400)
             if query is not None:
                 try:
-                    if (not isinstance(query,dict) or any(key not in catalog.ImageQuery.__dataclass_fields__ or key in ("limit","offset") for key in query)
-                            or any(key in query and query[key] is not None and (type(query[key]) is not int or not 1<=query[key]<=2**63-1) for key in ("library_id","album_id","artist_id"))
-                            or ("favorites" in query and type(query["favorites"]) is not bool)
-                            or not isinstance(query.get("query",""),str) or len(query.get("query",""))>search.MAX_QUERY_LENGTH
-                            or query.get("sort","newest") not in search.SORTS
-                            or (query.get("tag") is not None and (not isinstance(query["tag"],str) or len(query["tag"])>300))
-                            or (query.get("rating_min") is not None and (type(query["rating_min"]) is not int or not 0<=query["rating_min"]<=10))):
+                    if not isinstance(query,dict) or any(key in ('limit','offset') for key in query):
                         raise ValueError
-                    spec = catalog.ImageQuery(**query)
-                    spec = catalog.ImageQuery(**{**asdict(spec),"limit":MAX_ITEMS,"offset":0})
+                    spec = catalog.ImageQuery(**query,limit=MAX_ITEMS,offset=0)
                     result = catalog.query_images(conn,access,spec)
                 except (TypeError,ValueError) as exc:raise _error("batch_invalid","查询范围无效，请先修正搜索",400) from exc
+                except ServiceError as exc:
+                    if exc.code != 'query_invalid':
+                        raise
+                    raise _error('batch_invalid','查询范围无效，请先修正搜索',400) from exc
                 if result["errors"]:raise _error("batch_invalid","查询范围无效，请先修正搜索",400)
                 if result["total"] > MAX_ITEMS:raise _error("batch_too_large","每批最多处理 10000 张图片，请缩小范围",400)
                 image_ids = [item["id"] for item in result["items"]]
                 selection = {"mode":"query","query":query}
             else:selection = {"mode":"explicit"}
             if (not isinstance(image_ids,list) or not 1 <= len(image_ids) <= MAX_ITEMS or
-                    any(type(iid) is not int or not 1 <= iid <= 2**63-1 for iid in image_ids)):
+                    any(not integer_in_range(iid) for iid in image_ids)):
                 raise _error("batch_invalid","每批需明确选择 1 至 10000 张图片",400)
             ids = list(dict.fromkeys(image_ids))
             for iid in ids:_permission(conn,access,iid,action)
