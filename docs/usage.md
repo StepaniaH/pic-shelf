@@ -628,6 +628,16 @@ picshelf import-backup ./data/exports/catalog.zip --force
 
 Exports contain a consistent database snapshot and optionally derivatives. They do not contain originals, the signing key or configuration. Back up library directories separately. Use `backup inspect` before an offline restore; `--force` first saves the current database, including committed WAL. Included derivatives are restored; omitted derivatives can be recreated with `rebuild`. Sessions are invalidated, and restored pending jobs require explicit retry. `check --full` reports integrity and file problems without repair. See [Backup and recovery](backups.md) for limits, legacy compatibility and recovery steps.
 
+`check` and `doctor` include a local `storage` report separating the database,
+WAL, shared-memory file, referenced/unreferenced derivatives, temporary outputs,
+backups and conventional development directories. Sizes are apparent bytes by
+path; they do not deduplicate hardlinks or measure allocated disk blocks. Journal
+row counts are included, and SQLite table-page sizes are reported when `dbstat`
+is available. Unreadable entries make the storage measurement incomplete.
+The cache cleanup preview lists at most 200 relative candidates and supports no
+deletion. Temporary outputs and symlinks are excluded from candidates; references
+and file identity still need rechecking before any future cleanup.
+
 ## Database upgrades
 
 Stop running Pic Shelf services and commands before upgrading. Opening an older

@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import sqlite3
 
-from . import db
+from . import db, storage
 from .coordination import operation_lock
 from .errors import ServiceError
 from .i18n import t
@@ -105,6 +105,7 @@ def check(cfg, *, full=False):
                     'counts': dict(sorted(counts.items())), 'findings': findings,
                     'findings_truncated': sum(counts.values()) > len(findings),
                     'libraries': libraries, 'bytes': total_bytes,
+                    'storage': storage.inspect_storage(cfg, conn, referenced),
                     'repair': {'automatic': False, 'derivatives': 'picshelf rebuild <library>',
                                'originals': 'Restore originals from your independent backup, then scan.'}}
         except sqlite3.Error as exc:
