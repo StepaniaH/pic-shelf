@@ -106,6 +106,47 @@ def test_queue_summary_is_bounded_preserves_missing_position_and_rechecks_grants
         assert failure.value.code == 'play_scope_changed'
 
 
+def test_delayed_preview_cannot_republish_after_account_is_disabled(tmp_path, monkeypatch):
+    from picshelf import tui
+    from textual.widgets import Static
+    cfg, lid = generated_queue(tmp_path, 3)
+
+    async def scenario():
+        started, release, rendered = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        async def delayed_preview(*args, **kwargs):
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                # Native renderers may complete despite cancellation.
+                await release.wait()
+            rendered.set()
+            return 'stale-preview-from-disabled-account'
+        monkeypatch.setattr(tui, '_render_preview', delayed_preview)
+        app = tui.PicShelfTUI(cfg)
+        async with app.run_test(size=(100, 32)) as pilot:
+            app._activate_playback(play.create_for_user(app.conn, app.access, {
+                'source': {'library_id': lid}, 'sort': 'path', 'interval': 0}), paused=True)
+            await pilot.pause()
+            await pilot.press('p')
+            await asyncio.wait_for(started.wait(), 3)
+            with db.open_db(cfg.db_path) as writer:
+                writer.execute('UPDATE users SET disabled=1 WHERE id=?', (app.user['id'],))
+                writer.commit()
+            await pilot.press('right')
+            await pilot.pause()
+            detail = app.query_one('#detail', Static)
+            denied_text = detail.render().plain
+            assert app.current_items == [] and app.slideshow_paused
+            release.set()
+            await asyncio.wait_for(rendered.wait(), 3)
+            await pilot.pause()
+            assert detail.render().plain == denied_text
+            assert 'stale-preview-from-disabled-account' not in detail.render().plain
+            assert app.query_one('#image-table', DataTable).row_count == 0
+    asyncio.run(scenario())
+
+
 def test_current_file_loss_pauses_and_disabled_account_clears_visible_page(tmp_path):
     from picshelf.tui import PicShelfTUI
     data = build_catalog(tmp_path)

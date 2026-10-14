@@ -763,6 +763,10 @@ class PicShelfTUI(App):
             self._playback_error(error)
 
     def _playback_error(self, error):
+        self.detail_version += 1
+        if self.preview_worker:
+            self.preview_worker.cancel()
+            self.preview_worker = None
         self._playback_page_key = None
         self.current_items = []
         self.slideshow_paused = True
