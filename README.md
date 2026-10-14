@@ -74,7 +74,9 @@ roles. Stop active applications before database restore. Upgrades preserve
 released fields and create a migration snapshot before changing an existing schema.
 
 `picshelf doctor` exports redacted local diagnostics; `picshelf check --full`
-checks files and relationships without repair. See [diagnostics](docs/diagnostics.md)
+checks files and relationships without repair. Storage totals separate the
+database, caches, backups and development artifacts; cache candidates are a
+read-only preview. See [diagnostics](docs/diagnostics.md)
 and [performance measurements](docs/performance.md).
 
 ## Docker

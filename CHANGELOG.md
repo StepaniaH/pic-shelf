@@ -26,6 +26,15 @@
   and navigation labels.
 - Update job progress incrementally and keep file verification outside database
   write transactions while rechecking catalog changes before publishing.
+- Share strict catalog query rules across transports while preserving URL parsing
+  and JSON type checks.
+- Decode and normalize each scanned image once; verify source changes before
+  publishing derivatives with the existing algorithm versions.
+- Read bounded TUI playback summaries and reuse the current page while rechecking
+  access, current details and file availability.
+- Report local storage categories and cache cleanup candidates without deletion;
+  redacted diagnostics include aggregate cleanup counts.
+- Add complete local acceptance checks and installed schema-upgrade/restore checks.
 
 Existing databases upgrade through additive migrations and receive a consistent
 pre-upgrade snapshot. Stop older processes before upgrading. Sign in again after

@@ -51,7 +51,7 @@ export PICSHELF_DATA="$PWD/data"
 
 [批量整理](docs/batches.md)、[检索与播放](docs/usage.md)、[路径与命名](docs/paths.md)、[作品版本](docs/works.md)说明日常流程。[可移植元数据](docs/metadata-format.md)可以将整理结果恢复到独立复制的原图；[数据库备份](docs/backups.md)保存账号与目录。原图、签名密钥和配置分别备份。恢复数据库前停止所有应用；升级保留已发布字段，并在修改已有数据库前保存迁移快照。
 
-`picshelf doctor` 输出脱敏的本地诊断；`picshelf check --full` 只检查，不自动修复。见[诊断说明](docs/diagnostics.md)与[性能测量](docs/performance.md)。
+`picshelf doctor` 输出脱敏的本地诊断；`picshelf check --full` 只检查，不自动修复。容量统计区分数据库、缓存、备份与开发产物；缓存清理仅提供只读候选预览。见[诊断说明](docs/diagnostics.md)与[性能测量](docs/performance.md)。
 
 ## Docker
 
