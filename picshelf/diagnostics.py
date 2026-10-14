@@ -38,7 +38,8 @@ def doctor(cfg, *, full=False):
             report['integrity'] = {'counts':checked['counts'],'bytes':checked['bytes'],
                                    'libraries':dict(Counter(library['state'] for library in checked['libraries'])),
                                    'full_hash_check':full}
-            report['storage'] = checked['storage']
+            report['storage'] = {**checked['storage'], 'cleanup_preview': {
+                key: value for key, value in checked['storage']['cleanup_preview'].items() if key != 'candidates'}}
             if set(checked['counts']) - {'derivative_unreferenced'}:
                 report['issues'].append({'code':'integrity_findings','next_step':t('请运行 check --full 查看具体问题；先核对备份，再单独修复')})
             conn = sqlite3.connect(cfg.db_path.resolve().as_uri()+'?mode=ro',uri=True)

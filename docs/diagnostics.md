@@ -26,6 +26,14 @@ for the local administrator. Restore originals from a separate backup, then scan
 rebuild derivatives only through the explicit `rebuild` command. Keep originals
 and current database snapshots before attempting a repair.
 
+Storage separates database/WAL/shared memory, current and unreferenced derivatives,
+temporary outputs, backups and development artifacts. Journal rows and optional
+SQLite table-page totals explain retained logs. File totals are apparent bytes
+per path, including each hardlink path. Unreadable entries mean the measurement
+is incomplete. `doctor` includes only cleanup counts; the detailed `check` report
+lists up to 200 relative cache candidates. Neither command deletes files, and
+references and identities must be rechecked before any future cleanup.
+
 `picshelf serve` disables raw HTTP access logs. Application operation/error logs
 contain a server-generated request ID, route template, status, error code and
 elapsed time, without URL queries, headers, body or exception text. The same

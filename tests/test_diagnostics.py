@@ -13,6 +13,7 @@ from tests.scenario_support import build_catalog, cli, metadata_snapshot
 def test_diagnostics_omit_private_content_and_do_not_change_metadata(tmp_path):
     catalog=build_catalog(tmp_path/'source')
     secret=secrets.token_urlsafe(32)
+    (catalog.cfg.thumbs_dir / (secret + '.webp')).write_bytes(b'unreferenced fixture')
     with db.open_db(catalog.cfg.db_path) as conn:
         conn.execute('UPDATE notes SET body=?',(secret,))
         conn.execute('UPDATE libraries SET description=?',('https://private.invalid/'+secret,));conn.commit()
@@ -22,6 +23,7 @@ def test_diagnostics_omit_private_content_and_do_not_change_metadata(tmp_path):
         assert secret not in serialized and 'private.invalid' not in serialized
         assert str(catalog.roots) not in serialized and str(catalog.cfg.data_dir) not in serialized
         assert 'password_hash' not in serialized and 'username' not in serialized and 'token' not in serialized
+        assert 'candidates' not in report['storage']['cleanup_preview']
         assert report['ready'] and not report['uploaded'] and report['schema']['observed']==db.SCHEMA_VERSION
         assert metadata_snapshot(conn)==before
     result=cli(catalog.cfg,'doctor','--full')
