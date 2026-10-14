@@ -29,12 +29,20 @@
 - Share strict catalog query rules across transports while preserving URL parsing
   and JSON type checks.
 - Decode and normalize each scanned image once; verify source changes before
-  publishing derivatives with the existing algorithm versions.
+  publishing derivatives.
 - Read bounded TUI playback summaries and reuse the current page while rechecking
   access, current details and file availability.
 - Report local storage categories and cache cleanup candidates without deletion;
   redacted diagnostics include aggregate cleanup counts.
 - Add complete local acceptance checks and installed schema-upgrade/restore checks.
+- Recheck every current album member's library permission when portable metadata
+  automatically reuses an existing album, including after preview.
+- Keep tag additions atomic so failed input or writes cannot be committed by a
+  later edit; invalidate pending TUI previews when playback access fails.
+- Preserve grayscale/RGB PNG transparent colors in derivatives and fingerprints.
+  Algorithm version 3 requires an explicit rebuild of older records.
+- Keep scan recovery messages actionable and translate task kinds, phases and
+  item states in the TUI.
 
 Existing databases upgrade through additive migrations and receive a consistent
 pre-upgrade snapshot. Stop older processes before upgrading. Sign in again after
