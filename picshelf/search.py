@@ -112,7 +112,7 @@ def parse(query: str) -> ParsedQuery:
     return out
 
 
-def _tokens(query):
+def _tokens(query, *, split_whitespace=True):
     """Preserve quoted commas so names remain literal without a second grammar."""
     tokens, chars, quote, started = [], [], None, False
     index = 0
@@ -127,7 +127,7 @@ def _tokens(query):
             else: chars.append((char, True))
         elif char in ('"', "'"):
             quote = char; started = True
-        elif char.isspace():
+        elif char.isspace() and split_whitespace:
             if started: tokens.append(chars); chars, started = [], False
         else:
             chars.append((char, False)); started = True
@@ -167,6 +167,20 @@ def invalid_query(errors):
 
 
 def append_condition(query, *, kind, values, neg=False):
+    if isinstance(values, str):
+        if len(values) > MAX_QUERY_LENGTH:
+            raise invalid_query([t("搜索内容过长，请缩短到 4096 个字符以内")])
+        try:
+            tokens = _tokens(values, split_whitespace=False)
+        except ValueError:
+            raise invalid_query([t("引号未闭合，请用成对的引号包裹含空格的名称")]) from None
+        values = ['']
+        for char, quoted in tokens[0] if tokens else []:
+            if char == ',' and not quoted:
+                values.append('')
+            else:
+                values[-1] += char
+        values = [value.strip() for value in values]
     if not isinstance(query, str) or kind not in _KEYWORDS or type(neg) is not bool or not isinstance(values, list) or not values or any(
             not isinstance(v, str) or not v.strip() for v in values):
         raise invalid_query([t("搜索字段或参数无效，请使用条件列表中的字段")])

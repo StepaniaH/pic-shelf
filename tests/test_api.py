@@ -85,6 +85,32 @@ def test_images_list_and_search(env):
     assert r["items"][0]["filename"] == "blue.png"
 
 
+def test_image_filters_accept_url_parameters_and_preserve_bounds(env):
+    c = env['client']
+    _login(c)
+    image = _find_image(c, 'red.png')
+    artist = c.post('/api/v1/artists', json={'name': 'Filter artist'}).json()
+    assert c.post(f"/api/v1/images/{image['id']}/artists", json={'artist_id': artist['id']}).status_code == 200
+    assert c.post(f"/api/v1/images/{image['id']}/favorite", json={'on': True}).status_code == 200
+    for filters, expected in [
+        ({'library_id': str(env['library_id'])}, 4),
+        ({'artist_id': str(artist['id'])}, 1),
+        ({'favorites': 'true'}, 1),
+        ({'favorites': '1'}, 1),
+        ({'favorites': 'false'}, 4),
+        ({'library_id': str(env['library_id']), 'artist_id': str(artist['id']), 'favorites': 'true'}, 1),
+    ]:
+        response = c.get('/api/v1/images', params=filters)
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == expected
+        if expected == 1:
+            assert response.json()['items'][0]['id'] == image['id']
+    for field in ('library_id', 'artist_id'):
+        for invalid in ('0', '-1', str(2**63), '1.5', 'true'):
+            assert c.get('/api/v1/images', params={field: invalid}).status_code == 422
+    assert c.get('/api/v1/images', params={'favorites': 'invalid'}).status_code == 422
+
+
 def test_image_detail_interactions(env):
     c = env["client"]
     _login(c)

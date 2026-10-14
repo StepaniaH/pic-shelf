@@ -1,5 +1,6 @@
 """Search grammar and personal saved queries, including dynamic smart albums."""
 from fastapi import APIRouter, Query
+from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from .. import saved_queries, search
@@ -33,7 +34,7 @@ class Condition(BaseModel):
     model_config = ConfigDict(extra='forbid')
     query: str = ''
     kind: str
-    values: list[str] = Field(min_length=1,max_length=100)
+    values: Annotated[list[str], Field(min_length=1, max_length=100)] | Annotated[str, Field(min_length=1, max_length=4096)]
     neg: StrictBool = False
 
 

@@ -8,7 +8,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
-from pydantic import Field, StrictBool, BaseModel, ConfigDict
+from pydantic import Field, BaseModel, ConfigDict
 
 from .. import __version__, auth, catalog, db as dbm, indexer, libsvc, metadata, names, ops, search
 from ..access import AccessContext
@@ -262,9 +262,9 @@ def album_remove(album_id: Identifier, image_id: Identifier, conn: Db, user: Use
 def list_images(
     conn: Db, user: User,
     q: str = "", sort: Sort = "newest", limit: ImageLimit = 60, offset: Offset = 0,
-    library_id: BodyIdentifier | None = None, album_id: Identifier | None = None,
-    artist_id: BodyIdentifier | None = None, tag: str | None = None,
-    favorites: StrictBool = False, rating_min: int | None = Query(None,ge=0,le=10), workflow: Literal["inbox","done"] | None = None,
+    library_id: Identifier | None = None, album_id: Identifier | None = None,
+    artist_id: Identifier | None = None, tag: str | None = None,
+    favorites: bool = False, rating_min: int | None = Query(None,ge=0,le=10), workflow: Literal["inbox","done"] | None = None,
 ):
     if library_id is not None:
         ensure_library_access(conn, user, library_id)

@@ -33,7 +33,7 @@ def _config(conn):
 
 
 def _action(conn,access,value):
-    if not isinstance(value,dict) or value.get("kind") not in KINDS:
+    if not isinstance(value,dict) or not isinstance(value.get("kind"),str) or value["kind"] not in KINDS:
         raise _error("batch_invalid","批量操作类型或参数无效",400)
     kind = value["kind"]
     key = "names" if kind.startswith("tags_") else "artist_id" if kind.startswith("artist_") else "album_id" if kind.startswith("album_") else "value"
@@ -49,11 +49,11 @@ def _action(conn,access,value):
             if identity:
                 access.require_entity(conn,"tag",identity)
     elif key == "artist_id":
-        if type(target) is not int or target < 1:
+        if type(target) is not int or not 1 <= target <= 2**63-1:
             raise _error("batch_invalid","批量操作类型或参数无效",400)
         access.require_entity(conn,"artist",target)
     elif key == "album_id":
-        if type(target) is not int or target < 1:
+        if type(target) is not int or not 1 <= target <= 2**63-1:
             raise _error("batch_invalid","批量操作类型或参数无效",400)
         album = access.require_album(conn,target,"edit")
         if album["kind"] != "manual":
@@ -274,7 +274,7 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
             if query is not None:
                 try:
                     if (not isinstance(query,dict) or any(key not in catalog.ImageQuery.__dataclass_fields__ or key in ("limit","offset") for key in query)
-                            or any(key in query and query[key] is not None and (type(query[key]) is not int or query[key]<1) for key in ("library_id","album_id","artist_id"))
+                            or any(key in query and query[key] is not None and (type(query[key]) is not int or not 1<=query[key]<=2**63-1) for key in ("library_id","album_id","artist_id"))
                             or ("favorites" in query and type(query["favorites"]) is not bool)
                             or not isinstance(query.get("query",""),str) or len(query.get("query",""))>search.MAX_QUERY_LENGTH
                             or query.get("sort","newest") not in search.SORTS
@@ -291,7 +291,7 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
                 selection = {"mode":"query","query":query}
             else:selection = {"mode":"explicit"}
             if (not isinstance(image_ids,list) or not 1 <= len(image_ids) <= MAX_ITEMS or
-                    any(type(iid) is not int or iid < 1 for iid in image_ids)):
+                    any(type(iid) is not int or not 1 <= iid <= 2**63-1 for iid in image_ids)):
                 raise _error("batch_invalid","每批需明确选择 1 至 10000 张图片",400)
             ids = list(dict.fromkeys(image_ids))
             for iid in ids:_permission(conn,access,iid,action)

@@ -32,6 +32,27 @@ def result(conn, data, query, **kwargs):
     return search.search_images(conn,data.users['reader'],[data.libraries['north']],query=query,**kwargs)
 
 
+@pytest.mark.parametrize(('kind', 'value', 'expected'), [
+    ('ext', 'png, jpg', ['png', 'jpg']),
+    ('tag', 'red,blue', ['red', 'blue']),
+    ('tag', '"comma,name",night sky', ['comma,name', 'night sky']),
+    ('tag', r'comma\,name,blue', ['comma,name', 'blue']),
+    ('tag', 'night sky -missing:any', ['night sky -missing:any']),
+])
+def test_condition_editor_parses_or_without_injecting_conditions(kind, value, expected):
+    expression = search.append_condition('rated:true', kind=kind, values=value)
+    assert search.parse(expression).clauses == [
+        {'kind': 'rated', 'values': ['true'], 'neg': False},
+        {'kind': kind, 'values': expected, 'neg': False},
+    ]
+
+
+@pytest.mark.parametrize('value', ['red,', ',red', 'red,,blue', '"unclosed', 'red\\'])
+def test_condition_editor_rejects_empty_or_unclosed_values(value):
+    with pytest.raises(ServiceError):
+        search.append_condition('', kind='tag', values=value)
+
+
 @pytest.mark.parametrize('expression', ['tag:', 'file:', 'artist:', 'album:', 'ext:', 'rating:>11',
     'rating:0,nope', '-rating:bad', 'avg:-1', 'fav:perhaps', 'fav:true,', 'width:-1',
     'height:nan', 'orientation:round', 'workflow:finished', 'missing:maybe',

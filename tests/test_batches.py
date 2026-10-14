@@ -311,10 +311,33 @@ def test_expiry_and_mid_batch_permission_revocation_preserve_unfinished_values(c
         assert state["state"]=="interrupted" and state["counts"]["pending"]==125
 
 
-@pytest.mark.parametrize("query",[{"sort":"undefined"},{"favorites":"false"},{"limit":2},{"offset":1},{"library_id":True}])
+@pytest.mark.parametrize("query",[{"sort":"undefined"},{"favorites":"false"},{"limit":2},{"offset":1},{"library_id":True},
+    {"library_id":2**63},{"album_id":2**63},{"artist_id":2**63},{"workflow":"unknown"}])
 def test_invalid_query_scope_never_turns_into_a_broader_selection(catalog,query):
     with db.open_db(catalog.cfg.db_path) as conn:
         access=editor(conn,catalog)
         before=metadata_snapshot(conn)
         with pytest.raises(ServiceError):batches.preview(conn,access,{"kind":"favorite","value":True},query=query)
         assert metadata_snapshot(conn)==before
+
+
+def test_invalid_nested_batch_actions_are_client_errors_without_writes(catalog):
+    actions = [
+        {'kind': 'artist_add', 'artist_id': 2**63},
+        {'kind': 'album_add', 'album_id': 2**63},
+        {'kind': []}, {'kind': {}},
+    ]
+    with db.open_db(catalog.cfg.db_path) as conn, TestClient(create_app(catalog.cfg), headers={'Origin': 'http://testserver'}) as client:
+        before = metadata_snapshot(conn)
+        client.post('/api/v1/auth/login', json={'username': 'curator', 'password': catalog.password})
+        for action in actions:
+            response = client.post('/api/v1/batches/preview', json={'action': action, 'image_ids': [catalog.images['n01']]})
+            assert response.status_code == 400
+            assert response.json()['error']['code'] == 'batch_invalid'
+        for field in ('library_id', 'album_id', 'artist_id'):
+            response = client.post('/api/v1/batches/preview', json={'action': {'kind': 'favorite', 'value': True}, 'query': {field: 2**63}})
+            assert response.status_code == 400
+        with pytest.raises(ServiceError):
+            batches.preview(conn, AccessContext(catalog.users['curator']), {'kind': 'favorite', 'value': True}, image_ids=[2**63])
+        assert conn.execute('SELECT COUNT(*) FROM metadata_batches').fetchone()[0] == 0
+        assert metadata_snapshot(conn) == before
