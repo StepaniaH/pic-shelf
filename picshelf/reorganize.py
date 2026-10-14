@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import uuid
 
-from . import db, hashing, importer, import_plans, libsvc, manifest, metadata, play, templates
+from . import db, hashing, importer, import_plans, libsvc, manifest, metadata, templates
 from .coordination import library_write_lock
 from .errors import ServiceError
 from .i18n import t
@@ -36,19 +36,26 @@ def preview(conn, cfg, access, library_id, template):
     identity = root.stat()
     if library['root_device'] is not None and (identity.st_dev, identity.st_ino) != (library['root_device'], library['root_inode']):
         raise _error('library_root_changed')
-    with library_write_lock(cfg, root), play.transaction(conn):
+    with library_write_lock(cfg, root):
+        with db.transaction(conn):
+            access.require_library(conn, library_id, 'manage')
+            root_identity = import_plans._identity(root.stat())
+            fingerprint = _signature(conn, library_id)
+            images = []
+            for row in conn.execute('SELECT * FROM images WHERE library_id=? ORDER BY id', (library_id,)):
+                image = dict(row)
+                fields = {'artists': [r[0] for r in conn.execute('SELECT a.name FROM artists a JOIN image_artists ia ON ia.artist_id=a.id WHERE ia.image_id=?', (image['id'],))],
+                          'tags': [r[0] for r in conn.execute('SELECT t.name FROM tags t JOIN image_tags it ON it.tag_id=t.id WHERE it.image_id=?', (image['id'],))]}
+                source = conn.execute('SELECT note,url,collected_at FROM image_sources WHERE image_id=? ORDER BY id LIMIT 1', (image['id'],)).fetchone()
+                if source:
+                    fields['source'] = source['note'] or source['url']
+                    if source['collected_at']:
+                        fields['date'] = metadata.timestamp(source['collected_at'])[:10]
+                images.append((image, fields))
         items, identities = [], []
         reserved = {importer._portable_key(path) for path in root.rglob('*')}
-        for row in conn.execute('SELECT * FROM images WHERE library_id=? ORDER BY id', (library_id,)):
-            image = dict(row)
+        for image, fields in images:
             src = root / image['rel_path']
-            fields = {'artists': [r[0] for r in conn.execute('SELECT a.name FROM artists a JOIN image_artists ia ON ia.artist_id=a.id WHERE ia.image_id=?', (image['id'],))],
-                      'tags': [r[0] for r in conn.execute('SELECT t.name FROM tags t JOIN image_tags it ON it.tag_id=t.id WHERE it.image_id=?', (image['id'],))]}
-            source = conn.execute('SELECT note,url,collected_at FROM image_sources WHERE image_id=? ORDER BY id LIMIT 1', (image['id'],)).fetchone()
-            if source:
-                fields['source'] = source['note'] or source['url']
-                if source['collected_at']:
-                    fields['date'] = metadata.timestamp(source['collected_at'])[:10]
             destination = root / templates.render(template, image['filename'], fields)
             action, error, identity = 'move', '', None
             try:
@@ -74,16 +81,21 @@ def preview(conn, cfg, access, library_id, template):
             identities.append(identity)
         now, plan_id = datetime.now(timezone.utc), uuid.uuid4().hex
         snapshot = {'library': {'id': library_id, 'name': library['name']}, 'root': str(root), 'source': str(root),
-                    'root_identity': import_plans._identity(root.stat()), 'source_identity': import_plans._identity(root.stat()),
+                    'root_identity': root_identity, 'source_identity': root_identity,
                     'mode': 'move', 'rename': True, 'template': template, 'reorganize': True,
-                    'catalog_fingerprint': _signature(conn, library_id), 'items': items,
+                    'catalog_fingerprint': fingerprint, 'items': items,
                     'stats': {key: sum(item['action'] == key for item in items) for key in ('hardlink', 'copy', 'move', 'skip', 'error')}}
-        conn.execute('INSERT INTO import_plans(id,library_id,created_by,created_at,expires_at,snapshot) VALUES(?,?,?,?,?,?)',
-                     (plan_id, library_id, access.user_id, now.isoformat(), (now + timedelta(hours=24)).isoformat(), json.dumps(snapshot)))
-        conn.executemany('INSERT INTO import_plan_items(plan_id,position,destination,state,source_identity,image_id,catalog_published) VALUES(?,?,?,?,?,?,?)',
-                         [(plan_id, index, item['dst'], 'skipped' if item['action'] == 'skip' else 'failed' if item['action'] == 'error' else 'pending',
-                           json.dumps(identities[index]) if identities[index] else None, item['image_id'], int(item['action'] == 'skip'))
-                          for index, item in enumerate(items)])
+        with db.transaction(conn):
+            access.require_library(conn, library_id, 'manage')
+            if (_signature(conn, library_id) != fingerprint or root.resolve() != root or
+                    import_plans._identity(root.stat()) != root_identity):
+                raise _error('reorganization_target_changed')
+            conn.execute('INSERT INTO import_plans(id,library_id,created_by,created_at,expires_at,snapshot) VALUES(?,?,?,?,?,?)',
+                         (plan_id, library_id, access.user_id, now.isoformat(), (now + timedelta(hours=24)).isoformat(), json.dumps(snapshot)))
+            conn.executemany('INSERT INTO import_plan_items(plan_id,position,destination,state,source_identity,image_id,catalog_published) VALUES(?,?,?,?,?,?,?)',
+                             [(plan_id, index, item['dst'], 'skipped' if item['action'] == 'skip' else 'failed' if item['action'] == 'error' else 'pending',
+                               json.dumps(identities[index]) if identities[index] else None, item['image_id'], int(item['action'] == 'skip'))
+                              for index, item in enumerate(items)])
     return import_plans.get_plan(conn, access, plan_id)
 
 
@@ -97,7 +109,7 @@ def publish(conn, plan_id, position, snapshot, item):
             hashing.sha256_file(destination) != item['sha256']):
         raise _error()
     rel = destination.relative_to(snapshot['root']).as_posix()
-    with play.transaction(conn):
+    with db.transaction(conn):
         image = conn.execute('SELECT * FROM images WHERE id=?', (item['image_id'],)).fetchone()
         if image is None or image['library_id'] != snapshot['library']['id'] or image['rel_path'] not in (item['original_rel'], rel) or image['sha256'] != item['sha256']:
             raise _error('reorganization_identity_changed')

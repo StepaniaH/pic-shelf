@@ -32,6 +32,11 @@ Measured on macOS arm64, 10 logical CPUs, Python 3.11.15 and SQLite 3.53.1:
 | Six geometric images, 42 million pixels, 36.2 MB | Initial scan 0.83 s; warm full scan 0.64 s; process peak RSS approximately 385 MB |
 | Query during the other library's decode, 30 rounds | p95 1.06 ms |
 | Cached thumbnail through ASGI, 30 rounds | p95 2.48 ms; response 1,076 bytes |
+| Per-item progress for 200 generated import items | 40,200 row writes before incremental updates, 400 after; identical final counters |
+
+The progress comparison uses SQLite `total_changes` in memory, excluding file
+journal updates and initial/final reconciliation. The regression test also
+checks failed-to-successful retries and repeated notifications.
 
 These are observations, not capacity or hardware guarantees. Synthetic
 fingerprints do not assess perceptual recommendation quality. Geometric images

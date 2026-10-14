@@ -17,6 +17,15 @@
   sources, and stabilize JSON errors, numeric bounds and noninteractive CLI use.
 - Improve Web/TUI navigation, selection and editing; add local redacted diagnostics
   and reproducible dependency/package checks.
+- Preserve unrelated memberships when editing a group, parse alternatives in the
+  search condition editor, and stop random browsing at the current sample.
+- Accept library, artist and favorite filters from URL query parameters.
+- Reject out-of-range identifiers and malformed nested batch actions before
+  database operations.
+- Fix slideshow startup with native browser timers and complete English task
+  and navigation labels.
+- Update job progress incrementally and keep file verification outside database
+  write transactions while rechecking catalog changes before publishing.
 
 Existing databases upgrade through additive migrations and receive a consistent
 pre-upgrade snapshot. Stop older processes before upgrading. Sign in again after

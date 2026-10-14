@@ -29,6 +29,58 @@ def worker(cfg, *args):
                           capture_output=True, text=True, timeout=30)
 
 
+def test_import_progress_has_linear_writes_and_retry_counters():
+    import sqlite3
+    conn = sqlite3.connect(':memory:')
+    conn.row_factory = sqlite3.Row
+    conn.executescript('''
+        CREATE TABLE jobs(id TEXT PRIMARY KEY,total INTEGER,completed INTEGER,succeeded INTEGER,failed INTEGER,updated_at TEXT);
+        CREATE TABLE job_items(job_id TEXT,item_key TEXT,state TEXT,error_code TEXT,detail TEXT,PRIMARY KEY(job_id,item_key));
+        CREATE TABLE import_plan_items(plan_id TEXT,position INTEGER,state TEXT,error_code TEXT,detail TEXT,PRIMARY KEY(plan_id,position));
+        INSERT INTO jobs VALUES('job',NULL,0,0,0,0);
+    ''')
+    count = 200
+    conn.executemany("INSERT INTO import_plan_items VALUES('plan',?,'pending',NULL,NULL)", [(n,) for n in range(count)])
+    conn.commit()
+    jobs._import_progress(conn, 'job', 'plan')
+    baseline = conn.total_changes
+    for n in range(count):
+        conn.execute("UPDATE import_plan_items SET state=? WHERE position=?", ('failed' if n == 0 else 'succeeded', n))
+        conn.commit()
+        jobs._import_progress(conn, 'job', 'plan', n)
+    assert conn.total_changes - baseline <= count * 4
+    assert tuple(conn.execute('SELECT total,completed,succeeded,failed FROM jobs').fetchone()) == (count, count, count - 1, 1)
+    conn.execute("UPDATE import_plan_items SET state='succeeded' WHERE position=0"); conn.commit()
+    for _ in range(2):
+        jobs._import_progress(conn, 'job', 'plan', 0)
+    assert tuple(conn.execute('SELECT total,completed,succeeded,failed FROM jobs').fetchone()) == (count, count, count, 0)
+    conn.close()
+
+
+@pytest.mark.parametrize('outdated_count', [0, 1])
+def test_unreadable_subtree_does_not_expand_outdated_rebuild(catalog, monkeypatch, outdated_count):
+    from picshelf import indexer
+    lid = catalog.libraries['north']
+    access = AccessContext(catalog.users['curator'])
+    with db.open_db(catalog.cfg.db_path) as conn:
+        if outdated_count:
+            conn.execute('UPDATE images SET phash_version=0 WHERE id=?', (catalog.images['n01'],)); conn.commit()
+        job = jobs.submit(conn, access, 'rebuild', lid, outdated_only=True)
+
+        def unreadable(root, onerror=None):
+            onerror(PermissionError(13, 'unreadable fixture', str(root)))
+            yield from ()
+
+        monkeypatch.setattr(indexer, '_iter_image_files', unreadable)
+        assert jobs.run_job(catalog.cfg, job['id'])
+        result = jobs.get_job(conn, access, job['id'])
+        assert result['state'] == ('partial' if outdated_count else 'succeeded')
+        assert result['total'] == outdated_count
+        assert result['failed'] == outdated_count
+        assert result['items_total'] == outdated_count
+        assert conn.execute('SELECT COUNT(*) FROM images WHERE library_id=? AND scan_error_code IS NOT NULL', (lid,)).fetchone()[0] == outdated_count
+
+
 @contextmanager
 def held_process(cfg, lock, value=""):
     script = """
@@ -270,16 +322,16 @@ import sys
 from pathlib import Path
 from picshelf import jobs
 from picshelf.config import Config
-original = jobs._counts
+original = jobs._update_item
 paused = False
-def checkpoint(conn, job_id):
+def checkpoint(conn, job_id, *args, **kwargs):
     global paused
-    original(conn, job_id)
+    original(conn, job_id, *args, **kwargs)
     if not paused and conn.execute('SELECT completed FROM jobs WHERE id=?', (job_id,)).fetchone()[0] == 1:
         paused = True
         print('file-completed', flush=True)
         sys.stdin.readline()
-jobs._counts = checkpoint
+jobs._update_item = checkpoint
 stop_path = Path(sys.argv[1]) / 'stop-worker'
 jobs.run_job(Config(Path(sys.argv[1])), sys.argv[2], should_stop=stop_path.exists)
 """

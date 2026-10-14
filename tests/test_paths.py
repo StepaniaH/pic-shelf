@@ -17,6 +17,50 @@ from tests.datasets import file_inventory
 from tests.scenario_support import build_catalog, cli, metadata_snapshot
 
 
+@pytest.mark.parametrize('action', ['relocate-preview', 'relocate-execute', 'reorganize-preview'])
+def test_file_verification_allows_other_writers_and_rejects_changed_catalog(tmp_path, monkeypatch, action):
+    from picshelf import hashing, ops
+    catalog = build_catalog(tmp_path / 'source')
+    target = tmp_path / 'target'
+    shutil.copytree(catalog.roots / 'north', target)
+    with db.open_db(catalog.cfg.db_path) as conn, db.open_db(catalog.cfg.db_path) as writer:
+        lid = catalog.libraries['north']
+        access = AccessContext(catalog.users['curator'])
+        conn.execute("UPDATE libraries SET mode='managed' WHERE id=?", (lid,)); conn.commit()
+        plan = relocations.preview(conn, access, lid, str(target)) if action == 'relocate-execute' else None
+        writer.execute('PRAGMA busy_timeout=0')
+        changed = []
+
+        def write_during_hash():
+            if not changed:
+                ops.set_rating(writer, catalog.images['s01'], catalog.users['reader'], 7)
+                changed.append(True)
+
+        if action.startswith('relocate'):
+            original = relocations._inspect
+            def inspect(*args):
+                write_during_hash()
+                return original(*args)
+            monkeypatch.setattr(relocations, '_inspect', inspect)
+        else:
+            original = hashing.sha256_file
+            def hash_file(*args):
+                write_during_hash()
+                return original(*args)
+            monkeypatch.setattr(hashing, 'sha256_file', hash_file)
+        with pytest.raises(ServiceError) as conflict:
+            if action == 'relocate-preview':
+                relocations.preview(conn, access, lid, str(target))
+            elif action == 'relocate-execute':
+                relocations.execute(conn, catalog.cfg, access, plan['id'])
+            else:
+                reorganize.preview(conn, catalog.cfg, access, lid, '{artists}/{stem}{ext}')
+        assert changed
+        assert conflict.value.code in ('relocation_root_changed', 'relocation_target_changed', 'reorganization_target_changed')
+        assert libsvc.get_library(conn, lid)['root_path'] == str(catalog.roots / 'north')
+        assert conn.execute('SELECT COUNT(*) FROM import_plans').fetchone()[0] == 0
+
+
 def test_rebind_copied_root_preserves_bytes_ids_and_all_organization(tmp_path):
     catalog = build_catalog(tmp_path / 'source')
     target = tmp_path / 'copied originals'

@@ -78,14 +78,16 @@ def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int
     return get_plan(conn, access, plan_id)
 
 
-def _authorized_plan(conn, access, plan_id):
+def _authorized_plan(conn, access, plan_id, *, snapshot=None):
     user = access.user(conn)
-    row = conn.execute("SELECT * FROM import_plans WHERE id=?", (plan_id,)).fetchone()
+    columns = '*' if snapshot is None else 'id,library_id,created_by,state,cancel_requested'
+    row = conn.execute(f"SELECT {columns} FROM import_plans WHERE id=?", (plan_id,)).fetchone()
     if row is None or (row["created_by"] != access.user_id and not user["is_admin"] and not access.local_admin):
         raise ServiceError("plan_not_found", t("导入计划不存在或无权访问"), status=404,
                            next_step=t("请使用创建计划的账户，或重新预演"))
     access.require_library(conn, row["library_id"], "manage")
-    snapshot = json.loads(row["snapshot"])
+    if snapshot is None:
+        snapshot = json.loads(row["snapshot"])
     if snapshot.get('reorganize'):
         if libsvc.get_library(conn, row['library_id'])['mode'] != 'managed':
             from .reorganize import _error
@@ -302,7 +304,7 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
             for position, item in enumerate(snapshot["items"]):
                 if check:
                     check()
-                current = _authorized_plan(conn, access, plan_id)
+                current = _authorized_plan(conn, access, plan_id, snapshot=snapshot)
                 if current["cancel_requested"]:
                     break
                 record = conn.execute("SELECT * FROM import_plan_items WHERE plan_id=? AND position=?",
@@ -322,7 +324,7 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
                         "import_io_error", t("无法完成文件操作，请检查文件和目录权限或可用空间"), retryable=True)
                     _record_item(conn, plan_id, position, "failed" if error.retryable else "conflict", error=error)
                 if progress:
-                    progress()
+                    progress(position)
             result = _result(conn, plan_id, snapshot)
             # Recheck authority before publishing imported files into the catalog.
             current = _authorized_plan(conn, access, plan_id)

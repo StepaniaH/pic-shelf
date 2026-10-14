@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import db, libsvc, manifest, play
+from . import db, libsvc, manifest
 from .errors import ServiceError
 from .i18n import t
 
@@ -77,13 +77,17 @@ def _inspect(root, images):
 def preview(conn, access, library_id, target_path):
     access.require_capability(conn, 'admin')
     access.require_library(conn, library_id, 'manage')
-    with play.transaction(conn):
+    with db.transaction(conn):
         catalog = _catalog(conn, library_id)
         root = libsvc._library_root(target_path, writable=catalog['library']['mode'] == 'managed')
         libsvc._check_overlap(conn, root, exclude=library_id)
         identity = _identity(root)
-        report, inventory = _inspect(root, catalog['images'])
-        if identity != _identity(root):
+    report, inventory = _inspect(root, catalog['images'])
+    with db.transaction(conn):
+        access.require_capability(conn, 'admin')
+        access.require_library(conn, library_id, 'manage')
+        if (identity != _identity(root) or
+                manifest.checksum(_catalog(conn, library_id)) != manifest.checksum(catalog)):
             raise _error('relocation_root_changed')
         snapshot = {'catalog': manifest.checksum(catalog), 'target': str(root),
                     'identity': identity, 'inventory': manifest.checksum(inventory)}
@@ -127,7 +131,7 @@ def execute(conn, cfg, access, plan_id):
             identities.add(tuple(_identity(old_root)))
         for device, inode in sorted(identities):
             stack.enter_context(operation_lock(cfg, f'library:{device}:{inode}'))
-        with play.transaction(conn):
+        with db.transaction(conn):
             current = get(conn, access, plan_id)
             if current['state'] == 'succeeded':
                 return current
@@ -141,7 +145,15 @@ def execute(conn, cfg, access, plan_id):
             if manifest.checksum(catalog) != snapshot['catalog'] or target_identity != snapshot['identity']:
                 raise _error('relocation_target_changed')
             libsvc._check_overlap(conn, target, exclude=row['library_id'])
-            report, inventory = _inspect(target, catalog['images'])
+        report, inventory = _inspect(target, catalog['images'])
+        with db.transaction(conn):
+            current = get(conn, access, plan_id)
+            if current['state'] == 'succeeded':
+                return current
+            if row['expires_at'] < db.utcnow():
+                raise _error('relocation_plan_expired')
+            if manifest.checksum(_catalog(conn, row['library_id'])) != snapshot['catalog']:
+                raise _error('relocation_target_changed')
             if not report['ready'] or manifest.checksum(inventory) != snapshot['inventory'] or _identity(target) != snapshot['identity']:
                 raise _error('relocation_target_changed')
             device, inode = snapshot['identity']

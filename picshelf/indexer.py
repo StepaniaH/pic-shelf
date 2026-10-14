@@ -194,9 +194,13 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
     def walk_error(exc):
         # 无法遍历的子树不等于文件消失，保留其索引与关联。
         failed = Path(exc.filename or root)
+        if only_paths is not None and not any((root / rel).is_relative_to(failed) for rel in only_paths):
+            return
         before_errors = len(stats["errors"])
         stats["errors"].append(str(exc))
         for rel, row in existing.items():
+            if only_paths is not None and rel not in only_paths:
+                continue
             if (root / rel).is_relative_to(failed):
                 guard()
                 blocked_paths.add(rel)

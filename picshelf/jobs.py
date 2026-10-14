@@ -199,6 +199,26 @@ def _counts(conn, job_id):
     conn.commit()
 
 
+def _update_item(conn, job_id, item_key, state, error_code=None, detail=None):
+    """Commit one item and its counter delta together; retries replace its contribution."""
+    def contribution(value):
+        return (int(value in ('succeeded', 'skipped')), int(value in ('failed', 'conflict')))
+
+    with db.transaction(conn):
+        old = conn.execute('SELECT state FROM job_items WHERE job_id=? AND item_key=?',
+                           (job_id, item_key)).fetchone()
+        old_ok, old_failed = contribution(old['state'] if old else None)
+        ok, failed = contribution(state)
+        conn.execute('INSERT INTO job_items(job_id,item_key,state,error_code,detail) VALUES(?,?,?,?,?) '
+                     'ON CONFLICT(job_id,item_key) DO UPDATE SET '
+                     'state=excluded.state,error_code=excluded.error_code,detail=excluded.detail',
+                     (job_id, item_key, state, error_code, detail))
+        conn.execute('UPDATE jobs SET total=COALESCE(total,0)+?,completed=completed+?, '
+                     'succeeded=succeeded+?,failed=failed+?,updated_at=? WHERE id=?',
+                     (int(old is None), ok + failed - old_ok - old_failed, ok - old_ok,
+                      failed - old_failed, db.utcnow(), job_id))
+
+
 def _scan(conn, cfg, row, params, check):
     job_id, root = row["id"], Path(params["root"])
     if not params["manifest_ready"]:
@@ -225,10 +245,8 @@ def _scan(conn, cfg, row, params, check):
         "SELECT item_key FROM job_items WHERE job_id=? AND state NOT IN ('succeeded','skipped')", (job_id,))}
 
     def item_result(path, errors):
-        conn.execute("UPDATE job_items SET state=?,error_code=?,detail=? WHERE job_id=? AND item_key=?",
-                     ("failed" if errors else "succeeded", "scan_item_error" if errors else None,
-                      "\n".join(errors)[:4096] if errors else None, job_id, path))
-        _counts(conn, job_id)
+        _update_item(conn, job_id, path, "failed" if errors else "succeeded",
+                     "scan_item_error" if errors else None, "\n".join(errors)[:4096] if errors else None)
 
     def progress(stats):
         if stats.get("scan_id"):
@@ -244,7 +262,13 @@ def _scan(conn, cfg, row, params, check):
     return result
 
 
-def _import_progress(conn, job_id, plan_id):
+def _import_progress(conn, job_id, plan_id, position=None):
+    if position is not None:
+        item = conn.execute('SELECT state,error_code,detail FROM import_plan_items '
+                            'WHERE plan_id=? AND position=?', (plan_id, position)).fetchone()
+        _update_item(conn, job_id, str(position), item['state'], item['error_code'], item['detail'])
+        return
+    # Reconcile the complete journal only when starting, finishing or recovering.
     conn.execute("INSERT OR REPLACE INTO job_items(job_id,item_key,state,error_code,detail) "
                  "SELECT ?,CAST(position AS TEXT),state,error_code,detail FROM import_plan_items WHERE plan_id=?",
                  (job_id, plan_id))
@@ -254,8 +278,8 @@ def _import_progress(conn, job_id, plan_id):
 def _import(conn, cfg, row, params, access, check):
     job_id, plan_id = row["id"], params["input"]["plan_id"]
 
-    def progress():
-        _import_progress(conn, job_id, plan_id)
+    def progress(position=None):
+        _import_progress(conn, job_id, plan_id, position)
 
     conn.execute("UPDATE jobs SET phase='import' WHERE id=?", (job_id,))
     progress()
