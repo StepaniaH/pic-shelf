@@ -50,7 +50,14 @@ class HelpScreen(ModalScreen):
 
 STATES = {"queued":"待执行", "running":"运行中", "cancelling":"取消中", "cancelled":"已取消",
           "succeeded":"已完成", "failed":"失败", "partial":"部分完成", "interrupted":"已中断",
-          "planned":"已预演", "undone":"已撤销", "undo_conflict":"撤销冲突"}
+          "planned":"已预演", "preview":"已预演", "undone":"已撤销", "undo_conflict":"撤销冲突",
+          "pending":"待处理", "writing":"写入中", "ready":"已落盘", "skipped":"已跳过",
+          "conflict":"冲突", "undoing":"撤销中", "applied":"已应用",
+          "unchanged":"未变化", "creating":"创建中"}
+KINDS = {"scan":"扫描", "import":"导入", "rebuild":"重建派生图"}
+PHASES = {**STATES, **KINDS, "starting":"启动中", "waiting_for_library":"等待图库",
+          "discover":"发现文件", "scan_files":"扫描文件", "importing":"导入中",
+          "finished":"处理结束", "restored":"已恢复", "apply":"应用更改", "undo":"撤销更改"}
 
 
 class WorkScreen(ModalScreen):
@@ -95,8 +102,9 @@ class WorkScreen(ModalScreen):
                     key = kind + ":" + value['id']
                     self.records[key] = (kind,value)
                     done = value.get('completed',sum(n for state,n in value.get('counts',{}).items() if state != 'pending'))
-                    table.add_row(t("批量整理") if kind == "batch" else t(value['kind']), t(STATES.get(value['state'],value['state'])),
-                                  f"{done}/{value['total']}", value['id'][:12], key=key)
+                    total = value['total'] if value['total'] is not None else t("待统计")
+                    table.add_row(t("批量整理") if kind == "batch" else t(KINDS.get(value['kind'],value['kind'])), t(STATES.get(value['state'],value['state'])),
+                                  f"{done}/{total}", value['id'][:12], key=key)
                     if selected and selected[1]['id'] == value['id']:
                         table.move_cursor(row=len(self.records)-1)
             self.show_detail()
@@ -126,7 +134,7 @@ class WorkScreen(ModalScreen):
         kind, value = selected
         error = value.get('error') or {}
         text = error.get('detail') or value.get('error_code') or ""
-        self.query_one("#work-detail", Static).update(f"{t('阶段')}：{t(value['phase'])} · {text}")
+        self.query_one("#work-detail", Static).update(f"{t('阶段')}：{t(PHASES.get(value['phase'],value['phase']))} · {text}")
         self.query_one("#work-undo", Button).disabled = kind != "batch" or value['state'] not in ('succeeded','partial','cancelled','interrupted','undo_conflict')
         self.query_one("#work-cancel", Button).disabled = value['state'] not in ('queued','running','cancelling','planned')
         self.query_one("#work-retry", Button).disabled = value['state'] not in ('failed','partial','cancelled','interrupted')

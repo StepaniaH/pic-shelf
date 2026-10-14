@@ -169,7 +169,8 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
         after = path.stat()
         if ((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) !=
                 (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) or hashing.sha256_file(path) != sha):
-            raise ServiceError("image_changed", t("扫描期间图片内容变化，请保存文件后重新扫描"), retryable=True)
+            raise ServiceError("image_changed", t("扫描期间图片内容变化，请保存文件后重新扫描"), retryable=True,
+                               next_step=t("请等待文件保存完成后重新扫描；原文件未更改"))
 
     def encode(image_id, path, st, sha=None):
         result = hashing.encode_image(path, cfg.thumbs_dir, cfg.previews_dir, image_id,
@@ -299,7 +300,8 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
         try:
             sha = pending_hashes[rel]
             if sha in ambiguous:
-                raise ServiceError("ambiguous_move", t("多个相同内容文件无法唯一匹配原记录：{path}；请恢复原路径后重扫", path=rel))
+                raise ServiceError("ambiguous_move", t("多个相同内容文件无法唯一匹配原记录：{path}；请恢复原路径后重扫", path=rel),
+                                   next_step=t("请恢复原路径后重新扫描，不要按内容猜测图片关系"))
             verify_unchanged(path, st, sha)
             candidates = gone.get(sha, [])
             if candidates:
