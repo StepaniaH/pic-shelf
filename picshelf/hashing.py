@@ -14,8 +14,8 @@ from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 from .errors import ServiceError
 from .i18n import t
 
-PHASH_VERSION = 2
-DERIVATIVE_VERSION = 2
+PHASH_VERSION = 3
+DERIVATIVE_VERSION = 3
 # Admission budgets bound decoded dimensions and input size before allocation.
 # They are not an operating-system RSS limit for native codecs.
 MAX_WORKING_BYTES = 512 * 1024 * 1024
@@ -73,23 +73,29 @@ def _open_image(path: Path) -> Image.Image:
 
 
 def _normalized_color(img: Image.Image) -> Image.Image:
-    alpha = img.convert("RGBA").getchannel("A") if img.mode in ("P", "LA", "RGBA") else None
+    alpha = None
+    if img.mode == "P" or "A" in img.getbands() or "transparency" in img.info:
+        with img.convert("RGBA") as rgba:
+            alpha = rgba.getchannel("A")
     profile = img.info.get("icc_profile")
-    if profile:
-        try:
-            source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile))
-            color_input = img if img.mode in ("RGB", "CMYK", "L", "LAB") else img.convert("RGB")
-            base = ImageCms.profileToProfile(color_input, source_profile, _SRGB, outputMode="RGB",
-                                            renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC)
-        except (ImageCms.PyCMSError, OSError, ValueError) as exc:
-            raise ServiceError("invalid_color_profile", t("无法读取图片的颜色配置，已保留原文件"),
-                               next_step=t("请用图像编辑器检查独立副本的颜色配置，再重新扫描")) from exc
-    else:
-        base = img.convert("RGB")
-    if alpha is not None:
-        base.putalpha(alpha)
-        alpha.close()
-    return base
+    try:
+        if profile:
+            try:
+                source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile))
+                color_input = img if img.mode in ("RGB", "CMYK", "L", "LAB") else img.convert("RGB")
+                base = ImageCms.profileToProfile(color_input, source_profile, _SRGB, outputMode="RGB",
+                                                renderingIntent=ImageCms.Intent.RELATIVE_COLORIMETRIC)
+            except (ImageCms.PyCMSError, OSError, ValueError) as exc:
+                raise ServiceError("invalid_color_profile", t("无法读取图片的颜色配置，已保留原文件"),
+                                   next_step=t("请用图像编辑器检查独立副本的颜色配置，再重新扫描")) from exc
+        else:
+            base = img.convert("RGB")
+        if alpha is not None:
+            base.putalpha(alpha)
+        return base
+    finally:
+        if alpha is not None:
+            alpha.close()
 
 
 def phash_file(path: Path) -> str | None:

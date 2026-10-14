@@ -223,7 +223,7 @@ def test_empty_catalog_guides_server_path_registration_scan_and_tasks(page, tmp_
         expect(library.locator("[data-scan]")).to_be_enabled(timeout=10000)
         library.get_by_role("link", name="Read in place", exact=True).click()
         expect(page.locator("#grid .card")).to_have_count(1)
-        assert "-d2" in page.locator("#grid .card img").get_attribute("src")
+        assert "-d3" in page.locator("#grid .card img").get_attribute("src")
         page.goto(str(client.base_url) + "/#/admin?tab=jobs")
         expect(page.locator("tr[data-job]").filter(has_text="Scan")).to_contain_text("Succeeded")
     assert (root / "only.png").read_bytes() == original

@@ -391,11 +391,15 @@ picshelf scan collection --full --json
 ```
 
 Derivative and fingerprint algorithm versions are stored separately. Legacy
-records use version 0; startup does not rebuild them. Version 2 uses EXIF orientation,
-sRGB color conversion and preserved alpha. Its 64-bit perceptual hash composites
+records use version 0; startup does not rebuild them. Version 3 keeps EXIF orientation
+and sRGB color conversion, and fixes alpha loss for grayscale/RGB PNG transparent
+colors (tRNS). Both version numbers increase because the derived pixels and hashes
+of these inputs change. Its 64-bit perceptual hash composites
 transparency onto white; comparisons do not mix different algorithm versions.
-The explicit outdated-only rebuild updates that subset while preserving current
-outputs. Deleting a derivative and rescanning repairs it without changing image IDs.
+The explicit outdated-only rebuild updates version 0–2 records while preserving
+image IDs, ratings and other manual relationships. Startup and an unchanged-file
+incremental scan keep their existing outputs. Deleting a derivative and rescanning
+repairs it without changing image IDs.
 
 Both outputs use versioned filenames. The catalog references them only after
 encoding and source checks succeed, so a failed preview write preserves the previous

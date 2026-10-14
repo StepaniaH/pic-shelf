@@ -256,7 +256,7 @@ def test_explicit_outdated_rebuild_preserves_current_outputs(conn, cfg, library,
     assert result.returncode == 0, result.stderr
     done = json.loads(result.stdout)
     assert (done["state"], done["total"], done["succeeded"]) == ("succeeded", 1, 1)
-    assert conn.execute("SELECT phash_version,derivative_version FROM images WHERE id=?", (rows[0]["id"],)).fetchone()[:] == (2, 2)
+    assert conn.execute("SELECT phash_version,derivative_version FROM images WHERE id=?", (rows[0]["id"],)).fetchone()[:] == (3, 3)
     for row in rows[1:]:
         assert (cfg.media_dir / row["thumb_rel"]).stat().st_mtime_ns == before[row["id"]]
 
@@ -323,7 +323,7 @@ def test_api_cache_keys_change_with_derivative_version_and_offline_root_is_not_s
         assert unversioned.headers["cache-control"] == "private, no-store"
         assert client.get(old["thumb_url"]).headers["cache-control"] == "private, no-store"
         assert client.get(new["thumb_url"]).headers["cache-control"] == "private, no-store"
-        assert new["derivative_version"] == 2 and new["phash_version"] == 2
+        assert new["derivative_version"] == 3 and new["phash_version"] == 3
         root, saved = library["root"], library["root"].with_name("offline-root")
         root.rename(saved)
         draw_image(root / row["rel_path"], 999)
