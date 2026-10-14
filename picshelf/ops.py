@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from .db import utcnow
+from .db import transaction, utcnow
 from .i18n import t
 from .search import visible_images_sql
 from . import names as entity_names
@@ -103,20 +103,23 @@ def ensure_tag(conn: sqlite3.Connection, name: str, category: str | None = None)
 def add_tags(conn: sqlite3.Connection, image_id: int, names: list[str], user_id: int) -> list[dict]:
     from .metadata import record_manual_tag
     _get_image(conn, image_id)
-    out = []
+    validated = []
     for raw in names:
         name = raw.strip()
-        if not name:
-            continue
-        tag_id = ensure_tag(conn, name)
-        conn.execute(
-            "INSERT OR IGNORE INTO image_tags(image_id, tag_id, added_by, added_at) VALUES(?,?,?,?)",
-            (image_id, tag_id, user_id, utcnow()),
-        )
-        record_manual_tag(conn, image_id, tag_id, user_id, utcnow())
-        display_name = conn.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()[0]
-        out.append({"id": tag_id, "name": display_name})
-    conn.commit()
+        if name:
+            entity_names.display(name)
+            validated.append(name)
+    out = []
+    with transaction(conn):
+        for name in validated:
+            tag_id = ensure_tag(conn, name)
+            conn.execute(
+                "INSERT OR IGNORE INTO image_tags(image_id, tag_id, added_by, added_at) VALUES(?,?,?,?)",
+                (image_id, tag_id, user_id, utcnow()),
+            )
+            record_manual_tag(conn, image_id, tag_id, user_id, utcnow())
+            display_name = conn.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()[0]
+            out.append({"id": tag_id, "name": display_name})
     return out
 
 
