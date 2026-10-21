@@ -52,6 +52,11 @@ def require_source(conn, access, source, *, mode=None):
         return
     try:
         candidate = Path(source).expanduser().resolve(strict=True)
+        upload = conn.execute("SELECT * FROM import_uploads WHERE source=? AND created_by=? "
+                              "AND state IN ('sealed','completed')", (str(candidate), access.user_id)).fetchone()
+        if upload is not None and mode == 'hardlink':
+            access.require_library(conn, upload['library_id'], 'manage')
+            return
         for row in conn.execute("SELECT * FROM import_source_roots WHERE enabled=1"):
             root = Path(row["root_path"])
             if not candidate.is_relative_to(root):
@@ -63,3 +68,44 @@ def require_source(conn, access, source, *, mode=None):
     except (OSError, RuntimeError):
         pass
     raise _denied()
+
+
+def browse(conn, access, path=None):
+    user = access.user(conn)
+    admin = access.local_admin or auth.has_cap(conn, user, 'admin')
+    roots = []
+    for row in conn.execute("SELECT root_path FROM import_source_roots WHERE enabled=1 ORDER BY id"):
+        try:
+            require_source(conn, access, row['root_path'])
+            roots.append({'name': Path(row['root_path']).name or row['root_path'], 'path': row['root_path']})
+        except ServiceError:
+            continue
+    if admin:
+        roots = [{'name': Path.home().name, 'path': str(Path.home())},
+                 {'name': Path.home().anchor, 'path': Path.home().anchor}, *roots]
+    if path is None:
+        return {'roots': roots, 'path': None, 'parent': None, 'directories': [], 'truncated': False}
+    require_source(conn, access, path)
+    try:
+        current = Path(path).expanduser().resolve(strict=True)
+        directories, truncated = [], False
+        with os.scandir(current) as entries:
+            for entry in entries:
+                if entry.name.startswith('.') or entry.is_symlink() or not entry.is_dir():
+                    continue
+                if len(directories) == 500:
+                    truncated = True
+                    break
+                directories.append({'name': entry.name, 'path': str(current / entry.name)})
+        parent = None
+        if current.parent != current:
+            try:
+                require_source(conn, access, current.parent)
+                parent = str(current.parent)
+            except ServiceError:
+                pass
+        return {'roots': roots, 'path': str(current), 'parent': parent,
+                'directories': sorted(directories, key=lambda item: item['name'].casefold()), 'truncated': truncated}
+    except (OSError, RuntimeError) as exc:
+        raise ServiceError('import_source_invalid', t('导入源目录不可读'),
+                           next_step=t('请检查服务端目录、挂载和读取权限')) from exc

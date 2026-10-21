@@ -41,7 +41,7 @@ class HelpScreen(ModalScreen):
     def compose(self):
         with Vertical(id="help-box"):
             with VerticalScroll():
-                yield Static(t("列表：j/k 移动，[/] 翻页，/ 搜索，Esc 返回列表。\nx 选择当前图片（跨页保留），Ctrl+X 清空选择。\nr 评分（0–10；- 清除），f 收藏，t 添加标签（含空格的名称加引号）。\na 关联已有艺术家，l 加入手工专辑，w 标记 done / inbox；批量修改先预演确认。\nc 评论，n 笔记；b 导航，d 展开完整详情，p 切换可选图片预览。\ns 开始固定播放会话，←/→ 翻图，空格暂停/继续，Ctrl+P 暂停恢复最近会话。\nCtrl+S 扫描当前库；Ctrl+J 查看后台任务、取消、重试或撤销批次。\n搜索、输入弹窗与帮助会暂停播放；关闭弹窗后用空格继续。\ng 刷新，q 退出；输入框中的字母不会触发整理快捷键。\nF1 随时打开帮助，Esc 关闭。"), id="help-text", markup=False)
+                yield Static(t("浏览\nj/k 移动 · [/] 翻页 · / 搜索 · b 导航 · d 详情 · p 图片预览\n\n整理\nx 选择 · Ctrl+X 清空选择 · r 评分（0–10，- 清除）· f 收藏\nt 标签 · a 艺术家 · l 专辑 · w 整理状态 · c 评论 · n 笔记\n\n播放\ns 开始 · ←/→ 翻图 · 空格暂停/继续 · Ctrl+P 恢复上次播放\n打开搜索、帮助或输入框会暂停播放。\n\n任务\nCtrl+S 扫描 · Ctrl+J 查看任务与批次 · g 刷新\n\nEsc 返回 · q 退出 · F1 帮助"), id="help-text", markup=False)
             yield Button(t("关闭"), id="help-close")
 
     def on_button_pressed(self, event):
@@ -50,11 +50,11 @@ class HelpScreen(ModalScreen):
 
 STATES = {"queued":"待执行", "running":"运行中", "cancelling":"取消中", "cancelled":"已取消",
           "succeeded":"已完成", "failed":"失败", "partial":"部分完成", "interrupted":"已中断",
-          "planned":"已预演", "preview":"已预演", "undone":"已撤销", "undo_conflict":"撤销冲突",
-          "pending":"待处理", "writing":"写入中", "ready":"已落盘", "skipped":"已跳过",
+          "planned":"待确认", "preview":"待确认", "undone":"已撤销", "undo_conflict":"撤销冲突",
+          "pending":"待处理", "writing":"写入中", "ready":"已写入", "skipped":"已跳过",
           "conflict":"冲突", "undoing":"撤销中", "applied":"已应用",
           "unchanged":"未变化", "creating":"创建中"}
-KINDS = {"scan":"扫描", "import":"导入", "rebuild":"重建派生图"}
+KINDS = {"scan":"扫描", "import":"导入", "rebuild":"重建缩略图与指纹"}
 PHASES = {**STATES, **KINDS, "starting":"启动中", "waiting_for_library":"等待图库",
           "discover":"发现文件", "scan_files":"扫描文件", "importing":"导入中",
           "finished":"处理结束", "restored":"已恢复", "apply":"应用更改", "undo":"撤销更改"}
@@ -65,13 +65,13 @@ class WorkScreen(ModalScreen):
 
     def compose(self):
         with Vertical(id="work-box"):
-            yield Static(t("后台任务与批次（Enter 查看逐项结果）"), markup=False)
+            yield Static(t("任务与批量修改（Enter 查看详情）"), markup=False)
             yield DataTable(id="work-table")
             yield Static(id="work-detail", markup=False)
             with Horizontal(classes="dialog-buttons"):
                 yield Button(t("取消任务"), id="work-cancel")
                 yield Button(t("重试"), id="work-retry")
-                yield Button(t("撤销批次"), id="work-undo")
+                yield Button(t("撤销修改"), id="work-undo")
                 yield Button(t("上一页"), id="work-prev")
                 yield Button(t("下一页"), id="work-next")
                 yield Button(t("关闭"), id="work-close")
@@ -152,7 +152,7 @@ class WorkScreen(ModalScreen):
         kind,value = selected
         try:
             if name == 'work-undo':
-                self.app.push_screen(ConfirmScreen(t("撤销仅恢复未被后续修改的值；冲突会保留。")),
+                self.app.push_screen(ConfirmScreen(t("撤销这次修改，保留之后的改动。")),
                                      lambda yes: self.app.undo_batch(value['id']) if yes else None)
             elif name == 'work-cancel':
                 (jobs.cancel if kind == 'job' else batches.cancel)(self.app.conn,self.app.access,value['id'])
@@ -190,7 +190,10 @@ class WorkDetailsScreen(ModalScreen):
             total = value.get('items_total',value['total'])
             lines = [t("逐项结果") + f" {self.page_offset + 1 if total else 0}–{min(total,self.page_offset+100)} / {total}"]
             for item in value['items']:
-                lines.append(f"{item.get('rel_path',item.get('item_key',''))} · {t(STATES.get(item['state'],item['state']))} · {item.get('error_code') or ''}")
+                reason = item.get('error_code')
+                if reason == 'batch_changed': reason = t('图片已被其他操作修改')
+                line = f"{item.get('rel_path',item.get('item_key',''))} · {t(STATES.get(item['state'],item['state']))}"
+                lines.append(line + (f" · {reason}" if reason else ""))
                 if item.get('detail'): lines.append(item['detail'])
             self.query_one('#work-items',Static).update(Text('\n'.join(lines)))
             self.query_one('#items-prev',Button).disabled = not self.page_offset

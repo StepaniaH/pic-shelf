@@ -69,12 +69,20 @@ def _action(conn,access,value):
     return {"kind":kind,key:target}
 
 
-def _permission(conn,access,iid,action):
+def _permissions(conn,access,ids,action):
     kind = action["kind"]
     personal = kind in ("rating","favorite","workflow")
-    access.require_image(conn,iid,"view" if personal else "edit",
-                         "rate" if kind in ("rating","favorite") else None if kind == "workflow" else "tag_edit",
-                         include_missing=True)
+    capability = "rate" if kind in ("rating","favorite") else None if kind == "workflow" else "tag_edit"
+    if capability: access.require_capability(conn,capability)
+    libraries = set()
+    for start in range(0,len(ids),500):
+        page = ids[start:start+500]
+        found = {row[0]:row[1] for row in conn.execute(
+            f"SELECT id,library_id FROM images WHERE id IN ({','.join('?' for _ in page)})",page)}
+        for iid in page:
+            if iid not in found: raise _error("image_not_found","图片不存在",404)
+        libraries.update(found.values())
+    for library in libraries: access.require_library(conn,library,"view" if personal else "edit")
 
 
 def _field(action,owner):
@@ -106,6 +114,31 @@ def _value(conn,iid,action,owner):
     if kind.startswith("artist_"):
         return _rows(conn,"image_artists","image_id=?",(iid,),"artist_id")
     return _rows(conn,"album_images","image_id=? AND album_id=?",(iid,action["album_id"]),"image_id")
+
+
+def _snapshots(conn,ids,action,owner):
+    """Read the reviewed values and field revisions within the preview transaction."""
+    kind = action["kind"]
+    tagged = kind.startswith("tags_")
+    values = {iid:({"links":[],"claims":[]} if tagged else []) for iid in ids}
+    versions = {}
+    if kind in ("rating","favorite","workflow"):
+        tables = [({"rating":"ratings","favorite":"favorites","workflow":"image_workflow"}[kind],
+                   "user_id=?",[owner],"image_id",None)]
+    elif tagged:
+        tables = [("image_tags","1=1",[],"tag_id","links"),("tag_claims","retired_at IS NULL",[],"id","claims")]
+    elif kind.startswith("artist_"):
+        tables = [("image_artists","1=1",[],"artist_id",None)]
+    else:
+        tables = [("album_images","album_id=?",[action["album_id"]],"image_id",None)]
+    for start in range(0,len(ids),500):
+        page = ids[start:start+500]; marks = ','.join('?' for _ in page)
+        for table,where,params,order,key in tables:
+            for row in conn.execute(f"SELECT * FROM {table} WHERE image_id IN ({marks}) AND {where} ORDER BY image_id,{order}",[*page,*params]):
+                (values[row['image_id']][key] if key else values[row['image_id']]).append(dict(row))
+        versions.update(conn.execute(f"SELECT image_id,version FROM metadata_versions WHERE image_id IN ({marks}) AND field_key=?",
+                                     [*page,_field(action,owner)]))
+    return [(iid,_json(values[iid]),versions.get(iid,0)) for iid in ids]
 
 
 def _insert(conn,table,row):
@@ -221,7 +254,7 @@ def _reconcile(conn,batch_id):
             if exc.code != "operation_busy":raise
 
 
-def get(conn,access,batch_id,*,offset=0,limit=200):
+def get(conn,access,batch_id,*,offset=0,limit=200,include_items=True):
     _authorized(conn,access,batch_id)
     _reconcile(conn,batch_id)
     row = _authorized(conn,access,batch_id)
@@ -232,24 +265,36 @@ def get(conn,access,batch_id,*,offset=0,limit=200):
               "after_value":json.loads(item["after_value"]) if item["after_value"] else None} for item in
              conn.execute("SELECT b.*,i.filename,i.rel_path,l.name AS library_name FROM metadata_batch_items b "
                           "JOIN images i ON i.id=b.image_id JOIN libraries l ON l.id=i.library_id "
-                          "WHERE b.batch_id=? ORDER BY b.position LIMIT ? OFFSET ?",(batch_id,limit,offset))]
-    return {"id":batch_id,"created_by":row["created_by"],"created_at":row["created_at"],"expires_at":row["expires_at"],"state":row["state"],
+                          "WHERE b.batch_id=? ORDER BY b.position LIMIT ? OFFSET ?",(batch_id,limit,offset))] if include_items else None
+    value = {"id":batch_id,"created_by":row["created_by"],"created_at":row["created_at"],"expires_at":row["expires_at"],"state":row["state"],
             "phase":row["phase"],"error_code":row["error_code"],"action":json.loads(row["action"]),"selection":json.loads(row["selection"]),
             "target_snapshot":json.loads(row["target_snapshot"]),
-            "total":sum(counts.values()),"counts":counts,"items":items,"offset":offset,"limit":limit}
+            "total":sum(counts.values()),"counts":counts}
+    if include_items: value.update(items=items,offset=offset,limit=limit)
+    return value
 
 
 def list_batches(conn,access,*,offset=0,limit=50):
     user = access.user(conn)
     broad = access.local_admin or auth.has_cap(conn,user,"admin")
-    limit = min(100,max(1,limit))
-    rows = conn.execute("SELECT id FROM metadata_batches WHERE (? OR created_by=?) ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                        (int(broad),access.user_id,limit+1,max(0,offset))).fetchall()
+    clauses, args = [], []
+    if not broad:
+        clauses.append("created_by=?")
+        args.append(access.user_id)
+    allowed = access.allowed_libraries(conn)
+    if allowed is not None:
+        denied = f"i.library_id NOT IN ({','.join('?' for _ in allowed)})" if allowed else "1=1"
+        clauses.append("NOT EXISTS (SELECT 1 FROM metadata_batch_items b JOIN images i ON i.id=b.image_id "
+                       "WHERE b.batch_id=metadata_batches.id AND " + denied + ")")
+        args.extend(allowed)
+    offset, limit = max(0,offset), min(100,max(1,limit))
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    rows = conn.execute("SELECT id FROM metadata_batches" + where + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+                        [*args,limit+1,offset]).fetchall()
     items = []
     for row in rows[:limit]:
         try:
-            value = get(conn,access,row[0],limit=1)
-            value.pop("items")
+            value = get(conn,access,row[0],include_items=False)
             items.append(value)
         except ServiceError as exc:
             if exc.status not in (403,404):raise
@@ -276,7 +321,7 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
                     if not isinstance(query,dict) or any(key in ('limit','offset') for key in query):
                         raise ValueError
                     spec = catalog.ImageQuery(**query,limit=MAX_ITEMS,offset=0)
-                    result = catalog.query_images(conn,access,spec)
+                    result = catalog.query_images(conn,access,spec,ids_only=True)
                 except (TypeError,ValueError) as exc:raise _error("batch_invalid","查询范围无效，请先修正搜索",400) from exc
                 except ServiceError as exc:
                     if exc.code != 'query_invalid':
@@ -291,13 +336,13 @@ def preview(conn,access,action,*,image_ids=None,query=None,request_key=None):
                     any(not integer_in_range(iid) for iid in image_ids)):
                 raise _error("batch_invalid","每批需明确选择 1 至 10000 张图片",400)
             ids = list(dict.fromkeys(image_ids))
-            for iid in ids:_permission(conn,access,iid,action)
+            _permissions(conn,access,ids,action)
+            snapshots = _snapshots(conn,ids,action,access.user_id)
             batch_id,now = uuid.uuid4().hex,datetime.now(timezone.utc)
             conn.execute("INSERT INTO metadata_batches(id,created_by,created_at,expires_at,request_key,request,action,selection,target_snapshot,local_admin,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                          (batch_id,access.user_id,now.isoformat(),(now+timedelta(hours=24)).isoformat(),request_key,request,_json(action),_json(selection),_json(_targets(conn,action)),int(access.local_admin),now.isoformat()))
-            for position,iid in enumerate(ids):
-                conn.execute("INSERT INTO metadata_batch_items(batch_id,position,image_id,before_value,before_version) VALUES(?,?,?,?,?)",
-                             (batch_id,position,iid,_json(_value(conn,iid,action,access.user_id)),_version(conn,iid,action,access.user_id)))
+            conn.executemany("INSERT INTO metadata_batch_items(batch_id,position,image_id,before_value,before_version) VALUES(?,?,?,?,?)",
+                             [(batch_id,position,iid,value,version) for position,(iid,value,version) in enumerate(snapshots)])
     return get(conn,access,batch_id)
 
 

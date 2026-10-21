@@ -5,6 +5,7 @@ import sqlite3
 import os
 from pathlib import Path
 import tempfile
+import uuid
 
 from . import search
 from .access import AccessContext
@@ -93,6 +94,28 @@ def create_library(conn: sqlite3.Connection, name: str, root_path: str,
     return library_id
 
 
+def create_managed_library(conn, cfg: Config, name: str, description=None, *, default_import_mode='hardlink'):
+    """Allocate an application-owned destination when no server path is chosen."""
+    root = cfg.data_dir.resolve() / 'libraries' / uuid.uuid4().hex
+    if root.parent.resolve() != root.parent:
+        raise ServiceError('library_path_invalid', t('托管库目录不可写'),
+                           next_step=t('请修复目录写入权限，或选择只索引模式'))
+    try:
+        root.mkdir(parents=True, mode=0o700)
+    except OSError as exc:
+        raise ServiceError('library_root_unwritable', t('托管库目录不可写'),
+                           next_step=t('请修复目录写入权限，或选择只索引模式')) from exc
+    try:
+        return create_library(conn, name, str(root), description, mode='managed', default_import_mode=default_import_mode)
+    except BaseException:
+        # Remove only our newly allocated, still empty directory on failure.
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+        raise
+
+
 def update_library(conn: sqlite3.Connection, cfg: Config, access: AccessContext,
                    library_id: int, **changes) -> dict:
     access.require_library(conn, library_id, "manage")
@@ -144,6 +167,8 @@ def list_libraries(conn: sqlite3.Connection, allowed: list[int] | None = None) -
     sql = (
         "SELECT l.*, "
         "(SELECT COUNT(*) FROM images i WHERE i.library_id=l.id AND i.missing=0) AS image_count, "
+        "(SELECT i.id FROM images i WHERE i.library_id=l.id AND i.missing=0 "
+        "AND i.thumb_rel IS NOT NULL AND i.scan_error_code IS NULL ORDER BY i.id DESC LIMIT 1) AS cover_image_id, "
         "(SELECT COUNT(*) FROM albums a WHERE a.library_id=l.id) AS album_count "
         "FROM libraries l"
     )
@@ -207,12 +232,40 @@ def exact_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None) -> l
     return out
 
 
+def _bitmap_candidates(buckets, version, value, threshold, count):
+    # At distance r, at least 16-r of the sixteen 4-bit bands must match.
+    # Each integer is a bitmap of representative indices; five bit planes count
+    # matches for all representatives together without building Python sets.
+    planes = [0] * 5
+    for shift in range(0, 64, 4):
+        carry = buckets.get((version, shift, (value >> shift) & 15), 0)
+        for bit in range(5):
+            previous = planes[bit]
+            planes[bit] ^= carry
+            carry &= previous
+            if not carry:
+                break
+    needed = 16 - threshold
+    equal, greater = (1 << count) - 1, 0
+    for bit in range(4, -1, -1):
+        if needed & (1 << bit):
+            equal &= planes[bit]
+        else:
+            greater |= equal & planes[bit]
+            equal &= ~planes[bit]
+    matches = greater | equal
+    while matches:
+        first = matches & -matches
+        yield first.bit_length() - 1
+        matches ^= first
+
+
 def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
                   threshold: int = 8) -> list[dict]:
     """按首个代表图分组；每个成员与代表图的距离不超过 threshold。
 
     每个哈希只解析一次，重复哈希直接命中已选组。半径不超过 8 时按
-    threshold+1 个不相交位段生成完备候选，仍选最早代表。最坏仍为 O(n²)。
+    相同位段数量生成完备候选，再核对完整距离并选最早代表。最坏仍为 O(n²)。
     """
     if type(threshold) is not int or not 0 <= threshold <= 64:
         raise ValueError(t("相似距离必须在 0–64 之间"))
@@ -229,9 +282,12 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
     representatives: list[tuple[int, int]] = []
     placed: dict[tuple[int, int], int] = {}
     buckets: dict[tuple[int, int, int], list[int]] = {}
-    versions: dict[int, int] = {}
+    bitmaps: dict[tuple[int, int, int], int] = {}
+    versions: dict[int, list[int]] = {}
+    # Sparse bands are cheaper at small radii; bitmaps avoid the broad candidate
+    # unions produced by the shorter bands at radii 6–8.
     bands = []
-    if 0 < threshold <= 8:
+    if 0 < threshold <= 5:
         shift = 0
         for index in range(threshold + 1):
             width = 64 // (threshold + 1) + int(index < 64 % (threshold + 1))
@@ -242,14 +298,16 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
         version = int(r["phash_version"])
         key = (version, ph)
         target = placed.get(key)
+        known = versions.get(version, [])
         if target is None and threshold:
-            candidates = range(len(representatives))
-            if bands and versions.get(version, 0) > 128:
-                matches = [buckets.get((version, index, (ph >> shift) & mask), [])
-                           for index, (shift, mask) in enumerate(bands)]
-                # Degenerate shared segments fall back to the ordinary scan.
-                if max(map(len, matches), default=0) < versions[version] * .4:
-                    candidates = sorted({index for bucket in matches for index in bucket})
+            candidates = known
+            if len(known) > 128:
+                if bands:
+                    matches = [buckets.get((version, shift, (ph >> shift) & mask), []) for shift, mask in bands]
+                    if max(map(len, matches), default=0) < len(known) * .4:
+                        candidates = sorted({index for bucket in matches for index in bucket})
+                elif threshold <= 8:
+                    candidates = (known[index] for index in _bitmap_candidates(bitmaps, version, ph, threshold, len(known)))
             for gi in candidates:
                 algorithm, representative = representatives[gi]
                 if algorithm == version and (representative ^ ph).bit_count() <= threshold:
@@ -260,9 +318,15 @@ def similar_dupes(conn: sqlite3.Connection, allowed: list[int] | None = None,
             target = len(groups)
             representatives.append((version, ph))
             groups.append([entry])
-            versions[version] = versions.get(version, 0) + 1
-            for index, (shift, mask) in enumerate(bands):
-                buckets.setdefault((version, index, (ph >> shift) & mask), []).append(target)
+            versions.setdefault(version, []).append(target)
+            if bands:
+                for shift, mask in bands:
+                    buckets.setdefault((version, shift, (ph >> shift) & mask), []).append(target)
+            elif 0 < threshold <= 8:
+                bit = 1 << (len(versions[version]) - 1)
+                for shift in range(0, 64, 4):
+                    band = (version, shift, (ph >> shift) & 15)
+                    bitmaps[band] = bitmaps.get(band, 0) | bit
         else:
             groups[target].append(entry)
         placed[key] = target

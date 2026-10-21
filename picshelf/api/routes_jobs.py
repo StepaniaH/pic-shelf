@@ -54,13 +54,15 @@ def submit_import(plan_id: str, body: SubmitImport, request: Request, conn: Db, 
 
 
 @router.get("/jobs")
-def list_jobs(conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(50, ge=1, le=100)):
-    return jobs.list_jobs(conn, AccessContext(user["id"]), offset=offset, limit=limit)
+def list_jobs(conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(50, ge=1, le=100),
+              include_items: bool = True):
+    return jobs.list_jobs(conn, AccessContext(user["id"]), offset=offset, limit=limit, include_items=include_items)
 
 
 @router.get("/jobs/{job_id}")
-def get_job(job_id: str, conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(100, ge=1, le=1000)):
-    return jobs.get_job(conn, AccessContext(user["id"]), job_id, offset=offset, limit=limit)
+def get_job(job_id: str, conn: Db, user: User, offset: int = Query(0,ge=0,le=MAX_INTEGER), limit: int = Query(100, ge=1, le=1000),
+            include_items: bool = True):
+    return jobs.get_job(conn, AccessContext(user["id"]), job_id, offset=offset, limit=limit, include_items=include_items)
 
 
 @router.post("/jobs/{job_id}/cancel")

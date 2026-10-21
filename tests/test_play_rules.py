@@ -227,3 +227,74 @@ def test_concurrent_same_navigation_key_advances_once(collection):
     assert results[0]==results[1] and results[0]['cursor']==0
     with db.open_db(data.cfg.db_path) as conn:
         assert conn.execute('SELECT COUNT(*) FROM play_requests').fetchone()[0]==1
+
+
+@pytest.mark.parametrize('order', ['sequential', 'shuffle', 'random', 'shuffle_each_round'])
+def test_session_starts_at_selected_image_without_changing_snapshot(collection, order):
+    data = collection
+    with db.open_db(data.cfg.db_path) as conn:
+        spec = {'order': order, 'seed': 42, 'sort': 'path'}
+        expected = play.build_queue(conn, access(data).user_id, [data.libraries['north']], spec)
+        selected = data.images['n08']
+        session = play.create_for_user(conn, access(data), spec, start_image_id=selected)
+        assert play.queue_items(conn, session['session_id']) == expected
+        assert session['cursor'] == expected.index(selected)
+        assert session['image_id'] == selected
+        assert 'start_image_id' not in session['spec']
+        resumed = play.session_state(conn, access(data), session['token'])
+        assert resumed['cursor'] == session['cursor']
+        next_state = play.navigate(conn, access(data), session['token'], 'next')
+        assert next_state['image_id'] == expected[min(session['cursor'] + 1, len(expected) - 1)]
+
+
+def test_session_start_checks_queue_membership_and_creates_nothing_on_failure(collection):
+    data = collection
+    with TestClient(create_app(data.cfg), headers={'Origin': 'http://testserver'}) as client:
+        client.post('/api/v1/auth/login', json={'username': 'reader', 'password': data.password})
+        selected = data.images['n08']
+        for body in [
+            {'start_image_id': selected, 'limit': 2},
+            {'start_image_id': selected, 'query': 'file:does-not-exist'},
+            {'start_image_id': 2**62},
+            {'start_image_id': True},
+        ]:
+            response = client.post('/api/v1/play/sessions', json=body)
+            assert response.status_code in (400, 422)
+        with db.open_db(data.cfg.db_path) as conn:
+            assert conn.execute('SELECT COUNT(*) FROM play_sessions').fetchone()[0] == 0
+            hidden = conn.execute('SELECT id FROM images WHERE library_id=? LIMIT 1',
+                                  (data.libraries['south'],)).fetchone()[0]
+        assert client.post('/api/v1/play/sessions', json={'start_image_id': hidden}).status_code == 400
+        result = client.post('/api/v1/play/sessions', json={'start_image_id': selected}).json()
+        assert result['image']['id'] == selected and result['position'] == 8
+        with db.open_db(data.cfg.db_path) as conn:
+            conn.execute('DELETE FROM library_grants'); conn.commit()
+        assert client.get(f"/api/v1/play/sessions/{result['token']}").status_code == 403
+
+
+@pytest.mark.parametrize('order,loop,expect_wrap', [
+    ('sequential', True, True), ('shuffle', True, True), ('sequential', False, False),
+    ('shuffle_each_round', True, False), ('sample', True, False),
+])
+def test_prefetch_follows_snapshot_without_advancing_or_crossing_a_new_cycle(collection, order, loop, expect_wrap):
+    data = collection
+    with TestClient(create_app(data.cfg), headers={'Origin':'http://testserver'}) as client:
+        client.post('/api/v1/auth/login', json={'username':'reader','password':data.password})
+        session = client.post('/api/v1/play/sessions', json={
+            'source':{'library_id':data.libraries['north']}, 'order':order,
+            'sort':'path', 'limit':3, 'loop':loop, 'seed':42,
+        }).json()
+        url = f"/api/v1/play/sessions/{session['token']}"
+        with db.open_db(data.cfg.db_path) as conn:
+            expected = play.queue_items(conn, session['session_id'])
+        assert session['cursor'] == -1 and session['version'] == 0
+        assert session['next_image']['id'] == expected[0]
+        first = client.post(url + '/next').json()
+        assert first['next_image']['id'] == expected[1]
+        assert first['cursor'] == 0 and first['version'] == 1
+        last = client.post(url + '/goto', json={'position':2}).json()
+        assert (last['next_image']['id'] if last['next_image'] else None) == (expected[0] if expect_wrap else None)
+        with db.open_db(data.cfg.db_path) as conn:
+            conn.execute('DELETE FROM library_grants'); conn.commit()
+        assert client.get(url).status_code == 403
+        assert client.post(url + '/next').status_code == 403

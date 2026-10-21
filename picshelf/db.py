@@ -15,7 +15,7 @@ from pathlib import Path
 from .errors import ServiceError
 from .i18n import t
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 @contextmanager
@@ -553,7 +553,22 @@ CREATE TRIGGER catalog_{_identity_table}_{_identity_action.lower()} AFTER {_iden
 END;
 """
 
-MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12, 13: _SCHEMA_V13, 14: _SCHEMA_V14}
+_SCHEMA_V15 = """
+CREATE TABLE import_uploads (
+ id TEXT PRIMARY KEY,
+ created_by INTEGER NOT NULL REFERENCES users(id),
+ library_id INTEGER NOT NULL REFERENCES libraries(id),
+ source TEXT NOT NULL UNIQUE,
+ created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL,
+ state TEXT NOT NULL DEFAULT 'receiving',
+ file_count INTEGER NOT NULL DEFAULT 0,
+ bytes INTEGER NOT NULL DEFAULT 0,
+ plan_id TEXT REFERENCES import_plans(id)
+);
+"""
+
+MIGRATIONS: dict[int, str] = {1: _SCHEMA_V1, 2: _SCHEMA_V2, 3: _SCHEMA_V3, 4: _SCHEMA_V4, 5: _SCHEMA_V5, 6: _SCHEMA_V6, 7: _SCHEMA_V7, 8: _SCHEMA_V8, 9: _SCHEMA_V9, 10: _SCHEMA_V10, 11: _SCHEMA_V11, 12: _SCHEMA_V12, 13: _SCHEMA_V13, 14: _SCHEMA_V14, 15: _SCHEMA_V15}
 
 _REVISION_TABLES = ('users', 'libraries', 'images', 'tags', 'artists', 'albums',
                     'comments', 'notes', 'image_sources', 'tag_claims', 'tag_aliases',
@@ -665,6 +680,8 @@ def validate_schema(conn: sqlite3.Connection) -> int:
             required |= {"import_plans", "import_plan_items"}
         if current >= 3:
             required |= {"jobs", "job_items"}
+        if current >= 15:
+            required |= {"import_uploads"}
         if current >= 6:
             required |= {"image_sources", "image_workflow", "tag_claims", "tag_aliases", "artist_aliases"}
         if current >= 7:

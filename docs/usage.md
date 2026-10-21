@@ -1,53 +1,162 @@
 # Usage
 
-Pic Shelf keeps image files in registered libraries and stores metadata in a separate data directory. Indexing an existing directory does not move or rename its files. Managed import copies, hardlinks or moves files into a registered library.
-
-See [Authentication and shared-library permissions](security.md) for role requirements, approved import sources, session revocation, browser origins and upgrade compatibility. After upgrading to schema 7, sign in again and replace older script tokens. Cookie-based scripts must supply the matching Origin; Bearer scripts do not need that header.
-
-Use [batch organization and undo](batches.md) to select images across pages, preview a fixed set, edit metadata, and restore changes without overwriting later edits. The Unorganized view follows each user's explicit workflow state.
-
-Use [portable metadata](metadata-format.md) to move personal organization and shared catalog metadata onto separately copied originals. Database backups also contain account data and are described under Backup and restore.
-
-Use [library paths and naming](paths.md) to rebind verified original-file copies, name new imports, or explicitly reorganize a managed library.
-
-Use [works and file versions](works.md) to manually link original, compressed, cropped or revised files while retaining each image's organization.
-
-Use [local diagnostics](diagnostics.md) for a redacted report and [packaging](packaging.md) for locked environments and installed-artifact checks.
+Pic Shelf stores originals in registered library directories and keeps the catalog
+and thumbnails in a separate data directory.
 
 ## Web browsing
 
-Browse opens all visible images; Unorganized, Favorites, Albums, Artists and Tags
-provide narrower starting points. Saved queries, playback rules and batch history
-are in the same navigation bar. On narrow screens, scroll the navigation row to
-reach the remaining entries. Administrative tools appear for administrators.
+**Library** shows your libraries and recently added images. **All images**,
+**Favorites** and **Unorganized** open image grids. Albums, artists and tags provide
+other ways to browse. Use the side navigation on desktop or the menu button on a phone.
+Mixed-library grids show library names below filenames so identical filenames
+remain distinguishable. Selection starts afresh when you open another collection.
 
-The image toolbar offers comfortable and compact density. This browser remembers
-the choice; opening a saved query uses that rule's display preference. Both modes
-show the whole image. Batch organization opens when you select an image, or when
-you expand its heading. Search rule editing also expands on demand and opens
-automatically for an invalid rule. Layout and form text respect browser text size.
+- Press `/` to search by filename or tag. Expand **Filter**, choose a field and
+  value, then **Apply filter** to update the results. **Edit search expression**
+  accepts the full query syntax. Failed requests keep the current results.
+- **Save query** names the current search or saves it as a smart album. Display
+  preferences are under **Display settings** in that dialog.
+- Choose the sort order and comfortable or compact density above the grid. The
+  browser remembers density; saved searches can specify their own preference.
+- Scroll near the end to load the next page. If loading fails, use **Retry**;
+  failed thumbnails have a separate **Retry thumbnail** button. Arrow keys move
+  focus through the grid; Home and End reach the first and last loaded image.
+- Click an image, or focus it and press Enter or Space. Left/right arrows move
+  between images; `f` toggles favorites, `i` opens details and `z` changes sizing.
+- The details panel puts ratings, tags, artists and albums first. Expand comments,
+  notes, sources or file information when needed. **More actions** contains the
+  transparency grid and original download.
+- Click **Select** to organize several images. Shift-click selects a range;
+  scrolling and loading more images keep your selection. Preview the operation before applying it.
+  **Done selecting** clears the selection.
+- **Slideshow** opens interval and order settings. **More settings** contains
+  filters, image size, captions and reusable playback rules.
 
-A connection failure keeps your account state and offers Retry. A permission error
-includes the server's recovery advice. Retrying reads the current permissions;
-it does not grant access to unavailable content.
+Escape closes the current dialog and returns focus. Unsaved viewer input stays
+with its image until you close the viewer; closing asks before discarding drafts.
+Failed saves keep your input. Retry a failed read, and check the current image
+before repeating a write whose result is uncertain.
+Session expiry closes open media and dialogs, clears unsaved input and returns
+to sign-in.
 
-The viewer publishes an image together with its matching details after decoding.
-Failed images have Retry and next-image controls. Preview images are used by
-default; Original size and Download request the original file. The transparency
-grid is optional. At most two neighboring previews are prefetched, and that
-prefetch is disabled when the browser requests reduced data usage. Reused pixels
-stay inside the open viewer; every selection still checks current access.
+After saving changes in image details, closing the viewer refreshes the current
+filter and sort while retaining the loaded image range. Batch completion and
+undo refresh that range too. If the image leaves the current results, keyboard
+focus moves to the next remaining image.
 
-Unsaved form input stays with its image while you navigate within the viewer.
-Closing asks before discarding it. A failed save preserves the input; an uncertain
-network result asks you to refresh and check before submitting again. A confirmed
-save remains effective even if refreshing details subsequently fails. Drafts are
-kept only while the viewer is open, not across a browser reload.
+The viewer preloads up to two adjacent previews; slideshows preload the next one.
+Switching still checks current access. Original sizing and Download fetch the
+original file. Reduced-data browser settings disable preloading. Albums, artists
+and tags support name search and pagination.
+Account actions are under your name in the top bar; administrative tools are in
+**Management**, starting with library setup.
 
-Shift-click selects a range of loaded images in the displayed order. Selections
-from other loaded pages remain selected. To switch from all matching results to
-individual images, clear the selection first. Closing the viewer returns focus
-to its opening card and retains the list's search and selection.
+## Appearance
+
+Open your account menu and choose **Appearance**. Choose **System**, **Dark** or
+**Light** independently of the palette. The nine palettes are Built-in, Gruvbox,
+Catppuccin, Solarized, Nord, Dracula, Tokyo Night, Macchiato and Mocha; each has
+light and dark colors. Palette previews follow the current color mode.
+
+Changes apply immediately and stay in this browser across reloads and sign-ins.
+Other open tabs in the same browser update too. System mode follows changes to
+your operating system's appearance. The viewer keeps a neutral dark background
+behind images while its toolbar and details panel follow your theme.
+
+## Albums and tags
+
+Open **Albums → New album** to choose a library and name. Add images through
+**Select → Add to manual album** in a grid, or **Add to manual album** in image
+details. The picker can create an album without leaving your selection.
+**Edit album** changes its name, category and description. A cover is chosen from
+the album's visible images until you set one explicitly. Click an album name in
+image details to browse it, set that image as its cover, or remove the image.
+Folder albums follow the scanned directories; their membership is automatic.
+
+On **Tags**, administrators can open **Manage tag** to rename a shared tag or
+preview and add an alias. Names cannot take another tag's name or alias. Aliases
+work in search and image association operations. Use [batch organization](batches.md)
+to add or remove tags on selected images; undo preserves later edits.
+
+## Add images in the web app
+
+Choose **Add library** on the library home screen or in Management. The dialog
+defaults to receiving imports: enter a name, then choose images or a folder, or
+drop them directly into the same dialog. Preview, execution and results stay in
+that dialog; closing it returns focus to the original page and refreshes its list.
+
+- **Browse an existing directory → Add and scan** registers the directory,
+  scans it in the dialog, then refreshes the current page. Choose this purpose
+  and an existing server directory in the dialog's advanced options. Originals
+  stay in that directory.
+- **Receive imports** creates a destination and imports in the same dialog.
+  Only the name is required: leave
+  **Storage location** blank to allocate a library below the application data
+  directory. An explicit server directory can still be used. Without a file
+  selection, **Create** creates an empty library.
+
+To add more files to a managed library, choose **Import images** in its page or
+management entry. This opens a dialog over the current page without navigation.
+Choose images or a folder from your computer, or drag images and folders into
+the drop area. Folder structure is preserved; non-image files are ignored.
+Choose the destination library and **Preview import**. Local files are uploaded
+to the server for preview; your computer's originals remain untouched.
+
+For files already on the server, choose **Choose a folder on the server** and
+browse to the source. The automatic mode tries hard links and falls back to
+copying across disks or when hard links are unavailable. **Advanced options**
+contains manual server paths, explicit copy/move modes and filename cleanup.
+Web imports default to automatic mode, even if the library's CLI/API default is
+move. Local uploads always preserve originals.
+
+The preview shows relative filenames, duplicate skips and destination name
+changes. Expand **Full paths** to check server directories. **Change selection**
+returns to the file picker; changed settings require a new preview. The Add
+library and New album dialogs show the name and destination first, then file
+selection and selected-image thumbnails. Local files, folders and server folders
+are chosen in the same area. One **Advanced options** section follows the selected
+content, above the final action. It holds storage and import settings for libraries,
+and category, description and import settings for albums. Server copy/move options
+appear when importing from a server folder.
+
+**Start import** runs the saved preview. Moving files requires an additional
+confirmation inside the dialog. After completion, **Done** closes the dialog and
+refreshes the underlying list; partial failures keep the failure details and a
+retry button. **Import more** starts another preview in place. Closing an
+unexecuted upload preview aborts pending upload requests and discards its staging
+files. Already queued imports continue in the background after closing.
+
+The **New album** dialog also accepts optional images when the selected library
+is managed and you have manage access. Selected files import into that library
+and join the new manual album automatically. Existing editable manual albums
+provide the same **Import images** dialog. Duplicate content already in the
+library is added to the album without another copy. Ordinary album creation and
+editing still work with edit access; importing additionally requires manage
+access. File and folder albums continue to follow scanning automatically.
+
+Users with management access to a library can scan and import through its page.
+An active scan remains in the page address, so reloading restores its progress.
+Retrying a submission after a lost response reuses the same task. Failed or
+cancelled scans keep their details and allow another scan.
+Server source folders must be approved by an administrator; moving also requires
+source permission. Managers can upload their own selected files without a server
+source grant. Each upload accepts up to 10,000 images, 2 GiB total and 256 MiB
+per image. Up to four unfinished uploads are allowed per account. Replacing an
+upload preview discards its staging files. Successful imports release staging
+files; abandoned uploads and unstarted previews expire after 24 hours and are
+cleaned when another upload starts. Started partial imports retain staging for
+retry. Account and group administration remains separate. See
+[Security](security.md) for source authorization.
+
+| Task | Guide |
+| --- | --- |
+| Batch changes and undo | [Batch organization](batches.md) |
+| Accounts, permissions and remote access | [Security](security.md) |
+| Sources, aliases and organization state | [Metadata](metadata.md) |
+| Move a library or rename files | [Paths and naming](paths.md) |
+| Link versions of a work | [Works](works.md) |
+| Transfer metadata | [Portable metadata](metadata-format.md) |
+| Investigate errors and storage use | [Diagnostics](diagnostics.md) |
 
 ## Commands
 
@@ -78,10 +187,6 @@ an out-of-range rating has code `invalid_rating`; a missing image has code
 Local administrative rating operations can select the rating owner with `--user`.
 
 ## CLI and HTTP contracts
-
-Put global `--data` and `--lang zh|en` options before the command. `--data`
-overrides `PICSHELF_DATA`; it does not change library roots. `search` remains an
-alias of `ls`. Use `--help` on the selected command to see its supported options.
 
 `ls`/`search`, `show`, `rate`, `scan` and `import` support `--json`. The `batch`,
 `queries`, `play-rules`, `play-sessions`, `job`, `metadata`, `manifest` and `import-sources`
@@ -185,10 +290,11 @@ picshelf library configure collection --default-import-mode hardlink
 picshelf library configure archive --mode indexed
 ```
 
-For an empty catalog, Home links to library creation, import preview and task
-history. After registration, scan an indexed library or preview an import into a
-managed library. Scan actions show background progress and can be revisited under
-Management → Background tasks. Indexed libraries remain editable for ratings,
+An empty catalog offers **Add library**. Choose **Browse an existing directory**
+to index files in place, or **Receive imports** for a managed library. In the
+import form, choose **Preview import**, review the files, then **Start import**.
+Scan actions show background progress under Management → Background tasks;
+expand **Task details** for the task ID and file results. Indexed libraries remain editable for ratings,
 tags and other metadata even when the original directory is read-only.
 
 API creation accepts `mode: "indexed" | "managed" | null` and
@@ -260,11 +366,16 @@ are excluded by default and cannot play until their original files return.
 
 Static result sets have stable offset pagination for every non-random sort,
 using the image ID to break ties. Each response reads its count and rows from
-one database snapshot. Separate pages use the current catalog: refresh after
-scanning, editing or permission changes. Random discovery takes a new sample
+one database snapshot. Separate pages use the current catalog. The Web grid
+deduplicates overlapping pages, but scanning or edits can still shift the results;
+refresh to see the current order. Random discovery takes a new sample
 on each request and may repeat; the Web view offers refresh instead of appending
 random pages. The viewer stops at the end of that sample and displays its size
 separately from the total matching count. Playback creates a separate queue.
+
+Collection sorting is kept in the page URL and survives refresh. Applying a search
+filter adds a history entry; use the browser's Back and Forward buttons to revisit
+earlier filters.
 
 ### Saved queries and smart albums
 
@@ -297,21 +408,10 @@ condition editor's comma and quote syntax. Legacy
 `GET /images` keeps `errors` and `error_codes`; invalid expressions return no
 items. CLI search emits the same JSON error fields and exits nonzero.
 
-URL filters parse numeric and boolean strings before entering the shared query
-rules. JSON identifiers and booleans keep strict types: `true`, `1.0` and `"1"`
-cannot stand in for an integer ID. IDs range from 1 to the signed 64-bit maximum;
-limits range from 0 to 10,000 (0 requests only the count), and offsets are
-nonnegative signed 64-bit integers. Tag filters accept at most 300 characters.
-Shared query construction rejects malformed field types with `query_invalid`;
-HTTP transport validation still returns 422 / `invalid_arguments`, while a
-domain filter error returns 400 / `query_invalid`. Batch scope errors retain
-400 / `batch_invalid`. Invalid search expressions retain the existing empty
-result with `errors` and `error_codes`; they never broaden the selection.
-
 ## Import and scanning
 
 ```sh
-picshelf library add collection /path/to/managed/library --mkdir
+picshelf library add collection /path/to/managed/library --mode managed --mkdir
 picshelf import /path/to/incoming collection            # dry run
 picshelf import /path/to/incoming collection --apply    # review and confirm
 picshelf import /path/to/incoming collection --mode copy --apply
@@ -478,8 +578,6 @@ lock does not coordinate unrelated tools that open the SQLite file directly.
 
 ## Viewing
 
-Web navigation remains available on phone-sized screens. Image cards show the complete composition. Use Enter or Space to open a focused image; Escape closes the topmost dialog and restores focus. In the viewer, left/right arrows navigate, `f` toggles favorites, `i` toggles details and `z` changes sizing. Original sizing loads the original image. Ratings include zero; Clear removes your rating.
-
 Press F1 for terminal help. The list shows its range, total and selected count.
 Use `[` / `]` to page, `b` for navigation, `d` for full details, `/` to search
 and Escape to return to the list. Narrow terminals initially hide navigation
@@ -536,7 +634,14 @@ The Web **Playback rules** page saves personal query/source, sort, mode, count,
 interval, loop, image size and caption settings. A session copies these settings
 and the selected IDs; later rule edits have no effect on it. Current image
 metadata and file availability are still checked when displayed. Rules never
-store media URLs. Export preserves the rule itself. The local CLI supports
+store media URLs. **New rule** opens a form for saving a named rule and choosing
+its library. Export preserves the rule itself.
+
+Starting a slideshow from the image viewer begins at that image in the new queue.
+Turn off **Start from this image** to begin at the first queue item. If the current
+image is excluded by the filters or queue limit, the form stays open so those
+settings can be adjusted. The starting image belongs to the session, not the
+saved rule. The local CLI supports
 the same rules and session controls:
 
 ```sh
@@ -592,16 +697,21 @@ Interactive documentation is available at `/api/docs`; the machine-readable sche
 | Search and pagination | `GET /images?q=...&sort=path&limit=50&offset=0` |
 | Image metadata | `GET /images/{id}` |
 | Authenticated media | `GET /media/{thumb,preview,original}/{id}` |
-| Tags and artists | `GET /tags`, `GET /artists` |
+| Tags and artists | `GET /tags?q=...&limit=100&offset=0`, `GET /artists` with the same parameters |
 | Import preview / execution | `POST /import/plan`, `POST /import/execute` |
+| Browse authorized server folders | `GET /import/sources?library_id={id}`, optionally `path` |
+| Stage browser files | `POST /import/uploads` with `library_id`; `PUT /import/uploads/{id}/file?path={relative-path}` with raw file bytes and matching `Content-Length` |
+| Preview / discard an upload | `POST /import/uploads/{id}/plan` with optional `rename`; `POST /import/uploads/{id}/discard` before execution starts |
+| Import into a manual album | Optional `album_id` on `POST /import/plan` or `POST /import/uploads/{id}/plan`; target must belong to the destination library and remain editable through execution |
 | Saved import plan / pages | `GET /import/plans/{plan-id}?offset=0&limit=300` |
 | Execute or retry the saved plan | `POST /import/plans/{plan-id}/execute` with `confirm: true`, optionally `retry: true` |
 | Cancel at the next file boundary | `POST /import/plans/{plan-id}/cancel` |
 | Queue a scan / derivative rebuild | `POST /libraries/{id}/{scan-jobs,rebuild-jobs}` with `request_key`, optionally `full` for scans or `outdated_only` for rebuilds |
 | Queue the saved import | `POST /import/plans/{plan-id}/jobs` with `confirm: true` and `request_key` |
 | Task list / paginated item results | `GET /jobs`, `GET /jobs/{id}?offset=0&limit=100` |
+| Task status without item journals | `GET /jobs?include_items=false`, `GET /jobs/{id}?include_items=false` |
 | Cancel / retry unfinished task items | `POST /jobs/{id}/{cancel,retry}` |
-| Playback queue | `POST /play/sessions` |
+| Playback queue | `POST /play/sessions`, optionally with `start_image_id` to position the initial cursor |
 
 Image counts and associated tags/artists follow the caller's library grants and exclude missing images. Administrators can also browse unassigned tags and artists. The global user count is only exposed to administrators. Authentication is required for metadata and all media; health is public. Import execution requires management access and explicit confirmation.
 
@@ -613,14 +723,12 @@ preview when options change. The legacy `/import/execute` endpoint explicitly us
 Plan access is limited to its creator and administrators, and current library
 management access is checked again before execution and between items.
 
-Shared service errors preserve the existing `detail` message and HTTP status, and
-add `error.code`, `error.retryable`, `error.next_step` and `error.objects`. Codes
-such as `permission_denied`, `authentication_required`, `image_not_found` and
-`invalid_rating` do not change with the response language. Permission checks
-resolve the current account and grants at each service operation. Older endpoints
-may still return only `detail`; framework input validation retains its existing
-response shape. Search responses also include `error_codes` alongside the existing
-localized `errors`; malformed expressions use `invalid_query` and return no items.
+Each Web task has a detail URL that can be reopened after leaving the importer or
+refreshing the page. Task details show the library name, progress, retry controls
+and a link to the library. Status polling automatically retries a lost connection;
+**Retry** checks immediately. File results load only when **Task details** is
+expanded. `include_items=false` omits item rows and their pagination fields while
+preserving status, result and error fields; access is checked on every request.
 
 ## Backups
 
@@ -631,16 +739,6 @@ picshelf import-backup ./data/exports/catalog.zip --force
 ```
 
 Exports contain a consistent database snapshot and optionally derivatives. They do not contain originals, the signing key or configuration. Back up library directories separately. Use `backup inspect` before an offline restore; `--force` first saves the current database, including committed WAL. Included derivatives are restored; omitted derivatives can be recreated with `rebuild`. Sessions are invalidated, and restored pending jobs require explicit retry. `check --full` reports integrity and file problems without repair. See [Backup and recovery](backups.md) for limits, legacy compatibility and recovery steps.
-
-`check` and `doctor` include a local `storage` report separating the database,
-WAL, shared-memory file, referenced/unreferenced derivatives, temporary outputs,
-backups and conventional development directories. Sizes are apparent bytes by
-path; they do not deduplicate hardlinks or measure allocated disk blocks. Journal
-row counts are included, and SQLite table-page sizes are reported when `dbstat`
-is available. Unreadable entries make the storage measurement incomplete.
-The cache cleanup preview lists at most 200 relative candidates and supports no
-deletion. Temporary outputs and symlinks are excluded from candidates; references
-and file identity still need rechecking before any future cleanup.
 
 ## Database upgrades
 

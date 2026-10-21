@@ -6,12 +6,11 @@ import random
 import secrets
 import sqlite3
 
-from . import search
+from . import catalog, search
 from .db import transaction, utcnow
 from .errors import ServiceError
 from .i18n import t
 from .inputs import integer_in_range
-from .names import match_key
 
 MAX_QUEUE = 10000
 MAX_SEED = 2**53-1  # Exact in JSON clients using JavaScript numbers.
@@ -57,26 +56,8 @@ def check_source(conn, access, spec):
 
 
 def _source_clauses(spec):
-    src = spec['source']; where, params = ['i.missing=0'], {}
-    if src.get('library_id') is not None:
-        where.append('i.library_id=:src_library');params['src_library']=src['library_id']
-    for field,table in (('album_id','album_images'),('artist_id','image_artists')):
-        if src.get(field) is not None:
-            where.append(f'EXISTS(SELECT 1 FROM {table} link WHERE link.image_id=i.id AND link.{field}=:src_{field})')
-            params[f'src_{field}']=src[field]
-    if src.get('tag'):
-        where.append('EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id WHERE it.image_id=i.id '
-                     'AND (picshelf_name_key(tg.name)=:src_tag OR EXISTS(SELECT 1 FROM tag_aliases a WHERE a.entity_id=tg.id AND a.match_key=:src_tag)))')
-        params['src_tag']=match_key(src['tag'])
-    if src.get('favorites'):
-        where.append('EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)')
-    if src.get('rating_min') is not None:
-        where.append('COALESCE((SELECT value FROM ratings WHERE image_id=i.id AND user_id=:uid),0)>=:src_rating')
-        params['src_rating']=src['rating_min']
-    if src.get('workflow') is not None:
-        where.append("COALESCE((SELECT state FROM image_workflow WHERE image_id=i.id AND user_id=:uid),'inbox')=:src_workflow")
-        params['src_workflow']=src['workflow']
-    return where,params
+    where, params = catalog.image_filter_clauses(catalog.ImageQuery(**spec['source']))
+    return ['i.missing=0', *where], params
 
 
 def _choose(spec, candidates, cycle=0):
@@ -93,7 +74,7 @@ def _snapshot(conn,user_id,allowed,spec):
     capacity=min(spec['limit'] or MAX_QUEUE,MAX_QUEUE) if spec['order']!='sample' else MAX_QUEUE
     if spec['order']=='sequential':
         result=search.search_images(conn,user_id,allowed,query=spec['query'],sort=spec['sort'],limit=capacity,
-                                     extra_where=extra,extra_params=extra_params)
+                                     extra_where=extra,extra_params=extra_params,ids_only=True)
         candidates=[item['id'] for item in result['items']];total=result['total']
     else:
         # Reservoir sampling considers every match while holding at most 10000 IDs.
@@ -130,22 +111,28 @@ def _store_items(conn,session_id,items,candidates):
                      [(session_id,p,iid,iid) for p,iid in enumerate(candidates)])
 
 
-def create_session(conn,user_id,allowed_library_ids,spec,*,access=None,rule_id=None):
+def create_session(conn,user_id,allowed_library_ids,spec,*,access=None,rule_id=None,start_image_id=None):
     spec=validate_spec(spec);spec.setdefault('seed',secrets.randbits(53))
     with transaction(conn):
         if access is not None:
             check_source(conn,access,spec);allowed_library_ids=access.allowed_libraries(conn)
         items,candidates,info=_snapshot(conn,user_id,allowed_library_ids,spec)
+        cursor = -1
+        if start_image_id is not None:
+            if type(start_image_id) is not int or start_image_id not in items:
+                raise ServiceError('play_start_unavailable', t('当前图片不在播放范围内'), status=400,
+                                   next_step=t('请调整筛选和播放数量，或取消从当前图片开始'))
+            cursor = items.index(start_image_id)
         token=secrets.token_urlsafe(12)
         session_id=conn.execute('INSERT INTO play_sessions(token,user_id,spec,order_mode,interval,loop,cursor,created_at,rule_id,snapshot_info) '
-            'VALUES(?,?,?,?,?,?,-1,?,?,?)',(token,user_id,json.dumps(spec,ensure_ascii=False),spec['order'],spec['interval'],int(spec['loop']),
+            'VALUES(?,?,?,?,?,?,?,?,?,?)',(token,user_id,json.dumps(spec,ensure_ascii=False),spec['order'],spec['interval'],int(spec['loop']),cursor,
                                          utcnow(),rule_id,json.dumps(info))).lastrowid
         _store_items(conn,session_id,items,candidates)
     return _state(conn,get_session_by_token(conn,token))
 
 
-def create_for_user(conn,access,spec,*,rule_id=None):
-    return create_session(conn,access.user_id,None,spec,access=access,rule_id=rule_id)
+def create_for_user(conn,access,spec,*,rule_id=None,start_image_id=None):
+    return create_session(conn,access.user_id,None,spec,access=access,rule_id=rule_id,start_image_id=start_image_id)
 
 
 def get_session_by_token(conn,token):

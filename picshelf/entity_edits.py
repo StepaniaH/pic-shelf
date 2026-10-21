@@ -138,5 +138,7 @@ def execute(conn, access, plan_id):
                 conn.execute(f"DELETE FROM {table} WHERE image_id=? AND {column}=?", (iid, source))
         result = {"plan_id": plan_id, "action": snapshot["action"], "kind": kind,
                   "image_ids": snapshot["image_ids"], "count": len(snapshot["image_ids"]), "state": "succeeded"}
+        if snapshot["action"] == "alias":
+            result["aliases"] = names.aliases(conn,kind,snapshot["entity_id"])
         conn.execute("UPDATE entity_edit_plans SET result=? WHERE id=?", (json.dumps(result), plan_id))
     return result

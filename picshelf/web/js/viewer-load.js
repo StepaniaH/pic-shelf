@@ -18,6 +18,48 @@ export class ViewerLoader {
   }
 }
 
+// Share in-flight decodes as well as finished images. The cache belongs to one
+// open viewer; authorization is still checked before publishing each frame.
+export class PreviewCache {
+  constructor({limit = 3, decode = decodeImage} = {}) {
+    this.limit = limit;
+    this.decode = decode;
+    this.entries = new Map();
+  }
+  load(url, signal) {
+    if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+    let entry = this.entries.get(url);
+    this.entries.delete(url);
+    if (!entry) {
+      const controller = new AbortController();
+      entry = {controller};
+      entry.promise = this.decode(url, controller.signal).catch(error => {
+        if (this.entries.get(url) === entry) this.entries.delete(url);
+        throw error;
+      });
+    }
+    this.entries.set(url, entry);
+    while (this.entries.size > this.limit) {
+      const oldest = this.entries.keys().next().value;
+      this.entries.get(oldest).controller.abort();
+      this.entries.delete(oldest);
+    }
+    if (!signal) return entry.promise;
+    return new Promise((resolve, reject) => {
+      const abort = () => reject(new DOMException("Aborted", "AbortError"));
+      signal.addEventListener("abort", abort, {once:true});
+      entry.promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    });
+  }
+  warm(urls) {
+    for (const url of new Set(urls)) this.load(url).catch(() => {});
+  }
+  clear() {
+    for (const entry of this.entries.values()) entry.controller.abort();
+    this.entries.clear();
+  }
+}
+
 export function decodeImage(url, signal, timeout = 20000) {
   return new Promise((resolve, reject) => {
     const image = new Image();

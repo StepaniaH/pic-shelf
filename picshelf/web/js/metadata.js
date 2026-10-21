@@ -5,18 +5,20 @@ import {formatTimestamp} from "./format.js";
 
 const ORIGINS = {manual: "人工填写", imported: "导入记录", extracted: "提取结果", suggested: "待确认建议"};
 
+export function workflowHtml(image) {
+  if (!image.metadata) return "";
+  const done = image.metadata.workflow.state === "done";
+  return `<section class="workflow-row"><span class="pill">${t(done ? "已整理" : "待整理")}</span>
+    <button class="btn small" data-workflow="${done ? "inbox" : "done"}">${t(done ? "标记为待整理" : "标记为已整理")}</button></section>`;
+}
+
 export function metadataHtml(image) {
   const data = image.metadata;
   if (!data) return "";
-  const done = data.workflow.state === "done";
-  return `<section><h3>${t("我的整理状态")}</h3>
-    <p>${done ? t("已整理") : t("待整理")} <button class="btn small" data-workflow="${done ? "inbox" : "done"}">${done ? t("标记为待整理") : t("标记为已整理")}</button></p>
-    <p class="muted">${t("整理状态不会改变评分、收藏或文件缺失状态。")}</p>
-    </section><section><h3>${t("来源记录")}</h3>
+  return `<details data-section="sources"><summary>${t("来源记录")} · ${data.sources.length}</summary>
     ${data.sources.map(record => `<div class="comment"><p>${t(ORIGINS[record.origin] || record.origin)} · ${escapeHtml(record.original_filename || "—")}</p>
       ${record.url ? `<p>${escapeHtml(record.url)}</p>` : ""}${record.note ? `<p>${escapeHtml(record.note)}</p>` : ""}
       <p class="muted">${t("收纳时间")} ${formatTimestamp(record.collected_at)}<br>${t("创作时间")} ${formatTimestamp(record.created_time)}</p></div>`).join("") || `<p class="muted">${t("尚无来源记录")}</p>`}
-    <p class="muted">${t("来源记录不代表使用许可；不会自动访问来源地址。")}</p>
     ${image.metadata_editable ? `<form data-source-form>
       <label>${t("原始文件名")}<input name="original_filename" maxlength="1000"></label>
       <label>${t("来源地址")}<input name="url" type="url" maxlength="4096"></label>
@@ -24,11 +26,11 @@ export function metadataHtml(image) {
       <label>${t("收纳时间（含时区，可选）")}<input name="collected_at" placeholder="2026-10-10T12:00:00+08:00"></label>
       <label>${t("创作时间（含时区，可选）")}<input name="created_time" placeholder="2026-10-10T12:00:00+08:00"></label>
       <button class="btn small" type="submit">${t("添加来源记录")}</button>
-    </form>` : ""}</section>
-    <section><h3>${t("标签来源与确认")}</h3>
+    </form>` : ""}</details>
+    <details data-section="claims"><summary>${t("标签来源与确认")}</summary>
     ${data.tag_claims.map(claim => `<p>${escapeHtml(claim.name)} · ${t(ORIGINS[claim.origin] || claim.origin)} · ${claim.retired_at ? t("已移除") : claim.confirmed ? t("已确认") : t("待确认")}
       ${image.metadata_editable && !claim.confirmed && !claim.retired_at ? `<button class="btn small" data-confirm-claim="${claim.id}">${t("确认标签")}</button>` : ""}</p>`).join("") || `<p class="muted">${t("（无）")}</p>`}
-    </section>`;
+    </details>`;
 }
 
 export function bindMetadata(panel, image, refresh, write = api) {

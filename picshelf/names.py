@@ -23,6 +23,11 @@ def match_key(value: str | None) -> str:
     return value
 
 
+def contains_pattern(value: str) -> str:
+    value = match_key(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{value}%"
+
+
 def find(conn, kind: str, value: str) -> list[int]:
     if kind not in ("tag", "artist"):
         raise ValueError(t("名称类型必须是 tag 或 artist"))

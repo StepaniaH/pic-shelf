@@ -19,7 +19,24 @@ def run(python, root):
         if success:
             assert result.returncode == 0, (args,result.stdout,result.stderr)
         return result
-    probe = subprocess.run([str(python),'-c', 'import json,picshelf;from pathlib import Path;print(json.dumps({"version":picshelf.__version__,"module":picshelf.__file__,"static":(Path(picshelf.__file__).parent/"web/js/viewer.js").is_file()}))'],cwd=root,env=env,text=True,capture_output=True,check=True)
+    probe_code = '''
+import json
+from pathlib import Path
+import picshelf
+from picshelf.db import SCHEMA_VERSION
+
+web = Path(picshelf.__file__).parent / 'web'
+required = ('index.html', 'css/app.css', 'js/app.js', 'js/viewer.js', 'js/theme.js',
+            'js/appearance.js', 'js/importer.js', 'js/import-files.js', 'favicon.ico',
+            'icons/favicon-32.png', 'icons/apple-touch-icon.png', 'site.webmanifest')
+manifest = json.loads((web / 'site.webmanifest').read_text())
+static = all((web / name).is_file() for name in required)
+static = static and all((web / icon['src']).is_file() for icon in manifest['icons'])
+print(json.dumps({'version': picshelf.__version__, 'module': picshelf.__file__,
+                  'schema': SCHEMA_VERSION, 'static': static}))
+'''
+    probe = subprocess.run([str(python), '-c', probe_code], cwd=root, env=env,
+                           text=True, capture_output=True, check=True)
     info=json.loads(probe.stdout)
     assert Path(info['module']).is_relative_to(python.parent.parent) and info['static'] and info['version']=='0.0.1'
     assert command('init',success=False).returncode == 1  # Installed defaults never write site-packages.
@@ -77,7 +94,7 @@ def run(python, root):
     assert upgraded['items'][0]['id']==31 and upgraded['items'][0]['my_rating']==0
     with sqlite3.connect(upgrade/'picshelf.db') as conn:
         upgraded_schema=int(conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0])
-        assert upgraded_schema==14
+        assert upgraded_schema==info['schema']
         assert {name:list(conn.execute(f'SELECT * FROM {name}')) for name in before}==before
     snapshots=list((upgrade/'migration-backups').glob('*.db'))
     assert len(snapshots)==1 and snapshots[0].stat().st_mode & 0o077==0

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Choose images or folders, drag them into collection dialogs, or browse approved
+  server folders. Create managed libraries without entering a storage path.
+- Add light, dark and system appearance modes, nine color palettes, and application
+  icons. Share menu styling across native dropdowns while retaining keyboard controls.
+- Keep large image grids bounded and preload adjacent slideshow previews. Page
+  collection pickers and task histories without loading full journals.
 - Preserve fixed import previews and recover file operations after cancellation
   or interruption. Scan, import, rebuild and large metadata batches support
   persistent local background jobs.

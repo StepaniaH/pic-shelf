@@ -38,7 +38,7 @@ def stats(conn: Db, user: User):
 class LibraryBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
-    root_path: str
+    root_path: str | None = None
     description: str | None = None
     mode: Literal["indexed", "managed"] | None = None
     default_import_mode: Literal["hardlink", "copy", "move"] = "hardlink"
@@ -53,19 +53,24 @@ class LibraryPatch(BaseModel):
 
 
 @router.get("/libraries")
-def list_libraries(conn: Db, user: User):
-    return libsvc.list_libraries(conn, auth.visible_library_ids(conn, user))
+def list_libraries(conn: Db, user: User, access: Literal["view", "edit", "manage"] = "view"):
+    return libsvc.list_libraries(conn, auth.visible_library_ids(conn, user, minimum=access))
 
 
 @router.post("/libraries")
-def create_library(body: LibraryBody, conn: Db, user: User):
+def create_library(body: LibraryBody, request: Request, conn: Db, user: User):
     AccessContext(user["id"]).require_capability(conn, "admin")
-    if not Path(body.root_path).expanduser().is_absolute():
+    automatic = body.mode == 'managed' and not (body.root_path or '').strip()
+    if not automatic and (not body.root_path or not Path(body.root_path).expanduser().is_absolute()):
         raise ServiceError("library_path_invalid", t("请填写服务端的绝对目录路径"),
-                           next_step=t("浏览器本地文件不会自动上传；容器内请使用挂载后的容器路径"))
+                           next_step=t("请填写服务器上的绝对路径；容器部署请使用挂载后的路径"))
     try:
-        lib_id = libsvc.create_library(conn, body.name, body.root_path, body.description,
-                                      mode=body.mode, default_import_mode=body.default_import_mode)
+        if automatic:
+            lib_id = libsvc.create_managed_library(conn, request.app.state.cfg, body.name, body.description,
+                                                   default_import_mode=body.default_import_mode)
+        else:
+            lib_id = libsvc.create_library(conn, body.name, body.root_path, body.description,
+                                          mode=body.mode, default_import_mode=body.default_import_mode)
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=409, detail=t("库名已存在：{v0}", v0=body.name))
     except ValueError as exc:
@@ -146,11 +151,15 @@ class IdList(BaseModel):
 
 
 @router.get("/albums")
-def list_albums(conn: Db, user: User, library_id: Identifier | None = None, kind: str | None = None):
-    allowed = auth.visible_library_ids(conn, user)
+def list_albums(conn: Db, user: User, library_id: Identifier | None = None, kind: str | None = None,
+                q: str | None = Query(None,max_length=300),limit: int | None = Query(None,ge=1,le=500),
+                offset: Offset = 0,access: Literal["view","edit"] = "view"):
+    if access == "edit" and not auth.has_cap(conn,user,"tag_edit"): return []
+    allowed = auth.visible_library_ids(conn, user, minimum=access)
     if library_id is not None:
         ensure_library_access(conn, user, library_id)
-    return ops.list_albums(conn, library_id=library_id, allowed_library_ids=allowed, kind=kind)
+    return ops.list_albums(conn, library_id=library_id, allowed_library_ids=allowed, kind=kind,
+                           q=q,limit=limit,offset=offset,for_edit=access == "edit")
 
 
 @router.post("/albums")
@@ -175,6 +184,12 @@ def get_album(album_id: Identifier, conn: Db, user: User):
         raise HTTPException(status_code=404, detail=t("专辑不存在"))
     if album["library_id"] is not None:
         ensure_library_access(conn, user, album["library_id"])
+    try:
+        AccessContext(user["id"]).require_album(conn,album_id,"edit")
+        album["can_edit"] = True
+    except ServiceError as exc:
+        if exc.status != 403: raise
+        album["can_edit"] = False
     return album
 
 
@@ -352,8 +367,10 @@ class TagPatch(BaseModel):
 
 
 @router.get("/tags")
-def list_tags(conn: Db, user: User, q: str | None = None, limit: int = Query(50,ge=1,le=500)):
-    return ops.list_tags(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
+def list_tags(conn: Db, user: User, q: str | None = Query(None, max_length=300),
+              limit: int = Query(50,ge=1,le=500), offset: Offset = 0):
+    return ops.list_tags(conn, q=q, limit=limit, offset=offset,
+                         allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
 @router.post("/tags")
@@ -398,8 +415,10 @@ class ArtistPatch(BaseModel):
 
 
 @router.get("/artists")
-def list_artists(conn: Db, user: User, q: str | None = None, limit: int = Query(100,ge=1,le=500)):
-    return ops.list_artists(conn, q=q, limit=limit, allowed_library_ids=auth.visible_library_ids(conn, user))
+def list_artists(conn: Db, user: User, q: str | None = Query(None, max_length=300),
+                 limit: int = Query(100,ge=1,le=500), offset: Offset = 0):
+    return ops.list_artists(conn, q=q, limit=limit, offset=offset,
+                            allowed_library_ids=auth.visible_library_ids(conn, user))
 
 
 @router.post("/artists")

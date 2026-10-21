@@ -30,6 +30,50 @@ def tagged(conn,name):
     return {row[0] for row in conn.execute("SELECT it.image_id FROM image_tags it JOIN tags t ON t.id=it.tag_id WHERE t.name=?",(name,))}
 
 
+def test_preview_bulk_reads_keep_order_provenance_and_field_versions(catalog):
+    with db.open_db(catalog.cfg.db_path) as conn:
+        access = editor(conn,catalog)
+        ids = [catalog.images[key] for key in ("n08", "n04", "n01", "n12")]
+        ops.add_tags(conn, ids[0], ["Provenance"], catalog.users["curator"])
+        ops.set_rating(conn, ids[1], access.user_id, 0)
+        actions = [{"kind":"tags_remove", "names":["Provenance"]}, {"kind":"rating", "value":3},
+                   {"kind":"favorite", "value":True}, {"kind":"workflow", "value":"done"},
+                   {"kind":"artist_add", "artist_id":ops.create_artist(conn, "Snapshot artist")["id"]},
+                   {"kind":"album_add", "album_id":ops.create_album(conn, "Snapshot album",catalog.libraries["north"])["id"]}]
+        for action in actions:
+            expected = [(iid,batches._value(conn,iid,action,access.user_id),batches._version(conn,iid,action,access.user_id)) for iid in ids]
+            preview = batches.preview(conn,access,action,image_ids=ids)
+            assert [(row["image_id"],row["before_value"],row["before_version"]) for row in preview["items"]] == expected
+            summary = batches.get(conn,access,preview["id"],include_items=False)
+            assert "items" not in summary and "offset" not in summary
+            assert summary["counts"] == preview["counts"]
+            assert summary["total"] == 4
+
+
+def test_large_preview_queries_are_bounded_and_status_omits_journal(conn, library, admin):
+    from tests.datasets import metadata_rows
+    rows = list(metadata_rows(2000,library["id"]))
+    fields = list(rows[0])
+    conn.executemany(f"INSERT INTO images({','.join(fields)}) VALUES({','.join('?' for _ in fields)})",
+                     [list(row.values()) for row in rows])
+    conn.commit()
+    access = AccessContext(admin["id"])
+    statements = []
+    conn.set_trace_callback(statements.append)
+    preview = batches.preview(conn,access,{"kind":"tags_add","names":["Grouped"]},query={"library_id":library["id"],"sort":"path"})
+    conn.set_trace_callback(None)
+    assert preview["total"] == 2000
+    # Reads grow with bounded groups of IDs, rather than several queries per image.
+    reads = [sql for sql in statements if sql.lstrip().upper().startswith(("SELECT", "WITH"))]
+    assert len(reads) < 60
+    statements.clear(); conn.set_trace_callback(statements.append)
+    summary = batches.get(conn,access,preview["id"],include_items=False)
+    conn.set_trace_callback(None)
+    assert len(json.dumps(summary)) < 1500
+    assert not any("before_value" in sql for sql in statements)
+    assert [item["image_id"] for item in batches.get(conn,access,preview["id"],offset=1990)["items"]] == list(range(1991,2001))
+
+
 def test_selected_ids_are_fixed_retry_is_idempotent_and_undo_restores_relations(catalog):
     selected = [catalog.images[key] for key in ("n01","n05","n12")]
     files = file_inventory(catalog.roots)
@@ -341,3 +385,45 @@ def test_invalid_nested_batch_actions_are_client_errors_without_writes(catalog):
             batches.preview(conn, AccessContext(catalog.users['curator']), {'kind': 'favorite', 'value': True}, image_ids=[2**63])
         assert conn.execute('SELECT COUNT(*) FROM metadata_batches').fetchone()[0] == 0
         assert metadata_snapshot(conn) == before
+
+
+def test_history_pages_only_batches_whose_libraries_are_still_visible(catalog):
+    with db.open_db(catalog.cfg.db_path) as conn:
+        access = AccessContext(catalog.users['reader'])
+        gid = conn.execute('SELECT group_id FROM user_groups WHERE user_id=?', (access.user_id,)).fetchone()[0]
+        conn.execute("INSERT INTO library_grants VALUES(?,?,'view')", (gid, catalog.libraries['south']))
+        conn.commit()
+        action = {'kind': 'workflow', 'value': 'done'}
+        visible = [batches.preview(conn, access, action, image_ids=[catalog.images['n01']])['id'] for _ in range(3)]
+        hidden = [batches.preview(conn, access, action, image_ids=[catalog.images['s01']])['id'] for _ in range(4)]
+        mixed = batches.preview(conn, access, action, image_ids=[catalog.images['n01'], catalog.images['s01']])['id']
+        conn.execute('DELETE FROM library_grants WHERE group_id=? AND library_id=?', (gid, catalog.libraries['south']))
+        conn.commit()
+        first = batches.list_batches(conn, access, limit=2)
+        assert [item['id'] for item in first['items']] == visible[::-1][:2]
+        assert first['next_offset'] == 2
+        last = batches.list_batches(conn, access, offset=first['next_offset'], limit=2)
+        assert [item['id'] for item in last['items']] == visible[:1]
+        assert last['next_offset'] is None
+        admin = AccessContext(catalog.users['curator'])
+        assert {item['id'] for item in batches.list_batches(conn, admin)['items']} == set(visible + hidden + [mixed])
+        assert batches.list_batches(conn, AccessContext(catalog.users['outsider']))['items'] == []
+        conn.execute('DELETE FROM library_grants WHERE group_id=?', (gid,))
+        conn.commit()
+        assert batches.list_batches(conn, access)['items'] == []
+
+
+def test_history_pagination_has_a_stable_order_when_timestamps_match(catalog):
+    with db.open_db(catalog.cfg.db_path) as conn:
+        access = AccessContext(catalog.users['reader'])
+        ids = [batches.preview(conn, access, {'kind': 'workflow', 'value': 'done'},
+                               image_ids=[catalog.images['n01']])['id'] for _ in range(5)]
+        conn.execute('UPDATE metadata_batches SET created_at=?', ('2026-01-01T00:00:00+00:00',))
+        conn.commit()
+        actual = []
+        offset = 0
+        while offset is not None:
+            result = batches.list_batches(conn, access, limit=2, offset=offset)
+            actual.extend(item['id'] for item in result['items'])
+            offset = result['next_offset']
+        assert actual == sorted(ids, reverse=True)

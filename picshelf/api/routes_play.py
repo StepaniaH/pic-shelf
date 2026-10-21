@@ -33,6 +33,7 @@ class PlayBody(BaseModel):
     size: str = 'fit'
     captions: StrictBool = True
     seed: StrictInt | None = Field(default=None,ge=0,le=play.MAX_SEED)
+    start_image_id: BodyIdentifier | None = None
 
 
 class RequestKey(BaseModel):
@@ -68,12 +69,22 @@ def _session_or_404(conn,token,user,*,check_scope=True):
 
 
 def _attach_image(conn,result,user):
-    result=dict(result);result['image']=None
+    result=dict(result);result['image']=None;result['next_image']=None
+    allowed=auth.visible_library_ids(conn,user)
     if result.get('image_id') is not None:
-        detail=search.get_image(conn,result['image_id'],user['id'],auth.visible_library_ids(conn,user))
+        detail=search.get_image(conn,result['image_id'],user['id'],allowed)
         if detail:result['image']=serialize_image(detail)
         else:
             result['image_id']=None;result['unavailable']='image_unavailable'
+    position=result['cursor']+1
+    if position>=result['total']:
+        # These modes choose a new queue at the next cycle boundary.
+        position=0 if result['loop'] and result['order'] not in ('shuffle_each_round','sample') else -1
+    row=conn.execute('SELECT i.id,i.library_id,i.sha256,i.derivative_version FROM play_items p '
+        'JOIN images i ON i.id=p.image_id WHERE p.session_id=? AND p.position=? AND i.missing=0',
+        (result['session_id'],position)).fetchone()
+    if row and (allowed is None or row['library_id'] in allowed):
+        result['next_image']=serialize_image(dict(row))
     return result
 
 
@@ -83,7 +94,8 @@ def _state(conn,session,user):
 
 @router.post('/play/sessions')
 def create_session(body: PlayBody,conn: Db,user: User):
-    result=play.create_for_user(conn,AccessContext(user['id']),body.model_dump(exclude_none=True))
+    result=play.create_for_user(conn,AccessContext(user['id']),body.model_dump(exclude_none=True,exclude={'start_image_id'}),
+                                start_image_id=body.start_image_id)
     return _attach_image(conn,result,user)
 
 

@@ -1,12 +1,18 @@
 // 视图：首页 / 专辑 / 艺术家 / 标签 / 收藏 / 搜索 / 库 / 深链
-import { api, mediaUrl, imageMediaUrl, imagesQuery } from "./api.js";
+import { api, mediaUrl, imageMediaUrl } from "./api.js";
 import { state, escapeHtml, navigate, toast, can, uiConfirm, refreshChrome } from "./app.js";
 import { openViewer } from "./viewer.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
-import { jobKey, watchJob } from "./jobs.js";
+import { jobKey, scanSummary, watchJob } from "./jobs.js";
 import { externalUrl } from "./format.js";
 import {attachBatchControls} from "./batches.js";
+import {Source} from "./source.js";
+import {ImageGrid} from "./image-grid.js";
+import {editAlbum, editTag} from "./catalog-ui.js";
+import {openImport} from "./importer.js";
+import {openLibraryForm} from "./libraries.js";
+export {Source} from "./source.js";
 
 export function fmtSize(n) {
   if (!n && n !== 0) return "—";
@@ -21,144 +27,133 @@ export const SORTS = [
   ["rating", t("按我的评分")], ["avg", t("按平均分")], ["random", t("随机")],
 ];
 
-// ---------------------------------------------------------------- 数据源
-
-export class Source {
-  constructor(title, context = {}, { q = "", sort = "newest", filters = {}, emptyText = t("没有图片") } = {}) {
-    this.title = title;
-    this.context = context;
-    this.q = q;
-    this.sort = sort;
-    this.filters = filters;
-    this.emptyText = emptyText;
-    this.items = [];
-    this.total = 0;
-    this.onChange = null;
-    this.revision = 0;
-    this.pending = null;
-    this.errors = [];
-  }
-  async load(reset = true) {
-    const revision = reset ? ++this.revision : this.revision;
-    const offset = reset ? 0 : this.items.length;
-    if (reset) this.pending = null;
-    const res = await api("/images?" + imagesQuery({
-      q: this.q, sort: this.sort, limit: 120, offset, ...this.filters,
-    }));
-    if (revision !== this.revision) return res;
-    this.total = this.ruleErrors?.length ? 0 : res.total;
-    this.errors = [...new Set([...(this.ruleErrors || []), ...(res.errors || [])])];
-    if (reset) this.items = [];
-    if(!this.ruleErrors?.length)this.items.push(...res.items);
-    return res;
-  }
-  async loadMore() {
-    if (this.loadedAll) return false;
-    if (!this.pending) {
-      const pending = this.load(false).finally(() => { if (this.pending === pending) this.pending = null; });
-      this.pending = pending;
-    }
-    await this.pending;
-    return true;
-  }
-  get loadedAll() { return this.sort === "random" || this.items.length >= this.total; }
-}
-
 // ---------------------------------------------------------------- 网格
+const gridDisposers = new WeakMap();
+const sourceLoads = new WeakMap();
 
-function cardHtml(item) {
+function cardHtml(item, {showLibrary = false} = {}) {
   const rating = item.my_rating >= 0 ? `<span class="badge rated">${item.my_rating}</span>` : "";
   const fav = item.favorite ? `<span class="badge fav">★</span>` : "";
-  return `<figure class="card" data-id="${item.id}" tabindex="0" aria-label="${escapeHtml(item.filename)}">
+  const library = showLibrary ? item.library_name : "";
+  const path = library ? `${library} / ${item.rel_path}` : item.rel_path || item.filename;
+  return `<figure class="card" data-id="${item.id}" tabindex="0" aria-label="${escapeHtml(library ? path : item.filename)}">
     <label class="card-selection"><input type="checkbox" data-select-image="${item.id}" aria-label="${escapeHtml(t("选择 {name}",{name:item.filename}))}"></label>
     ${item.missing?`<div class="missing-image">${t("文件缺失")}</div>`:`<img src="${imageMediaUrl("thumb", item)}" alt="" loading="lazy" decoding="async">`}
-    <figcaption><span class="fname" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
+    <figcaption><span class="card-labels"><span class="fname" title="${escapeHtml(path)}">${escapeHtml(item.filename)}</span>
+      ${library ? `<span class="library-name" title="${escapeHtml(library)}">${escapeHtml(library)}</span>` : ""}</span>
     <span class="badges">${rating}${fav}</span></figcaption></figure>`;
 }
 
+export async function loadSource(view, source) {
+  if (!view.isConnected) return false;
+  const previous = gridDisposers.get(view);
+  sourceLoads.get(view)?.source.cancel();
+  const pending = {source};
+  sourceLoads.set(view, pending);
+  state.dispose = () => { previous?.(); source.cancel(); };
+  try {
+    const result = await source.load(true);
+    return Boolean(result) && view.isConnected && sourceLoads.get(view) === pending;
+  } finally {
+    if (sourceLoads.get(view) === pending) sourceLoads.delete(view);
+  }
+}
+
+async function refreshAfterImport(view, source) {
+  if (!view.isConnected) return;
+  try {
+    const result = await (source.nextOffset < 120 ? source.load(true) : source.refresh({afterWrite:true}));
+    if (result && view.isConnected) source.onChange?.();
+  } catch (error) { toast(error.message, 'error'); }
+}
+
 export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
-  view.innerHTML = t("\n    <div class=\"page-head\">\n      <h1>{v0}</h1><span class=\"count\" id=\"count\">共 {v1} 张</span>\n      <div class=\"toolbar\">\n        {headerExtraHtml}\n        <label class=\"muted\">排序\n          <select id=\"sort-select\">{v2}\n          </select>\n        </label>\n        <button class=\"btn primary\" id=\"slideshow-btn\">幻灯片</button>\n      </div>\n    </div>\n    <div class=\"grid\" id=\"grid\"></div>\n    <div class=\"load-more\"><button class=\"btn\" id=\"more-btn\" hidden>加载更多</button></div>", {v0: escapeHtml(source.title), v1: source.total, headerExtraHtml: headerExtraHtml, v2: SORTS.map(([v, l]) =>
-            `<option value="${v}" ${v === source.sort ? "selected" : ""}>${l}</option>`).join("")});
+  if (!view.isConnected) { source.cancel(); return () => {}; }
+  gridDisposers.get(view)?.();
+  view.innerHTML = `
+    <div class="page-head">
+      <h1>${escapeHtml(source.title)}</h1><span class="count" id="count"></span>
+      <div class="toolbar">${headerExtraHtml}<button class="btn primary" id="slideshow-btn">▷ ${t("幻灯片")}</button></div>
+    </div>
+    <div class="collection-toolbar">
+      <label class="muted">${t("排序")} <select id="sort-select" aria-label="${t("排序")}">${SORTS.map(([value, label]) =>
+        `<option value="${value}" ${value === source.sort ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+      <label class="muted">${t("图片密度")} <select id="density-select" aria-label="${t("图片密度")}"><option value="comfortable">${t("宽松")}</option><option value="compact">${t("紧凑")}</option></select></label>
+      <button class="btn small" data-selection-toggle aria-expanded="false">${t("选择")}</button>
+      <button class="btn small" data-refresh>${t("刷新")}</button>
+    </div>
+    <p class="error" data-grid-errors role="status" hidden></p>
+    <div class="grid" id="grid" role="list" aria-label="${escapeHtml(source.title)}"></div>
+    <div class="load-more"><button class="btn" id="more-btn" hidden>${t("加载更多")}</button></div>`;
 
   const grid = view.querySelector("#grid");
-  const densityLabel = document.createElement("label");
-  densityLabel.className = "muted";
-  densityLabel.innerHTML = `${t("图片密度")} <select id="density-select"><option value="comfortable">${t("宽松")}</option><option value="compact">${t("紧凑")}</option></select>`;
-  view.querySelector("#slideshow-btn").before(densityLabel);
-  const density = densityLabel.querySelector("select");
+  const density = view.querySelector("#density-select");
   let savedDensity;
-  try { savedDensity = localStorage.getItem("picshelf.grid-density"); } catch { /* optional preference */ }
+  try { savedDensity = localStorage.getItem("picshelf.grid-density"); } catch { /* Optional preference. */ }
   density.value = (source.display?.density || savedDensity) === "compact" ? "compact" : "comfortable";
   grid.classList.toggle("compact", density.value === "compact");
   density.onchange = () => {
     grid.classList.toggle("compact", density.value === "compact");
-    try { localStorage.setItem("picshelf.grid-density", density.value); } catch { /* browsing remains available */ }
+    renderer.dirty = true; renderer.render();
+    try { localStorage.setItem("picshelf.grid-density", density.value); } catch { /* Optional preference. */ }
   };
   const moreBtn = view.querySelector("#more-btn");
-  const warnings = document.createElement("p");
-  warnings.className = "error";
-  warnings.setAttribute("role", "status");
-  grid.before(warnings);
-  const paging=document.createElement("div");paging.className="form-row paging-policy";
-  const policy=document.createElement("span");policy.className="hint";
-  const refresh=document.createElement("button");refresh.className="btn";refresh.textContent=t("刷新结果");
-  paging.append(policy,refresh);grid.before(paging);
+  const warnings = view.querySelector("[data-grid-errors]");
+  const refresh = view.querySelector("[data-refresh]");
   let updateSelection = () => {};
-  const markup = new Map();
+  let showLibraries = false;
+  const renderer = new ImageGrid(grid, item => cardHtml(item, {showLibrary:showLibraries}), () => updateSelection());
+  let disposed = false, loading = false, autoFailed = false;
   const paint = () => {
-    if (!source.items.length) {
-      grid.innerHTML = source.errors.length ? "" : `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
-      markup.clear();
-    } else {
-      const existing = new Map([...grid.querySelectorAll(".card")].map(card => [Number(card.dataset.id), card]));
-      grid.querySelectorAll(":scope > .empty").forEach(el => el.remove());
-      let previous = null;
-      for (const item of source.items) {
-        const html = cardHtml(item);
-        let card = existing.get(item.id);
-        existing.delete(item.id);
-        if (!card || markup.get(item.id) !== html) {
-          const template = document.createElement("template");
-          template.innerHTML = html;
-          const fresh = template.content.firstElementChild;
-          if (card) card.replaceWith(fresh);
-          card = fresh;
-          markup.set(item.id, html);
-        }
-        const next = previous ? previous.nextElementSibling : grid.firstElementChild;
-        if (card !== next) grid.insertBefore(card, next);
-        previous = card;
-      }
-      for (const [id, card] of existing) { card.remove(); markup.delete(id); }
-    }
+    if (disposed || !view.isConnected) return;
+    showLibraries = source.items.some(item => item.library_id !== source.items[0]?.library_id);
+    renderer.update(source.items, source.total);
+    if (!source.items.length && !source.errors.length) grid.innerHTML = `<p class="empty">${escapeHtml(source.emptyText)}</p>`;
     view.querySelector("#count").textContent = t("共 {v0} 张", {v0: source.total});
     moreBtn.hidden = source.loadedAll || source.sort === "random";
-    policy.textContent=t(source.sort==="random"?"随机发现每次重新抽样；播放会另建稳定队列。":"列表按当前目录分页；扫描或编辑改变结果后，请刷新再继续浏览。");
     warnings.textContent = source.errors.join(" ");
     warnings.hidden = !source.errors.length;
     view.querySelector("#slideshow-btn").disabled = source.total === 0;
     updateSelection();
   };
-  updateSelection = attachBatchControls(view,source,grid,async()=>{await source.load(true);paint();});
+  updateSelection = attachBatchControls(view,source,grid,async()=>{await source.refresh({afterWrite:true});paint();});
   paint();
-  refresh.onclick=async()=>{refresh.disabled=true;try{await source.load(true);paint();}catch(e){toast(e.message,"error");}finally{refresh.disabled=false;}};
+  refresh.onclick=async()=>{refresh.disabled=true;try{await source.refresh();paint();}catch(e){toast(e.message,"error");}finally{refresh.disabled=false;}};
 
-  moreBtn.addEventListener("click", async () => {
-    moreBtn.disabled = true;
-    try { await source.loadMore(); paint(); }
-    catch (error) { toast(error.message, "error"); }
-    finally { moreBtn.disabled = false; }
-  });
+  async function more(manual = false) {
+    if (disposed || loading || source.loadedAll || (!manual && (autoFailed || document.body.classList.contains("dialog-open")))) return;
+    loading = true; moreBtn.disabled = true;
+    moreBtn.textContent = t("加载中…");
+    try { await source.loadMore(); autoFailed = false; if (!disposed) paint(); }
+    catch (error) { autoFailed = true; if (!disposed) toast(error.message, "error"); }
+    finally {
+      loading = false; moreBtn.disabled = false;
+      moreBtn.textContent = t(autoFailed ? "重试" : "加载更多");
+    }
+  }
+  moreBtn.addEventListener("click", () => more(true));
+  const pages = new IntersectionObserver(entries => {
+    if (entries.some(entry => entry.isIntersecting)) more();
+  }, {rootMargin:"600px"});
+  pages.observe(moreBtn.parentElement);
   view.querySelector("#sort-select").addEventListener("change", async (e) => {
+    const previous = source.sort;
     source.sort = e.target.value;
     e.target.disabled = true;
-    try { await source.load(true); paint(); }
-    catch (error) { toast(error.message, "error"); }
+    try {
+      if (!await loadSource(view, source)) return; autoFailed = false; paint();
+      if (view.isConnected) {
+        const [path, query] = location.hash.split("?");
+        const params = new URLSearchParams(query); params.set("sort", source.sort);
+        history.replaceState(null, "", `${path}?${params}`);
+      }
+    }
+    catch (error) { source.sort = previous; e.target.value = previous; toast(error.message, "error"); }
     finally { e.target.disabled = false; }
   });
   view.querySelector("#slideshow-btn").addEventListener("click", () => openSlideshow(source));
   grid.addEventListener("click", (e) => {
-    if(e.target.closest("input,label"))return;
+    if(e.target.closest("input,label,button"))return;
     const card = e.target.closest(".card");
     if (!card) return;
     const idx = source.items.findIndex((i) => String(i.id) === card.dataset.id);
@@ -168,7 +163,7 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
   });
   grid.addEventListener("keydown", (e) => {
     if(e.isComposing || e.keyCode === 229 || e.ctrlKey || e.altKey || e.metaKey)return;
-    if(e.target.closest("input,label"))return;
+    if(e.target.closest("input,label,button"))return;
     if (e.key !== "Enter" && e.key !== " ") return;
     e.preventDefault();
     const card = e.target.closest(".card");
@@ -178,151 +173,248 @@ export function renderGridInto(view, source, { headerExtraHtml = "" } = {}) {
     if (idx >= 0) openViewer(source, idx);
   });
 
-  source.onChange = () => paint(); // 查看器里改动后（评分/收藏）刷新徽标
+  source.onChange = paint;
+  const dispose = () => { disposed = true; source.cancel(); pages.disconnect(); renderer.dispose(); };
+  gridDisposers.set(view, dispose);
+  if (view.isConnected) state.dispose = dispose;
   return paint;
 }
 
 // ---------------------------------------------------------------- 登录
 
 export function renderLogin(view) {
-  view.innerHTML = t("\n    <div class=\"login-wrap\">\n      <h1>登录 Pic Shelf</h1>\n      <form id=\"login-form\">\n        <input type=\"text\" id=\"login-username\" placeholder=\"用户名\" autocomplete=\"username\" autofocus>\n        <input type=\"password\" id=\"login-password\" placeholder=\"密码\" autocomplete=\"current-password\">\n        <button class=\"btn primary\" type=\"submit\" style=\"width:100%\">登录</button>\n      </form>\n      <p class=\"hint\">没有账号？现有用户可在「管理 → 用户」中创建，或在服务器上运行 <code>picshelf users add 名字</code>。</p>\n    </div>");
-  view.querySelector("#login-username").setAttribute("aria-label", t("用户名"));
-  view.querySelector("#login-password").setAttribute("aria-label", t("密码"));
-  view.querySelectorAll("input").forEach(input => input.required = true);
-  view.querySelector("#login-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
+  document.body.classList.add("signed-out");
+  view.innerHTML = `<div class="login-wrap"><h1>${t("登录 Pic Shelf")}</h1>
+    <form id="login-form">
+      <label>${t("用户名")}<input type="text" id="login-username" autocomplete="username" required></label>
+      <label>${t("密码")}<input type="password" id="login-password" autocomplete="current-password" required></label>
+      <p class="error" id="login-error" role="alert" hidden></p>
+      <button class="btn primary" type="submit">${t("登录")}</button>
+    </form><p class="hint">${t("需要账号？请联系管理员。")}</p></div>`;
+  const form = view.querySelector("#login-form");
+  const button = form.querySelector("button");
+  const error = view.querySelector("#login-error");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (button.disabled) return;
+    button.disabled = true;
+    error.hidden = true;
     try {
-      const data = await api("/auth/login", {
-        method: "POST",
-        body: {
-          username: view.querySelector("#login-username").value.trim(),
-          password: view.querySelector("#login-password").value,
-        },
-      });
-      state.user = data.user;
+      const result = await api("/auth/login", {method:"POST", body:{
+        username: form.querySelector("#login-username").value.trim(),
+        password: form.querySelector("#login-password").value,
+      }});
+      state.user = result.user;
       refreshChrome();
       navigate("#/home");
-    } catch (err) {
-      toast(err.message || t("登录失败"), "error");
-    }
+    } catch (failure) {
+      error.textContent = failure.message || t("登录失败");
+      error.hidden = false;
+    } finally { button.disabled = false; }
   });
 }
 
 // ---------------------------------------------------------------- 首页
 
 export async function renderHome(view) {
-  const [stats, libs] = await Promise.all([api("/stats"), api("/libraries")]);
-  const tiles = [
-    [t("图片"), stats.images, fmtSize(stats.size_bytes)],
-    [t("库"), stats.libraries, ""], [t("专辑"), stats.albums, ""],
-    [t("艺术家"), stats.artists, ""], [t("标签"), stats.tags, ""],
-    ...(state.user.is_admin ? [[t("用户"), stats.users, ""]] : []),
-  ];
-  view.innerHTML = t("\n    <div class=\"page-head\"><h1>首页</h1></div>\n    <div class=\"tiles\">{v0}\n    </div>\n    <h2>库</h2>\n    <div class=\"lib-cards\">{v1}\n    </div>", {v0: tiles.map(([t, n, sub]) =>
-      `<div class="tile"><b>${n}</b><span>${t}${sub ? " · " + sub : ""}</span></div>`).join(""), v1: libs.map((l) => `
-      <div class="lib-card">
-        <h3>${escapeHtml(l.name)}</h3>
-        <p class="muted">${escapeHtml(l.root_path)}</p>
-        <p class="muted">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</p>
-        <div class="form-row">
-          <a class="btn small primary" href="#/library/${l.id}">${t("浏览")}</a>
-          <a class="btn small" href="#/albums?library_id=${l.id}">${t("专辑")}</a>
-          ${state.user.is_admin ? `<button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>` : ""}
-        </div>
-      </div>`).join("") || `<p class="empty">${t("还没有库。管理员可在「管理 → 库」中注册目录。")}</p>`});
-  if (state.user.is_admin && stats.images === 0) {
-    const onboarding = document.createElement("section");
-    onboarding.className = "lib-card";
-    onboarding.innerHTML = `<h2>${t("开始使用图片库")}</h2>
-      <p>${t("先注册服务端目录。只索引库扫描原目录；托管库先预演导入，确认后再执行。")}</p>
-      <div class="form-row"><a class="btn primary" href="#/admin?tab=libraries">${t("创建库")}</a>
-      <a class="btn" href="#/admin?tab=import">${t("预演导入")}</a>
-      <a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a></div>`;
-    view.querySelector(".page-head").after(onboarding);
+  const [libs, recent] = await Promise.all([api("/libraries"), api("/images?limit=24&sort=newest")]);
+  const source = new Source(t("最近添加"));
+  source.items = recent.items;
+  source.total = recent.total;
+  source.nextOffset = recent.items.length;
+  const count = t("共 {v0} 张", {v0: recent.total});
+  view.innerHTML = `<div class="page-head"><h1>${t("图库")}</h1><span class="count">${count}</span>
+    ${state.user.is_admin ? `<div class="toolbar"><button class="btn" data-new-library>${t("添加图库")}</button>${libs.length ? `<button class="btn" data-import>${t("导入图片")}</button>` : ''}</div>` : ""}</div>
+    ${!libs.length ? `<section class="empty-state"><h2>${t("还没有图库")}</h2>
+      ${state.user.is_admin ? "" : `<p>${t("还没有可访问的图库，请联系管理员。")}</p>`}
+      ${state.user.is_admin ? `<button class="btn primary" data-new-library>${t("添加图库")}</button>` : ""}</section>` : `
+    <div class="lib-cards home-libraries">${libs.map(lib => `<article class="lib-card">
+      <a class="library-title" href="#/library/${lib.id}">
+        <span class="library-cover">${lib.cover_image_id ? `<img src="${mediaUrl("thumb", lib.cover_image_id)}" alt="" loading="lazy">` : ""}</span>
+        <h3>${escapeHtml(lib.name)}</h3></a>
+      <p class="library-count">${t("共 {v0} 张", {v0: lib.image_count})}</p>
+    </article>`).join("")}</div>
+    <div class="section-head"><h2>${t("最近添加")}</h2><a href="#/search">${t("查看全部")} →</a></div>
+    <div class="grid" id="grid">${recent.items.map(item => cardHtml(item, {showLibrary:libs.length > 1})).join("") || `<p class="empty">${t("暂无图片")}</p>`}</div>`}`;
+  const grid = view.querySelector("#grid");
+  const refresh = () => {
+    const opener = document.activeElement?.matches('[data-new-library]') ? '[data-new-library]' : '[data-import]';
+    if (view.isConnected) renderHome(view).then(() => view.querySelector(opener)?.focus({preventScroll:true})).catch(error => toast(error.message, 'error'));
+  };
+  view.querySelectorAll('[data-new-library]').forEach(button => { button.onclick = () => openLibraryForm('managed', refresh); });
+  view.querySelector('[data-import]')?.addEventListener('click', () => openImport({onClose:refresh}));
+  if (!grid) return;
+  grid.querySelectorAll(".card-selection").forEach(label => label.remove());
+  function open(event) {
+    const card = event.target.closest(".card");
+    if (!card) return;
+    card.focus();
+    openViewer(source, source.items.findIndex(item => String(item.id) === card.dataset.id));
   }
-  view.querySelectorAll("[data-scan]").forEach((btn) => btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.textContent = t("扫描中…");
-    try {
-      const queued = await api(`/libraries/${btn.dataset.scan}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
-      const target = document.createElement("div");
-      btn.parentElement.after(target);
-      const status = await watchJob(queued.id, target);
-      if (!status || !btn.isConnected) return;
-      const stats2 = status.result;
-      if (!stats2) return;
-      toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: stats2.added, v1: stats2.updated, v2: stats2.moved, v3: stats2.missing}), "ok");
-      await renderHome(view);
-    } catch (e) {
-      toast(e.message, "error");
-      btn.disabled = false;
-      btn.textContent = t("扫描更新");
-    }
-  }));
+  grid.onclick = open;
+  grid.onkeydown = event => {
+    if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault(); open(event);
+  };
+  source.onChange = () => {
+    grid.querySelectorAll(".card").forEach(card => {
+      const item = source.items.find(item => String(item.id) === card.dataset.id);
+      if (!item) return;
+      card.querySelector(".badges").innerHTML = `${item.my_rating >= 0 ? `<span class="badge rated">${item.my_rating}</span>` : ""}${item.favorite ? '<span class="badge fav">★</span>' : ""}`;
+    });
+  };
+  if (view.isConnected) state.dispose = () => source.cancel();
 }
 
 // ---------------------------------------------------------------- 专辑
 
 export async function renderAlbums(view, params) {
   const libraryId = params.get("library_id");
-  const albums = await api("/albums" + (libraryId ? `?library_id=${libraryId}` : ""));
-  const groups = {};
-  for (const a of albums) {
-    const key = a.library_name || t("（无库）");
-    (groups[key] = groups[key] || []).push(a);
+  view.innerHTML = `<div class="page-head"><h1>${t("专辑")}</h1><span class="count" data-list-count></span>
+    ${can("tag_edit") ? `<div class="toolbar"><button class="btn primary" data-new-album>${t("新建专辑")}</button></div>` : ""}</div>
+    <form class="collection-toolbar" role="search"><input type="search" maxlength="300" aria-label="${t("搜索名称")}" placeholder="${t("搜索名称")}">
+      <select aria-label="${t("专辑类型")}"><option value="">${t("全部专辑")}</option><option value="manual">${t("手工专辑")}</option><option value="folder">${t("文件夹")}</option></select></form>
+    <p class="error" data-list-error role="status" hidden></p><button class="btn" data-retry hidden>${t("重试")}</button>
+    <div class="grid album-grid"></div><div class="load-more"><button class="btn" data-more hidden>${t("加载更多")}</button></div>`;
+  const input = view.querySelector("input"), kind = view.querySelector("select"), grid = view.querySelector(".grid");
+  const more = view.querySelector("[data-more]"), error = view.querySelector("[data-list-error]"), retry = view.querySelector("[data-retry]");
+  let offset = 0, revision = 0, controller, timer, lastReset = true;
+  async function load(reset = false) {
+    lastReset = reset;
+    if (reset) { controller?.abort(); revision++; }
+    const requested = revision;
+    controller = new AbortController(); more.disabled = true; error.hidden = true; retry.hidden = true;
+    try {
+      const query = new URLSearchParams({q:input.value.trim(), limit:101, offset:reset ? 0 : offset});
+      if (kind.value) query.set("kind", kind.value);
+      if (libraryId) query.set("library_id", libraryId);
+      const values = await api(`/albums?${query}`, {signal:controller.signal});
+      if (requested !== revision || !view.isConnected) return;
+      if (reset) { grid.replaceChildren(); offset = 0; }
+      grid.insertAdjacentHTML("beforeend", values.slice(0, 100).map(album => `<a class="card" href="#/album/${album.id}">
+        ${album.preview_image_id ? `<img loading="lazy" decoding="async" src="${mediaUrl("thumb", album.preview_image_id)}" alt="">` : `<div class="empty-cover">${t("空专辑")}</div>`}
+        <div class="album-caption"><strong>${escapeHtml(album.name)}</strong><span class="muted">${escapeHtml(album.library_name || "")} · ${t("共 {v0} 张", {v0:album.image_count})}</span>
+        <span class="badge">${t(album.kind === "manual" ? "手工" : "文件夹")}</span></div></a>`).join(""));
+      offset += Math.min(100, values.length); more.hidden = values.length <= 100;
+      view.querySelector("[data-list-count]").textContent = t("已显示 {n} 项", {n:offset});
+      if (!offset) grid.innerHTML = `<p class="empty">${t(input.value || kind.value ? "没有匹配的结果" : "还没有专辑。")}</p>`;
+    } catch (failure) {
+      if (failure.name === "AbortError" || requested !== revision) return;
+      error.textContent = failure.message; error.hidden = false; retry.hidden = false;
+    } finally { if (requested === revision) more.disabled = false; }
   }
-  view.innerHTML = t("\n    <div class=\"page-head\"><h1>专辑</h1><span class=\"count\">共 {v0} 个</span></div>\n    {v1}", {v0: albums.length, v1: Object.entries(groups).map(([lib, list]) => `
-      <h2>${escapeHtml(lib)}</h2>
-      <div class="grid">${list.map((a) => `
-        <figure class="card" data-href="#/album/${a.id}" tabindex="0">
-          ${a.cover_image_id
-            ? `<img loading="lazy" src="${mediaUrl("thumb", a.cover_image_id)}" alt="${escapeHtml(a.name)}">`
-            : `<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:var(--muted)">${t("空专辑")}</div>`}
-          <figcaption><span class="fname">${escapeHtml(a.name)}</span>
-            <span class="badge">${a.kind === "manual" ? t("手工") : t("文件夹")} ${a.image_count}</span></figcaption>
-        </figure>`).join("")}</div>`).join("") || `<p class="empty">${t("还没有专辑。")}</p>`});
-  view.querySelectorAll("[data-href]").forEach((el) => {
-    el.addEventListener("click", () => navigate(el.dataset.href));
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate(el.dataset.href); });
-  });
+  input.oninput = () => { clearTimeout(timer); controller?.abort(); revision++; more.disabled = true; timer = setTimeout(() => load(true), 200); };
+  kind.onchange = () => { clearTimeout(timer); load(true); };
+  view.querySelector("form").onsubmit = event => { event.preventDefault(); clearTimeout(timer); load(true); };
+  more.onclick = () => load(); retry.onclick = () => load(lastReset);
+  const create = view.querySelector("[data-new-album]");
+  if (create) create.onclick = async () => {
+    create.disabled = true;
+    try { const album = await editAlbum(null, libraryId); if (album && view.isConnected) await load(true); }
+    catch (failure) { toast(failure.message, "error"); } finally { create.disabled = false; }
+  };
+  state.dispose = () => { clearTimeout(timer); controller?.abort(); revision++; };
+  await load(true);
 }
 
-export async function renderAlbum(view, albumId) {
+export async function renderAlbum(view, albumId, sort = "path") {
   const album = await api(`/albums/${albumId}`);
+  const library = album.library_id ? await api(`/libraries/${album.library_id}`) : null;
+  const canImport = album.kind === 'manual' && album.can_edit && library && library.mode !== 'indexed' && (state.user.is_admin || library.access === 'manage');
   const source = new Source(
     t("专辑：{v0}", {v0: album.name}),
     { album_id: albumId, title: t("专辑：{v0}", {v0: album.name}) },
-    { sort: "path", filters: { album_id: albumId } },
+    { sort, filters: { album_id: albumId } },
   );
-  await source.load(true);
+  if (!await loadSource(view, source)) return;
   const extra = [
     album.category ? `<span class="pill">${escapeHtml(album.category)}</span>` : "",
     t("<a class=\"btn small\" href=\"#/albums\">← 全部专辑</a>"),
+    album.can_edit ? `<button class="btn small" data-edit-album>${t("编辑专辑")}</button>` : "",
+    canImport ? `<button class="btn small" data-import>${t("导入图片")}</button>` : '',
   ].join(" ");
   renderGridInto(view, source, { headerExtraHtml: extra });
+  view.querySelector('[data-import]')?.addEventListener('click', () => openImport({libraryId:album.library_id, albumId:album.id, targetName:album.name,
+    onClose:() => refreshAfterImport(view, source)}));
+  if (album.description) {
+    const description = document.createElement("p"); description.className = "album-description"; description.textContent = album.description;
+    view.querySelector(".page-head").after(description);
+  }
+  const edit = view.querySelector("[data-edit-album]");
+  if (edit) edit.onclick = async () => {
+    try { if (await editAlbum(album) && view.isConnected) { source.cancel(); await renderAlbum(view, albumId, source.sort); } }
+    catch (failure) { toast(failure.message, "error"); }
+  };
+  if (album.kind === "manual" && album.can_edit && !source.total) {
+    const empty = view.querySelector(".empty");
+    if (empty) empty.innerHTML = `<p>${t("到图库选择图片，再用批量整理加入此专辑。")}</p><a class="btn" href="${album.library_id ? `#/library/${album.library_id}` : "#/search"}">${t("浏览图片")}</a>`;
+  }
 }
 
 // ---------------------------------------------------------------- 艺术家
 
-export async function renderArtists(view) {
-  const artists = await api("/artists?limit=300");
-  view.innerHTML = t("\n    <div class=\"page-head\"><h1>艺术家</h1><span class=\"count\">共 {v0} 位</span></div>\n    <div class=\"chips\">{v1}\n    </div>", {v0: artists.length, v1: artists.map((a) => `
-      <span class="chip" data-href="#/artist/${a.id}" tabindex="0">${escapeHtml(a.name)}
-      <span class="n">${a.image_count}</span></span>`).join("") || `<p class="empty">${t("还没有艺术家。可在查看器里给图片关联，或运行 <code>picshelf artist add 名字</code>。")}</p>`});
-  view.querySelectorAll("[data-href]").forEach((el) => {
-    el.addEventListener("click", () => navigate(el.dataset.href));
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate(el.dataset.href); });
-  });
+async function renderCatalogList(view, kind) {
+  const artists = kind === "artists";
+  view.innerHTML = `<div class="page-head"><h1>${t(artists ? "艺术家" : "标签")}</h1><span class="count" data-list-count></span></div>
+    <form class="entity-search" role="search"><input type="search" maxlength="300" aria-label="${t("搜索名称")}" placeholder="${t("搜索名称")}"></form>
+    <p class="error" data-list-error role="status" hidden></p><button class="btn small" data-list-retry hidden>${t("重试")}</button><div class="entity-list"></div>
+    <div class="load-more"><button class="btn" data-list-more hidden>${t("加载更多")}</button></div>`;
+  const input = view.querySelector("input");
+  const list = view.querySelector(".entity-list");
+  const more = view.querySelector("[data-list-more]");
+  const error = view.querySelector("[data-list-error]");
+  const retry = view.querySelector("[data-list-retry]");
+  let offset = 0, revision = 0, controller, timer, lastReset = true;
+  async function load(reset = false) {
+    lastReset = reset;
+    if (reset) { controller?.abort(); revision++; }
+    const requested = revision;
+    controller = new AbortController();
+    more.disabled = true;
+    error.hidden = true;
+    retry.hidden = true;
+    try {
+      const values = await api(`/${kind}?` + new URLSearchParams({q:input.value.trim(), limit:101, offset:reset ? 0 : offset}), {signal:controller.signal});
+      if (requested !== revision || !view.isConnected) return;
+      if (reset) { list.replaceChildren(); offset = 0; }
+      const rows = values.slice(0, 100);
+      list.insertAdjacentHTML("beforeend", rows.map(item => `<div class="entity-row"><a class="entity-link" href="${artists ? `#/artist/${item.id}` : `#/tag/${encodeURIComponent(item.name)}`}">
+        <span class="entity-symbol" aria-hidden="true">${artists ? escapeHtml(item.name.slice(0, 1)) : "#"}</span>
+        <span class="entity-name">${escapeHtml(item.name)}</span><span class="muted">${t("共 {v0} 张", {v0:artists ? item.image_count : item.count})}</span></a>
+        ${!artists && can("admin") ? `<button class="btn small" data-edit-tag="${item.id}" aria-label="${escapeHtml(t("管理标签：{name}", {name:item.name}))}">${t("管理标签")}</button>` : ""}</div>`).join(""));
+      for (const item of rows) {
+        const edit = list.querySelector(`[data-edit-tag="${item.id}"]`);
+        if (edit) edit.onclick = async () => { if (await editTag(item) && view.isConnected) await load(true); };
+      }
+      offset += rows.length;
+      view.querySelector("[data-list-count]").textContent = t("已显示 {n} 项", {n:offset});
+      more.hidden = values.length <= 100;
+      if (!offset) list.innerHTML = `<p class="empty">${t(input.value ? "没有匹配的结果" : artists ? "在图片详情中关联艺术家。" : "在图片详情中添加标签。")}</p>`;
+    } catch (failure) {
+      if (failure.name === "AbortError" || requested !== revision) return;
+      error.textContent = failure.message;
+      error.hidden = false;
+      retry.hidden = false;
+    } finally { if (requested === revision) more.disabled = false; }
+  }
+  more.onclick = () => load();
+  retry.onclick = () => load(lastReset);
+  input.oninput = () => { clearTimeout(timer); controller?.abort(); revision++; more.disabled = true; retry.hidden = true; timer = setTimeout(() => load(true), 200); };
+  view.querySelector("form").onsubmit = event => { event.preventDefault(); clearTimeout(timer); load(true); };
+  state.dispose = () => { clearTimeout(timer); controller?.abort(); revision++; };
+  await load(true);
 }
 
-export async function renderArtist(view, artistId) {
+export async function renderArtists(view) { await renderCatalogList(view, "artists"); }
+
+export async function renderArtist(view, artistId, sort = "newest") {
   const artist = await api(`/artists/${artistId}`);
   const source = new Source(
     t("艺术家：{v0}", {v0: artist.name}),
     { artist_id: artistId, title: t("艺术家：{v0}", {v0: artist.name}) },
-    { filters: { artist_id: artistId } },
+    { sort, filters: { artist_id: artistId } },
   );
-  await source.load(true);
+  if (!await loadSource(view, source)) return;
   const links = (artist.links || []).map(externalUrl).filter(Boolean).map((u) =>
     `<a class="pill" href="${escapeHtml(u)}" target="_blank" rel="noopener noreferrer">${escapeHtml(u.replace(/^https?:\/\//, ""))}</a>`).join(" ");
   const extra = [artist.aliases ? t("<span class=\"pill\">别名：{v0}</span>", {v0: escapeHtml(artist.aliases)}) : "", links,
@@ -332,113 +424,120 @@ export async function renderArtist(view, artistId) {
 
 // ---------------------------------------------------------------- 标签
 
-export async function renderTags(view) {
-  const tags = await api("/tags?limit=500");
-  view.innerHTML = t("\n    <div class=\"page-head\"><h1>标签</h1><span class=\"count\">共 {v0} 个</span></div>\n    <div class=\"chips\">{v1}\n    </div>", {v0: tags.length, v1: tags.map((t) => `
-      <span class="chip" data-tag="${escapeHtml(t.name)}" tabindex="0">${escapeHtml(t.name)}
-      <span class="n">${t.count}</span></span>`).join("") || `<p class="empty">${t("还没有标签。打开图片在其信息面板里添加。")}</p>`});
-  view.querySelectorAll("[data-tag]").forEach((el) => {
-    el.addEventListener("click", () => navigate("#/tag/" + encodeURIComponent(el.dataset.tag)));
-    el.addEventListener("keydown", (e) => { if (e.key === "Enter") navigate("#/tag/" + encodeURIComponent(el.dataset.tag)); });
-  });
-}
+export async function renderTags(view) { await renderCatalogList(view, "tags"); }
 
-export async function renderTag(view, name) {
+export async function renderTag(view, name, sort = "newest") {
   const source = new Source(t("标签：{name}", {name: name}), { tag: name, title: t("标签：{name}", {name: name}) },
-    { filters: { tag: name }, sort: "newest" });
-  await source.load(true);
+    { filters: { tag: name }, sort });
+  if (!await loadSource(view, source)) return;
   renderGridInto(view, source, { headerExtraHtml: t("<a class=\"btn small\" href=\"#/tags\">← 全部标签</a>") });
 }
 
 // ---------------------------------------------------------------- 收藏 / 搜索 / 库
 
-export async function renderFavorites(view) {
+export async function renderFavorites(view, sort = "newest") {
   const source = new Source(t("我的收藏"), { favorites: true, title: t("我的收藏") },
-    { filters: { favorites: "true" } });
-  await source.load(true);
+    { sort, filters: { favorites: "true" } });
+  if (!await loadSource(view, source)) return;
   renderGridInto(view, source, {});
 }
 
-export async function renderInbox(view) {
-  const source=new Source(t("待整理"),{title:t("待整理")},{filters:{workflow:"inbox"}});
-  await source.load(true);
+export async function renderInbox(view, sort = "newest") {
+  const source=new Source(t("待整理"),{title:t("待整理")},{sort,filters:{workflow:"inbox"}});
+  if (!await loadSource(view, source)) return;
   renderGridInto(view,source);
 }
 
 export async function renderSearch(view, q, sort="newest") {
-  const source = new Source(q ? t("搜索：{q}", {q: q}) : t("搜索（全部）"), { title: t("搜索：{q}", {q: q}), q }, { q, sort });
-  await source.load(true);
-  renderGridInto(view, source, { headerExtraHtml: t("<a class=\"btn small\" href=\"#/home\">← 首页</a>") });
+  const title = t(q ? "搜索结果" : "全部图片");
+  const source = new Source(title, {title, q}, {q, sort});
+  if (!await loadSource(view, source)) return;
+  renderGridInto(view, source);
   const {attachSearchTools}=await import("./queries.js");
   await attachSearchTools(view,source);
 }
 
-export async function renderLibrary(view, libraryId) {
+export async function renderLibrary(view, libraryId, jobId = null, sort = "newest") {
   const lib = await api(`/libraries/${libraryId}`);
   const source = new Source(t("库：{v0}", {v0: lib.name}), { library_id: libraryId, title: t("库：{v0}", {v0: lib.name}) },
-    { filters: { library_id: libraryId } });
-  await source.load(true);
+    { sort, filters: { library_id: libraryId } });
+  if (!await loadSource(view, source)) return;
   const canManage = state.user.is_admin || lib.access === "manage";
   const scanBtn = canManage ? t("<button class=\"btn small\" id=\"lib-scan\">扫描更新</button>") : "";
   const last = lib.last_scan
     ? t("<span class=\"muted\">上次扫描：{v0}</span>", {v0: escapeHtml((lib.last_scan.finished_at || lib.last_scan.started_at || "").replace("T", " ").slice(0, 16))})
     : "";
   renderGridInto(view, source, {
-    headerExtraHtml: t("<a class=\"btn small\" href=\"#/albums?library_id={libraryId}\">专辑</a>{scanBtn}{last}", {libraryId: libraryId, scanBtn: scanBtn, last: last}),
+    headerExtraHtml: `<a class="btn small" href="#/albums?library_id=${libraryId}">${t("专辑")}</a>
+      ${canManage && lib.mode !== "indexed" ? `<button class="btn small" data-import>${t("导入图片")}</button>` : ""}${scanBtn}`,
   });
-  if (canManage && source.total === 0) {
-    const next = document.createElement("div");
-    next.className = "form-row";
-    next.innerHTML = `${lib.mode !== "indexed" ? `<a class="btn" href="#/admin?tab=import&library=${libraryId}">${t("预演导入")}</a>` : ""}
-      <a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a>`;
-    view.querySelector(".page-head").after(next);
+  view.querySelector('[data-import]')?.addEventListener('click', () => openImport({libraryId,
+    onClose:() => refreshAfterImport(view, source)}));
+  if (last && canManage) {
+    const caption = document.createElement("p");
+    caption.className = "collection-caption";
+    caption.innerHTML = last;
+    view.querySelector(".page-head").after(caption);
   }
   const scanEl = view.querySelector("#lib-scan");
-  if (scanEl) scanEl.addEventListener("click", async () => {
+  let scanTarget, scanRequestKey;
+  async function scan(existingJob = null) {
     scanEl.disabled = true;
     scanEl.textContent = t("扫描中…");
     try {
-      const queued = await api(`/libraries/${libraryId}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
-      const target = document.createElement("div");
-      view.querySelector(".page-head").after(target);
-      const status = await watchJob(queued.id, target);
+      const queued = existingJob ? {id:existingJob} : await api(`/libraries/${libraryId}/scan-jobs`, { method: "POST", body: {request_key: scanRequestKey ||= jobKey()} });
+      scanRequestKey = null;
+      if (!scanEl.isConnected) return;
+      history.replaceState(null, "", `#/library/${libraryId}?sort=${source.sort}&job=${encodeURIComponent(queued.id)}`);
+      if (!scanTarget) {
+        scanTarget = document.createElement("div");
+        view.querySelector(".page-head").after(scanTarget);
+      }
+      const status = await watchJob(queued.id, scanTarget);
       if (!status || !scanEl.isConnected) return;
-      const s = status.result;
-      if (!s) return;
-      toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: s.added, v1: s.updated, v2: s.moved, v3: s.missing}), "ok");
-      await renderLibrary(view, libraryId);
+      if (status.state === "succeeded") {
+        toast(status.result ? scanSummary(status.result) : t("扫描完成"), "ok");
+        history.replaceState(null, "", `#/library/${libraryId}?sort=${source.sort}`);
+        await renderLibrary(view, libraryId, null, source.sort);
+      }
     } catch (e) {
-      toast(e.message, "error");
+      if (scanEl.isConnected) toast(e.message, "error");
+    } finally {
       scanEl.disabled = false;
       scanEl.textContent = t("扫描更新");
     }
-  });
+  }
+  if (scanEl) scanEl.addEventListener("click", () => scan());
+  if (scanEl && jobId && view.isConnected) await scan(jobId);
 }
 
 // ---------------------------------------------------------------- 深链（直接打开某张图）
 
-export async function renderDeepLink(view, imageId, params) {
+export async function renderDeepLink(view, imageId, params, sort) {
   let source;
   if (params.get("album")) {
     const album = await api(`/albums/${params.get("album")}`);
     source = new Source(t("专辑：{v0}", {v0: album.name}), { album_id: album.id, title: t("专辑：{v0}", {v0: album.name}) },
-      { sort: "path", filters: { album_id: album.id } });
+      { sort:sort || "path", filters: { album_id: album.id } });
   } else if (params.get("artist")) {
     const artist = await api(`/artists/${params.get("artist")}`);
     source = new Source(t("艺术家：{v0}", {v0: artist.name}), { artist_id: artist.id, title: t("艺术家：{v0}", {v0: artist.name}) },
-      { filters: { artist_id: artist.id } });
+      { sort:sort || "newest", filters: { artist_id: artist.id } });
   } else if (params.get("tag")) {
     source = new Source(t("标签：{v0}", {v0: params.get("tag")}), { tag: params.get("tag") },
-      { filters: { tag: params.get("tag") } });
+      { sort:sort || "newest", filters: { tag: params.get("tag") } });
   } else {
-    source = new Source(t("全部图片"), {}, {});
+    source = new Source(t("全部图片"), {}, {sort:sort || "newest"});
   }
-  await source.load(true);
-  for (let i = 0; i < 5; i++) {
-    if (source.items.some((x) => String(x.id) === String(imageId))) break;
-    if (!(await source.loadMore())) break;
-  }
-  renderGridInto(view, source, {});
-  const idx = source.items.findIndex((x) => String(x.id) === String(imageId));
-  if (idx >= 0) openViewer(source, idx);
+  const image = await api(`/images/${imageId}`);
+  if (!await loadSource(view, source)) return;
+  const index = source.items.findIndex(item => item.id === imageId);
+  if (!view.isConnected) return;
+  renderGridInto(view, source);
+  if (index < 0) {
+    // Keep the collection behind a direct link, without paging through it to find one image.
+    const direct = new Source(image.filename);
+    Object.assign(direct, {items:[image], total:1, nextOffset:1, singleImage:true});
+    openViewer(direct, 0);
+  } else openViewer(source, index);
 }

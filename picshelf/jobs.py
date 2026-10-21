@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 
-from . import db, import_plans, indexer
+from . import auth, db, import_plans, indexer
 from .access import AccessContext
 from .coordination import library_write_lock, operation_lock, worker_slot
 from .errors import ServiceError
@@ -34,7 +34,8 @@ def _error(code, message, *, status=409, retryable=False):
 
 def _authorized(conn, access, job_id):
     user = access.user(conn)
-    row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+    row = conn.execute("SELECT jobs.*,libraries.name AS library_name FROM jobs JOIN libraries ON libraries.id=jobs.library_id "
+                       "WHERE jobs.id=?", (job_id,)).fetchone()
     if row is None or (row["created_by"] != access.user_id and not user["is_admin"] and not access.local_admin):
         raise _error("job_not_found", "任务不存在或无权访问", status=404)
     access.require_library(conn, row["library_id"], "manage")
@@ -124,17 +125,19 @@ def _config(conn):
     return Config(Path(path).parent)
 
 
-def get_job(conn, access, job_id, *, offset=0, limit=100):
+def get_job(conn, access, job_id, *, offset=0, limit=100, include_items=True):
     _authorized(conn, access, job_id)
     reconcile(conn, _config(conn), job_id)
     row = _authorized(conn, access, job_id)
-    value = {key: row[key] for key in ("id", "kind", "library_id", "created_by", "state", "phase", "total",
+    value = {key: row[key] for key in ("id", "kind", "library_id", "library_name", "created_by", "state", "phase", "total",
                                       "completed", "succeeded", "failed", "attempt", "created_at", "updated_at",
                                       "started_at", "finished_at")}
     value["result"] = json.loads(row["result"]) if row["result"] else None
     value["phase_error_count"] = (value["result"] or {}).get("scan_error_count", 0)
     value["error"] = json.loads(row["error"]) if row["error"] else None
     value["plan_id"] = json.loads(row["params"])["input"]["plan_id"]
+    if not include_items:
+        return value
     offset, limit = max(0, offset), max(1, min(1000, limit))
     value["items"] = [dict(item) for item in conn.execute(
         "SELECT item_key,state,error_code,detail FROM job_items WHERE job_id=? ORDER BY item_key LIMIT ? OFFSET ?",
@@ -145,22 +148,22 @@ def get_job(conn, access, job_id, *, offset=0, limit=100):
     return value
 
 
-def list_jobs(conn, access, *, offset=0, limit=50):
+def list_jobs(conn, access, *, offset=0, limit=50, include_items=True):
     user = access.user(conn)
-    sql, args = "SELECT id,library_id FROM jobs", []
+    clauses, args = [], []
     if not user["is_admin"] and not access.local_admin:
-        sql += " WHERE created_by=?"
+        clauses.append("created_by=?")
         args.append(access.user_id)
-    visible = []
-    for row in conn.execute(sql + " ORDER BY created_at DESC,id DESC", args).fetchall():
-        try:
-            access.require_library(conn, row["library_id"], "manage")
-        except ServiceError:
-            continue
-        visible.append(row["id"])
+    allowed = None if access.local_admin else auth.visible_library_ids(conn, user, minimum="manage")
+    if allowed is not None:
+        clauses.append(f"library_id IN ({','.join('?' for _ in allowed)})" if allowed else "0=1")
+        args.extend(allowed)
     offset, limit = max(0, offset), max(1, min(100, limit))
-    return {"items": [get_job(conn, access, job_id, limit=1) for job_id in visible[offset:offset + limit]],
-            "offset": offset, "next_offset": offset + limit if offset + limit < len(visible) else None}
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    page = conn.execute("SELECT id FROM jobs" + where + " ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?",
+                        [*args, limit + 1, offset]).fetchall()
+    return {"items": [get_job(conn, access, row["id"], limit=1, include_items=include_items) for row in page[:limit]],
+            "offset": offset, "next_offset": offset + limit if len(page) > limit else None}
 
 
 @_catalog_write

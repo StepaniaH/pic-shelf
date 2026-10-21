@@ -205,7 +205,7 @@ def test_cli_import_flow(env):
     data = str(env["cfg"].data_dir)
     r = runner.invoke(main, ["--data", data, "import", str(env["src"]), "managed", "--mode", "hardlink"])
     assert r.exit_code == 0, r.output
-    assert "预演" in r.output and "未改动源文件或目标文件" in r.output
+    assert "导入预览" in r.output and "picshelf import-execute" in r.output
     assert list(env["libroot"].rglob("*.png")) == []  # 预演不动文件
 
     r = runner.invoke(main, ["--data", data, "import", str(env["src"]), "managed",

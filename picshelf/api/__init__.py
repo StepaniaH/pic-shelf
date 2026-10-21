@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from threading import BoundedSemaphore
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -100,7 +101,9 @@ def create_app(cfg: Config) -> FastAPI:
         try:
             if request.url.path.startswith("/api/"):
                 check_browser_request(request, cfg)
-                if request.method not in ("GET", "HEAD", "OPTIONS"):
+                upload_stream = (request.method == 'PUT' and
+                                 re.fullmatch(r'/api/v1/import/uploads/[0-9a-f]{32}/file', request.url.path))
+                if request.method not in ("GET", "HEAD", "OPTIONS") and not upload_stream:
                     body = bytearray()
                     async for chunk in request.stream():
                         body.extend(chunk)

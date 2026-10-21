@@ -275,16 +275,18 @@ def library_access(conn: sqlite3.Connection, user: sqlite3.Row, library_id: int)
     return best
 
 
-def visible_library_ids(conn: sqlite3.Connection, user: sqlite3.Row) -> list[int] | None:
+def visible_library_ids(conn: sqlite3.Connection, user: sqlite3.Row, *, minimum: str = "view") -> list[int] | None:
     """None 表示不受限（管理员）。"""
+    levels = {"view": ("view", "edit", "manage"), "edit": ("edit", "manage"), "manage": ("manage",)}[minimum]
     if user["is_admin"]:
         return None
     if not has_cap(conn, user, "view"):
         return []
     rows = conn.execute(
         "SELECT DISTINCT lg.library_id FROM library_grants lg "
-        "JOIN user_groups ug ON ug.group_id=lg.group_id WHERE ug.user_id=?",
-        (user["id"],),
+        "JOIN user_groups ug ON ug.group_id=lg.group_id WHERE ug.user_id=? "
+        f"AND lg.access IN ({','.join('?' for _ in levels)})",
+        (user["id"], *levels),
     ).fetchall()
     return [int(r["library_id"]) for r in rows]
 

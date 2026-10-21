@@ -1,9 +1,8 @@
 # Works and file versions
 
-An image remains a separate record even when another file represents the same
-work. Work relationships are manual. They do not merge ratings, tags, comments,
-notes or albums, hide rows in search, or delete files. Byte duplicates, perceptual
-similarity and work membership are separate concepts.
+A work groups files such as an original, crop and compressed copy. Each file
+keeps its own ratings, tags, notes and album memberships. Add relationships
+manually and choose a preferred file for viewing.
 
 ```sh
 picshelf works create 'A work' \
@@ -28,9 +27,8 @@ visible member. No hidden-member count, name or path is returned. Creating or
 editing associations requires `tag_edit` and edit access to every current and new
 member; a local relationship editor cannot change another library's group.
 
-The Web viewer's Work files section opens visible versions and labels the explicit
-preference. Viewing another version does not transfer the current file's rating.
-Every file request rechecks current permissions. CLI commands return JSON, and
+The viewer's **Work files** section opens each available version and marks the
+preferred one. CLI commands return JSON, and
 `works show --user <name>` reads through that user's view permissions.
 
 HTTP uses `POST /api/v1/works`, `GET /api/v1/works/{id}`,
@@ -56,8 +54,6 @@ HTTP provides `GET /works/{id}/pending` and
 `DELETE /works/{id}/pending/{image_uid}` under `/api/v1`.
 DELETE requests require `{"confirm":true}` after inspecting the relationship.
 
-This does not weaken original-file validation for selected images: missing or
-changed originals in the imported scope still block metadata import. Pending
-relationships cover separately exported scopes or unavailable referenced versions,
-not a way to discard ordinary image metadata. No pending reference grants file
-access, and inaccessible local targets remain unresolved.
+Metadata import still requires valid originals for its selected images. Pending
+relationships represent referenced versions that have not been imported or are
+not accessible to the current user.

@@ -1,11 +1,92 @@
-"""Media URL contracts independent of a browser process."""
+"""Frontend data, localization and interaction contracts without a browser."""
+import ast
+import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
 import pytest
 
 pytestmark = pytest.mark.module_contract
+
+
+def test_static_web_messages_have_english_translations():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for frontend module contracts")
+    root = Path(__file__).parents[1] / "picshelf/web"
+    keys = set()
+    literal = r'\bt\(\s*("(?:\\.|[^"\\])*"|\x27(?:\\.|[^\x27\\])*\x27)'
+    for path in (root / "js").glob("*.js"):
+        if path.name == "i18n.js":
+            continue
+        keys.update(ast.literal_eval(match[1]) for match in re.finditer(literal, path.read_text()))
+    keys.update(re.findall(r'data-i18n(?:-label|-placeholder)?="([^"]+)"', (root / "index.html").read_text()))
+    keys = sorted(key for key in keys if re.search('[\u4e00-\u9fff]', key))
+    script = """
+const {EN} = await import(process.argv[1]);
+const {readFileSync} = await import('node:fs');
+const {strict: assert} = await import('node:assert');
+const keys = JSON.parse(readFileSync(0, 'utf8'));
+const missing = keys.filter(key => !Object.hasOwn(EN, key) || !EN[key]);
+assert.deepEqual(missing, [], `Missing translations: ${missing.join(', ')}`);
+"""
+    result = subprocess.run([node, "--input-type=module", "-e", script, (root / "js/i18n.js").as_uri()],
+                            input=json.dumps(keys, ensure_ascii=False), capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_gallery_pagination_handles_live_overlap_empty_pages_and_superseded_reads():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for gallery data contracts")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/source.js").as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {Source} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const response = (ids, total) => new Response(JSON.stringify({items:ids.map(id=>({id})),total,errors:[]}));
+const requests = [];
+globalThis.fetch = async url => {
+  requests.push(new URL(url, 'http://example.test').searchParams.get('offset'));
+  return requests.length === 1 ? response([1,2,3], 6) : response([3,4,5], 6);
+};
+const source = new Source('Gallery');
+await source.load();
+await Promise.all([source.loadMore(), source.loadMore()]);
+assert.deepEqual(source.items.map(item=>item.id), [1,2,3,4,5]);
+assert.deepEqual(requests, ['0','3']);
+assert.equal(source.loadedAll, true);
+globalThis.fetch = async () => response([], 99);
+await source.load();
+assert.equal(source.loadedAll, true);
+assert.equal(await source.loadMore(), false);
+let release, calls=0;
+globalThis.fetch = async () => ++calls === 1 ? new Promise(resolve=>{release=resolve}) : response([77],1);
+const late = source.load();
+await source.load();
+release(response([66],1));
+await late;
+assert.deepEqual(source.items.map(item=>item.id),[77]);
+source.nextOffset = 133;
+let refreshedLimit;
+globalThis.fetch = async url => {
+  refreshedLimit = Number(new URL(url, 'http://example.test').searchParams.get('limit'));
+  return response([2,3],2);
+};
+await source.refresh();
+assert.equal(refreshedLimit,133);
+assert.deepEqual(source.items.map(item=>item.id),[2,3]);
+assert.equal(source.total,2);
+assert.equal(source.nextOffset,2);
+globalThis.fetch = async () => {throw new TypeError('offline')};
+await assert.rejects(source.load(), /connection/i);
+assert.deepEqual(source.items.map(item=>item.id),[2,3]);
+'''
+    result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
 
 
 def test_algorithm_rebuild_changes_gallery_cache_key_but_keeps_original_url():
@@ -191,5 +272,160 @@ selection.range(9,true,[{id:9}],true);
 assert.deepEqual([...selection.ids],[101,4,9]);
 '''
     result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_preview_cache_shares_decodes_retries_failures_and_bounds_retained_images():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is required for image loading contracts')
+    module = (Path(__file__).parents[1] / 'picshelf/web/js/viewer-load.js').as_uri()
+    script = r'''
+const {PreviewCache} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const requests = [];
+const cache = new PreviewCache({limit:3, decode:(url, signal) => new Promise((resolve, reject) => {
+  requests.push({url, resolve, reject, signal});
+  signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')));
+})});
+cache.warm(['next']);
+const controller = new AbortController();
+const cancelled = cache.load('next', controller.signal);
+controller.abort();
+await assert.rejects(cancelled, {name:'AbortError'});
+const foreground = cache.load('next');
+assert.equal(requests.length,1);
+requests[0].resolve({pixels:'next'});
+assert.deepEqual(await foreground,{pixels:'next'});
+assert.equal(requests[0].signal.aborted,false);
+cache.warm(['previous','later']);
+await cache.load('next');
+cache.warm(['last']);
+assert.equal(requests[1].signal.aborted,true);
+assert.equal(cache.entries.size,3);
+requests[3].reject(new Error('offline'));
+await Promise.resolve(); await Promise.resolve();
+const retry=cache.load('last');
+assert.equal(requests.length,5);
+requests[4].resolve({pixels:'last'}); await retry;
+cache.clear();
+assert.equal(cache.entries.size,0);
+assert.equal(requests[2].signal.aborted,true);
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_refresh_preserves_more_than_ten_thousand_images_and_is_atomic_on_failure():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is required for gallery contracts')
+    module = (Path(__file__).parents[1] / 'picshelf/web/js/source.js').as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {Source} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const source = new Source('Large gallery');
+source.items = [{id:'old'}]; source.nextOffset = 10120;
+const requests = [];
+let release;
+globalThis.fetch = async url => {
+  const p = new URL(url,'http://example.test').searchParams;
+  const offset = Number(p.get('offset')), limit=Number(p.get('limit'));
+  requests.push([offset,limit]);
+  if(offset) await new Promise(resolve=>{release=resolve});
+  return new Response(JSON.stringify({items:Array.from({length:limit},(_,n)=>({id:offset+n+1})),total:50000,errors:[]}));
+};
+const refresh = source.refresh();
+while(!release) await new Promise(resolve=>setTimeout(resolve,0));
+assert.deepEqual(source.items,[{id:'old'}]);
+release(); await refresh;
+assert.deepEqual(requests,[[0,10000],[10000,120]]);
+assert.equal(source.items.length,10120);
+assert.equal(source.items.at(-1).id,10120);
+const previous=source.items;
+globalThis.fetch = async url => {
+  const offset=Number(new URL(url,'http://example.test').searchParams.get('offset'));
+  if(offset) throw new Error('offline');
+  return new Response(JSON.stringify({items:Array.from({length:10000},(_,n)=>({id:n+2})),total:50000,errors:[]}));
+};
+await assert.rejects(source.refresh(), /connection/i);
+assert.equal(source.items,previous);
+assert.equal(source.nextOffset,10120);
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('interrupt', ['cancel', 'reset'])
+def test_pagination_waiting_for_refresh_cannot_restart_after_cancellation(interrupt):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is required for gallery contracts')
+    module = (Path(__file__).parents[1] / 'picshelf/web/js/source.js').as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {Source} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const response = id => new Response(JSON.stringify({items:[{id}],total:100,errors:[]}));
+const source = new Source('Gallery');
+globalThis.fetch = async () => response(1);
+await source.load();
+let requests = 0;
+globalThis.fetch = async (url, {signal}) => {
+  requests++;
+  if (requests > 1) return response(7);
+  return new Promise((resolve, reject) => signal.addEventListener('abort',
+    () => reject(new DOMException('Aborted', 'AbortError')), {once:true}));
+};
+const refresh = source.refresh(), more = source.loadMore();
+if (process.argv[2] === 'cancel') source.cancel();
+else await source.load();
+await refresh;
+assert.equal(await more, false);
+assert.equal(requests, process.argv[2] === 'cancel' ? 1 : 2);
+assert.deepEqual(source.items.map(item => item.id), [process.argv[2] === 'cancel' ? 1 : 7]);
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', script, module, interrupt],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('late_result', ['response', 'failure'])
+def test_refresh_after_write_replaces_reads_started_before_the_write(late_result):
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is required for gallery contracts')
+    module = (Path(__file__).parents[1] / 'picshelf/web/js/source.js').as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {Source} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const source = new Source('Gallery');
+let current = 0, reads = 0, release, oldSignal;
+globalThis.fetch = async (url, {signal}) => {
+  const captured = current;
+  if (++reads === 1) {
+    oldSignal = signal;
+    await new Promise(resolve => {release = resolve;});
+    if (process.argv[2] === 'failure') throw new Error('Late connection failure');
+  }
+  return new Response(JSON.stringify({items:[{id:1,my_rating:captured}],total:1,errors:[]}));
+};
+const before = source.refresh();
+assert.equal(source.refresh(), before);
+current = 8;
+await source.refresh({afterWrite:true});
+assert.equal(oldSignal.aborted, true);
+assert.equal(reads, 2);
+assert.equal(source.items[0].my_rating, 8);
+release();
+assert.equal(await before, null);
+assert.equal(source.items[0].my_rating, 8);
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', script, module, late_result],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr

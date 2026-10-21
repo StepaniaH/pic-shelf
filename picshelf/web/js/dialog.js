@@ -1,10 +1,16 @@
 // Shared focus and keyboard handling for nested dialogs, viewers and slideshows.
 const stack = [];
+const hasOpenSelector = CSS.supports("selector(select:open)");
 const focusable = 'a[href], button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])';
 
-export function isTopDialog(root) { return stack.at(-1) === root; }
+export function isTopDialog(root) { return stack.at(-1)?.root === root; }
 
-export function activateDialog(root, close) {
+// Authentication loss must also release background media, timers and focus locks.
+export function dismissDialogs() {
+  for (const entry of [...stack].reverse()) entry.dismiss();
+}
+
+export function activateDialog(root, close, {dismiss = close} = {}) {
   const opener = document.activeElement;
   const cardId = opener?.closest?.("[data-id]")?.dataset.id;
   const inert = new Map();
@@ -25,13 +31,19 @@ export function activateDialog(root, close) {
   root.setAttribute("role", "dialog");
   root.setAttribute("aria-modal", "true");
   root.tabIndex = -1;
-  stack.push(root);
+  const entry = {root, dismiss};
+  stack.push(entry);
   document.body.classList.add("dialog-open");
   const targets = () => [...root.querySelectorAll(focusable)]
     .filter(el => !el.disabled && !el.closest("[hidden], [inert]") && el.getClientRects().length);
   const focus = () => (targets()[0] || root).focus({ preventScroll: true });
   function onKey(event) {
     if (!isTopDialog(root) || event.isComposing || event.keyCode === 229) return;
+    // The picker is a layer within this dialog; Escape dismisses it first.
+    if (hasOpenSelector && root.querySelector('select:open')) {
+      if (event.key === "Escape") event.stopImmediatePropagation();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -54,7 +66,7 @@ export function activateDialog(root, close) {
     if (released) return;
     released = true;
     document.removeEventListener("keydown", onKey, true);
-    stack.splice(stack.indexOf(root), 1);
+    stack.splice(stack.indexOf(entry), 1);
     for (const [node, previous] of inert) node.inert = previous;
     if (!stack.length) document.body.classList.remove("dialog-open");
     const target = opener?.isConnected ? opener : cardId

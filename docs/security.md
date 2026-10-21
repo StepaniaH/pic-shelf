@@ -43,7 +43,7 @@ Local HTTP uses a non-Secure cookie so local login works. Direct HTTPS uses Secu
 
 The `picshelf serve` command ignores forwarded headers by default. If the deployment needs them, set `PICSHELF_TRUSTED_PROXIES` to a comma-separated list of specific proxy IP addresses or networks. A wildcard is rejected. The proxy must overwrite forwarded headers and prevent direct access to the upstream. If invoking Uvicorn directly, configure its proxy trust explicitly too. An arbitrary `X-Forwarded-Proto` or `X-Forwarded-Host` header does not establish trust. A wrong public-origin setting causes actionable origin errors instead of weakening checks.
 
-Five failed logins per account or thirty per client address within sixty seconds trigger a temporary limit with `Retry-After`. Counters are shared through SQLite; up to four concurrent password checks run per application process, so already-admitted attempts may finish after a threshold is reached. Trusted proxies affect which peer address is used. Usernames and peer addresses are stored only as keyed bucket identifiers. Password inputs are limited to 1024 characters and API mutation bodies to 1 MiB. Validation responses omit submitted values.
+Five failed logins per account or thirty per client address within sixty seconds trigger a temporary limit with `Retry-After`. Counters are shared through SQLite; up to four concurrent password checks run per application process, so already-admitted attempts may finish after a threshold is reached. Trusted proxies affect which peer address is used. Usernames and peer addresses are stored only as keyed bucket identifiers. Password inputs are limited to 1024 characters and ordinary API mutation bodies to 1 MiB. Browser image uploads use a separate bounded streaming endpoint, described below. Validation responses omit submitted values.
 
 ## Import sources
 
@@ -58,6 +58,25 @@ picshelf import-sources revoke <root-id>
 By default an approved root permits copy and hardlink imports. Add `--allow-move` only when delegated managers may remove successfully imported source files. The equivalent admin endpoints are `GET/POST /api/v1/import-sources` and `DELETE /api/v1/import-sources/{id}`; the POST body has `root_path` and optional `allow_move`.
 
 An approved root is shared by library managers, not assigned to an individual user. Approval records its canonical directory and filesystem identity. Preview and execution, including each file boundary, check that identity and the requested mode. Symlink escapes are rejected. Replacing/remounting a root requires a new explicit approval. Revoking approval stops future work; it does not undo files already imported. Server administrators and the local data directory owner retain explicit filesystem authority. This is not a sandbox against a hostile local process that already controls the filesystem.
+
+`GET /api/v1/import/sources` requires manage access to the selected library.
+Administrators creating a new library may omit `library_id` to browse sources
+before saving the library. Other accounts must specify a library they manage.
+Delegated managers can browse approved roots and their subfolders; parent
+navigation stops at the approval boundary. Hidden folders and symlinks are omitted.
+Administrators can also browse the server account's home and filesystem root.
+
+Browser-selected files are a separate source: the manager supplies bytes rather
+than access to a server path. Uploads are private to their creator and target
+library, including for administrators; every write and preview rechecks current
+manage access. Files are written with exclusive creation below an owned staging
+directory, with no client-supplied absolute paths. Raw file bodies require an
+accurate `Content-Length` and are bounded to 256 MiB each, 10,000 files and 2 GiB
+per upload; actual received bytes are checked as well. Four unfinished uploads
+are allowed per account. The usual session and browser-origin checks still apply.
+The normal importer checks hashes, destination names and filesystem identities.
+Upload import never removes originals from the user's computer. Staging cleanup
+and retention are described in [Usage](usage.md#add-images-in-the-web-app).
 
 ## Content and caches
 

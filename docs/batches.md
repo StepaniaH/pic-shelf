@@ -1,8 +1,17 @@
 # Batch organization and undo
 
-Use the checkboxes in any image grid to keep an explicit selection while loading more images or changing the sort. **Select currently loaded images** adds the images already shown. **Select all matching images** uses the current server query; its membership is fixed when you request a preview. Newly indexed images never join an existing preview or retry.
+Click **Select** above an image grid, then check the images to edit. Selections persist while loading more images or changing the sort. **Done selecting** clears them. **Select loaded images** adds the images already shown. **Select all results** uses the current server query; its membership is fixed when you request a preview. Newly indexed images never join an existing preview or retry.
 
-The preview shows the operation, target count, selection scope and sample paths. Changing the operation or selection invalidates that preview in the interface. **Apply this batch** executes its fixed IDs. Batch history includes the complete target list, individual results, pending work and undo conflicts. The **Unorganized** view uses each user's explicit inbox/done state, independently of ratings or favorites.
+**Preview changes** shows the operation, image count and sample paths. Changing the operation or selection invalidates that preview. **Confirm changes** applies it. **Batch history** includes the complete image list, results, pending work and undo conflicts. The **Unorganized** view shows images you have not marked as done.
+
+Artist and album targets have searchable, paginated pickers. **New album** in the
+album picker keeps the current image selection and selects the new album.
+Only editable manual albums are offered. Batch status stays visible after
+**Done selecting**. A failed status read provides **Retry**; it does not resubmit
+the operation. Retrying an unchanged preview reuses its request key.
+Late status responses cannot replace the result of a newer cancel, resume or
+undo request. History pages include only batches whose images are still
+accessible; losing access to a library also hides batches spanning that library.
 
 ## Supported changes
 
@@ -41,7 +50,7 @@ Large undos also commit in chunks and can be cancelled and resumed. Once undo st
 
 ## API and CLI
 
-API endpoints under `/api/v1/batches` are `POST /preview`, `GET /`, `GET /{id}`, and `POST /{id}/execute`, `/cancel`, `/undo`. Execute and undo require `confirm: true`; execute optionally accepts `background` and `retry`. Detail results support `offset` and `limit` (up to 1,000). Requests obey the [authentication and source rules](security.md).
+API endpoints under `/api/v1/batches` are `POST /preview`, `GET /`, `GET /{id}`, and `POST /{id}/execute`, `/cancel`, `/undo`. Execute and undo require `confirm: true`; execute optionally accepts `background` and `retry`. Detail results support `offset` and `limit` (up to 1,000). `GET /{id}?include_items=false` returns status and counts without journal rows. Requests obey the [authentication and source rules](security.md).
 
 ```sh
 # Fixed selection; the response contains the batch ID and reviewed count.

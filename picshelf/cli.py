@@ -153,7 +153,7 @@ class _I18nGroup(click.Group):
                                    t("操作已中断"), next_step=t("请查看当前状态后再决定是否重试"))
         except (ValueError, sqlite3.IntegrityError) as exc:
             exit_code = 1
-            failure = ServiceError("invalid_arguments", t("操作未完成：{error}。请检查参数后重试。", error=exc),
+            failure = ServiceError("invalid_arguments", t("参数无效：{error}", error=exc),
                                    next_step=t("请查看该命令的 --help 并检查参数后重试"))
         except (OSError, sqlite3.Error, OverflowError):
             exit_code = 1
@@ -423,7 +423,7 @@ def batch_undo(cfg,batch_id,yes,user):
 @click.pass_obj
 def library_add(cfg: Config, name: str, path: str, description: str | None, make_dir: bool,
                 mode: str | None, default_import_mode: str):
-    """注册一个图片库（只索引，不移动文件）。"""
+    """注册图片目录并设置用途。"""
     root = Path(path).expanduser().absolute()
     if not root.is_dir():
         if make_dir:
@@ -446,7 +446,7 @@ def library_add(cfg: Config, name: str, path: str, description: str | None, make
 @click.option("--default-import-mode", type=click.Choice(["hardlink", "copy", "move"]))
 @click.pass_obj
 def library_configure(cfg: Config, library_name: str, mode: str | None, default_import_mode: str | None):
-    """设置库用途与默认导入方式，不移动或重写原文件。"""
+    """设置库用途与默认导入方式。"""
     conn = _conn(cfg)
     library = libsvc.find_library(conn, library_name)
     if library is None:
@@ -858,7 +858,7 @@ def metadata_commands():
 @click.option("--user", "user_name", default=None)
 @click.pass_obj
 def metadata_show(cfg, image_id, user_name):
-    """导出单图元数据 JSON（不包含原图内容）。"""
+    """导出图片的元数据 JSON。"""
     conn = _conn(cfg)
     result = metasvc.get(conn, AccessContext(_acting_user(conn, user_name)["id"]), image_id)
     click.echo(json.dumps(result, ensure_ascii=False, indent=2))
@@ -873,7 +873,7 @@ def metadata_show(cfg, image_id, user_name):
 @click.option("--note", default=None)
 @click.pass_obj
 def metadata_source(cfg, image_id, **fields):
-    """添加人工来源记录；不访问来源地址。"""
+    """添加图片来源记录。"""
     conn = _conn(cfg)
     result = metasvc.add_source(conn, AccessContext(_acting_user(conn)["id"]), image_id, **fields)
     click.echo(json.dumps(result, ensure_ascii=False))
@@ -1293,18 +1293,18 @@ def doctor_cmd(cfg, full):
 @click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
 @click.argument("library_name")
 @click.option("--mode", type=click.Choice(["hardlink", "copy", "move"]), default=None,
-              help="hardlink=原文件不动且零额外空间（跨盘自动降级 copy）；copy=复制留档；move=移入整理")
+              help="hardlink=硬链接（跨盘时复制）；copy=复制；move=移动")
 @click.option("--template", default=None, help="按命名模板生成目标相对路径")
 @click.option("--template-fields", default=None, help="命名字段 JSON：artists、tags、source、date")
 @click.option("--rename/--keep-names", default=True, show_default=True,
               help="文件名规范化（去掉文件系统危险字符）")
-@click.option("--apply", "do_apply", is_flag=True, help="真正执行（默认只预演）")
+@click.option("--apply", "do_apply", is_flag=True, help="执行导入（默认仅预览）")
 @click.option("--yes", is_flag=True, help="跳过执行确认")
 @click.option("--json", "as_json", is_flag=True, help="输出 JSON")
 @click.pass_obj
 def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
                rename: bool, do_apply: bool, yes: bool, as_json: bool, template: str | None, template_fields: str | None):
-    """把外部目录导入托管的库：预演优先，--apply 执行，完成后自动扫描入库。"""
+    """导入图片目录。默认预览，--apply 开始导入。"""
     if do_apply and not yes and not sys.stdin.isatty():
         raise ServiceError("confirmation_required", t("非交互执行需要 --yes；请先检查预演结果"), status=400, next_step=t("请查看该命令的 --help 并检查参数后重试"))
     from . import import_plans
@@ -1321,7 +1321,6 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
             raise click.UsageError(t('JSON 格式无效，请检查输入')) from exc
         plan = import_plans.create_plan(conn, access, lib["id"], source_dir, mode=mode, rename=rename,
                                         template=template, template_fields=fields)
-        mode = plan['mode']
         mode = plan["mode"]
     except ValueError as exc:
         raise click.ClickException(str(exc))
@@ -1340,11 +1339,11 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
 
     s = plan["stats"]
     new_n = s["hardlink"] + s["copy"] + s["move"]
-    click.echo(t("预演：源 {v0} → 库 #{v1} {v2}（模式：{mode}）", v0=plan['source'], v1=lib['id'], v2=lib['name'], mode=mode))
+    click.echo(t("导入预览：{v0} → {v2}（{mode}）", v0=plan['source'], v2=lib['name'], mode=mode))
     click.echo(
         t("共 {v0} 个文件：新导入 {new_n}，跳过 {v1}（重复/已存在），错误 {v2}", v0=plan['items_total'], new_n=new_n, v1=s['skip'], v2=s['error'])
     )
-    click.echo(t("计划 ID：{plan_id}（可用 import-status 查看，import-execute 执行）", plan_id=plan["plan_id"]))
+    click.echo(t("计划 ID：{plan_id}", plan_id=plan["plan_id"]))
     labels = {"hardlink": t("硬链"), "copy": t("复制"), "move": t("移动"), "skip": t("跳过"), "error": t("错误")}
     for item in plan["items"][:20]:
         dst = item["dst"] or "—"
@@ -1354,14 +1353,14 @@ def import_cmd(cfg: Config, source_dir: str, library_name: str, mode: str,
         click.echo(t("  …（共 {v0} 项，只显示前 20）", v0=plan['items_total']))
 
     if not do_apply:
-        click.echo(t("这是预演，未改动源文件或目标文件。使用 import-execute 执行已保存的计划。"))
+        click.echo(t("开始导入：picshelf import-execute {plan_id}", plan_id=plan["plan_id"]))
         return
     if new_n == 0:
         click.echo(t("没有需要导入的文件。"))
         return
     if not yes:
         if mode == "move":
-            if not click.confirm(t("确认把 {new_n} 个文件【移动】进库？原位置将不再保留（建议先备份）", new_n=new_n), err=True):
+            if not click.confirm(t("移动 {new_n} 个文件到图库？源目录中的文件将被移走。", new_n=new_n), err=True):
                 raise click.ClickException(t("已取消"))
         else:
             if not click.confirm(t("确认导入 {new_n} 个文件？", new_n=new_n), err=True):
@@ -1405,7 +1404,7 @@ def import_status(cfg: Config, plan_id: str, offset: int, limit: int):
 @click.option("--background", is_flag=True, help="只排队，交由 Web 服务或 picshelf worker 执行")
 @click.pass_obj
 def import_execute(cfg: Config, plan_id: str, yes: bool, retry: bool, as_json: bool, background: bool):
-    """执行已查看的导入计划；不会重新扫描源目录生成另一份计划。"""
+    """执行已保存的导入计划。"""
     from . import import_plans
     conn = _conn(cfg)
     access = AccessContext(_acting_user(conn)["id"], local_admin=True)

@@ -50,15 +50,10 @@ class ImageQuery:
                                next_step=t('请检查搜索条件后重试'), objects={'field': invalid[0]})
 
 
-def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQuery) -> dict:
-    allowed = access.allowed_libraries(conn)
-    if spec.album_id is not None:
-        access.require_album(conn, spec.album_id)
+def image_filter_clauses(spec: ImageQuery) -> tuple[list[str], dict]:
+    """Compile source filters consistently for browsing and playback."""
     clauses, params = [], {}
     if spec.workflow is not None:
-        if spec.workflow not in ("inbox","done"):
-            raise ServiceError("query_invalid",t("整理状态必须为 inbox 或 done"),
-                               next_step=t("请检查搜索条件后重试"))
         clauses.append("COALESCE((SELECT state FROM image_workflow w WHERE w.image_id=i.id AND w.user_id=:uid),'inbox')=:f_workflow")
         params["f_workflow"] = spec.workflow
     if spec.library_id is not None:
@@ -71,18 +66,24 @@ def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQue
             clauses.append(f"EXISTS(SELECT 1 FROM {table} link WHERE link.image_id=i.id AND link.{column}=:{field})")
             params[field] = value
     if spec.tag:
-        clauses.append("EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-                       "WHERE it.image_id=i.id AND (picshelf_name_key(tg.name)=:f_tag OR EXISTS("
-                       "SELECT 1 FROM tag_aliases ta WHERE ta.entity_id=tg.id AND ta.match_key=:f_tag)))")
+        clauses.append(search.tag_match_sql(":f_tag"))
         params["f_tag"] = match_key(spec.tag)
     if spec.favorites:
         clauses.append("EXISTS(SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid)")
     if spec.rating_min is not None:
         clauses.append("COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id AND r.user_id=:uid),0)>=:f_rmin")
         params["f_rmin"] = spec.rating_min
+    return clauses, params
+
+
+def query_images(conn: sqlite3.Connection, access: AccessContext, spec: ImageQuery, *, ids_only=False) -> dict:
+    allowed = access.allowed_libraries(conn)
+    if spec.album_id is not None:
+        access.require_album(conn, spec.album_id)
+    clauses, params = image_filter_clauses(spec)
     result = search.search_images(conn, access.user_id, allowed, query=spec.query, sort=spec.sort,
                                   limit=spec.limit, offset=spec.offset,
-                                  extra_where=clauses or None, extra_params=params or None)
+                                  extra_where=clauses or None, extra_params=params or None, ids_only=ids_only)
     result["error_codes"] = ["invalid_query" for _ in result["errors"]]
     return result
 

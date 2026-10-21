@@ -12,7 +12,7 @@ import secrets
 import statistics
 import time
 
-from picshelf import auth, catalog, db, jobs, libsvc, manifest, ops
+from picshelf import auth, catalog, db, jobs, libsvc, manifest, ops, play
 from picshelf.access import AccessContext
 from picshelf.config import Config
 from tests.datasets import metadata_rows, SEED
@@ -56,6 +56,8 @@ def run(root, count, rounds, distribution='uniform'):
         access = AccessContext(user)
         specs = {'path': catalog.ImageQuery(sort='path', limit=120),
                  'path_offset': catalog.ImageQuery(sort='path', limit=120, offset=count//2),
+                 'rating_offset': catalog.ImageQuery(sort='rating', limit=120, offset=count//2),
+                 'avg_offset': catalog.ImageQuery(sort='avg', limit=120, offset=count//2),
                  'tag': catalog.ImageQuery(query='tag:group-7', sort='path', limit=120),
                  'unrated': catalog.ImageQuery(query='rated:false', sort='path', limit=120),
                  'zero': catalog.ImageQuery(query='rated:true rating:0', sort='path', limit=120)}
@@ -63,12 +65,20 @@ def run(root, count, rounds, distribution='uniform'):
                     'tag': [n+1 for n in range(count) if n%20==7],
                     'unrated': [n+1 for n in range(count) if n%3==0],
                     'zero': [n+1 for n in range(count) if n%3 and n%11==0]}
+        ranked = sorted(range(count), key=lambda n: (-(n % 11 if n % 3 else -1), -n))
+        expected['rating_offset'] = expected['avg_offset'] = [n + 1 for n in ranked]
         result = {'queries': {}, 'query_plans': {}}
         for name, spec in specs.items():
             observed = catalog.query_images(conn, access, spec)
             assert observed['total'] == len(expected[name])
             assert [image['id'] for image in observed['items']] == expected[name][spec.offset:spec.offset+spec.limit]
             result['queries'][name] = measure(lambda: catalog.query_images(conn, access, spec), rounds)
+        for name, spec, expected_ids in [
+            ('sequential_queue', {'sort':'path'}, expected['path'][:10000]),
+            ('tag_queue', {'sort':'path', 'source':{'tag':'group-7'}}, expected['tag'][:10000]),
+        ]:
+            assert play.build_queue(conn, user, None, spec) == expected_ids
+            result[name] = measure(lambda: play.build_queue(conn, user, None, spec), rounds)
         result['query_plans']['path'] = [tuple(row) for row in conn.execute('EXPLAIN QUERY PLAN SELECT id FROM images WHERE missing=0 ORDER BY rel_path,id LIMIT 120')]
         def new_connection():
             with closing(db.open_db(cfg.db_path)) as cold:
@@ -78,6 +88,15 @@ def run(root, count, rounds, distribution='uniform'):
         result['task_submit'] = measure(lambda: jobs.submit(conn, access, 'scan', library, request_key=f'measure-{next(serial)}'), rounds)
         job_id = conn.execute('SELECT id FROM jobs ORDER BY created_at,id LIMIT 1').fetchone()[0]
         result['task_status'] = measure(lambda: jobs.get_job(conn, access, job_id), rounds)
+        conn.executemany("INSERT INTO job_items(job_id,item_key,state) VALUES(?,?,'succeeded')",
+                         [(job_id, f'collection/year-month/series-{n:05}/image-{n:05}.png') for n in range(count)])
+        conn.execute("UPDATE jobs SET state='succeeded',total=?,completed=?,succeeded=? WHERE id=?",
+                     (count, count, count, job_id)); conn.commit()
+        for name, include in [('task_status_with_items', True), ('task_summary', False)]:
+            value = jobs.get_job(conn, access, job_id, include_items=include)
+            assert value['completed'] == count
+            result[name] = measure(lambda: jobs.get_job(conn, access, job_id, include_items=include), rounds)
+            result[name]['response_bytes'] = len(json.dumps(value, separators=(',', ':'), ensure_ascii=False).encode())
         small_root = root / 'small-scope'
         small_root.mkdir()
         small_library = libsvc.create_library(conn, 'Small export scope', str(small_root))

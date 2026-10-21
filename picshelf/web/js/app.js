@@ -3,12 +3,13 @@ import { api, setAuthFailHandler } from "./api.js";
 import * as views from "./views.js";
 import { renderAdmin } from "./admin.js";
 import { t, getLocale, setLocale } from "./i18n.js";
-import { activateDialog } from "./dialog.js";
+import { activateDialog, dismissDialogs } from "./dialog.js";
 import {renderBatchHistory} from "./batches.js";
 import {renderQueries, renderSavedQuery} from "./queries.js";
 import {renderPlayRules} from "./slideshow.js";
+import {openAppearance} from "./appearance.js";
 
-export const state = { user: null, route: null };
+export const state = { user: null, route: null, dispose: null };
 
 const viewEl = () => document.querySelector("#view");
 
@@ -116,14 +117,24 @@ async function ensureUser() {
 function renderUserBox() {
   const box = document.querySelector("#userbox");
   const adminLink = document.querySelector("#nav-admin");
+  document.body.classList.toggle("signed-out", !state.user);
   if (state.user) {
     adminLink.hidden = !state.user.is_admin;
-    box.innerHTML = t("<span class=\"username\">{v0}</span>\n      <button class=\"btn small\" id=\"logout-btn\">退出</button>", {v0: escapeHtml(state.user.display_name || state.user.username)});
+    const name = state.user.display_name || state.user.username;
+    box.innerHTML = `<details class="account-menu"><summary aria-label="${t("账户")}">
+      <span class="avatar" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>
+      <span class="username">${escapeHtml(name)}</span><span aria-hidden="true">⌄</span></summary>
+      <div class="account-actions"><button type="button" class="btn small" data-appearance>${t("外观")}</button><button class="btn small" id="logout-btn">${t("退出")}</button></div></details>`;
+    box.querySelector('[data-appearance]').onclick = () => {
+      box.querySelector('.account-menu').open = false;
+      box.querySelector('.account-menu > summary').focus();
+      openAppearance();
+    };
     const revoke = document.createElement("button");
     revoke.className = "btn small";
     revoke.textContent = t("退出所有设备");
     revoke.id = "revoke-sessions-btn";
-    box.appendChild(revoke);
+    box.querySelector(".account-actions").appendChild(revoke);
     revoke.addEventListener("click", async () => {
       if (!await uiConfirm(t("退出所有设备"), t("当前设备与其他设备都需要重新登录。"))) return;
       try {
@@ -180,43 +191,48 @@ function parseHash() {
 let routeVersion = 0;
 async function route() {
   const version = ++routeVersion;
-  const r = parseHash();
-  state.route = r;
+  closeNavigation();
+  state.dispose?.();
+  state.dispose = null;
   const target = document.createElement("div");
+  target.className = "page-content";
   target.setAttribute("aria-busy", "true");
   viewEl().replaceChildren(target);
   target.innerHTML = `<p class="empty" role="status">${t("加载中…")}</p>`;
-  document.querySelectorAll("#nav a").forEach(link => {
-    const parent = {album:"albums", artist:"artists", tag:"tags", query:"queries", batch:"batches", library:"search", view:"search"};
-    const selected = link.hash === `#/${parent[r.name] || r.name}`;
-    if (selected) link.setAttribute("aria-current", "page");
-    else link.removeAttribute("aria-current");
-  });
   try {
+    const r = parseHash();
+    state.route = r;
+    document.querySelectorAll("#nav a").forEach(link => {
+      const parent = {album:"albums", artist:"artists", tag:"tags", query:"queries", batch:"batches", library:"search", view:"search"};
+      const selected = link.hash === `#/${parent[r.name] || r.name}`;
+      if (selected) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
     if (r.name === "login") { views.renderLogin(target); return; }
     await ensureUser();
     if (version !== routeVersion) return;
     if (!state.user) { navigate("#/login"); return; }
-    document.querySelector("#search-input").value = r.name === "search" ? (r.params.get("q") || "") : document.querySelector("#search-input").value;
+    document.querySelector("#search-input").value = r.name === "search" ? (r.params.get("q") || "") : "";
+    const sort = views.SORTS.some(([value]) => value === r.params.get("sort")) ? r.params.get("sort") : undefined;
     switch (r.name) {
       case "home": await views.renderHome(target); break;
       case "albums": await views.renderAlbums(target, r.params); break;
-      case "album": await views.renderAlbum(target, Number(r.id)); break;
+      case "album": await views.renderAlbum(target, Number(r.id), sort); break;
       case "artists": await views.renderArtists(target); break;
-      case "artist": await views.renderArtist(target, Number(r.id)); break;
+      case "artist": await views.renderArtist(target, Number(r.id), sort); break;
       case "tags": await views.renderTags(target); break;
-      case "tag": await views.renderTag(target, r.id); break;
-      case "favorites": await views.renderFavorites(target); break;
-      case "inbox": await views.renderInbox(target); break;
+      case "tag": await views.renderTag(target, r.id, sort); break;
+      case "favorites": await views.renderFavorites(target, sort); break;
+      case "inbox": await views.renderInbox(target, sort); break;
       case "batches": await renderBatchHistory(target); break;
       case "batch": await renderBatchHistory(target,r.id); break;
-      case "search": await views.renderSearch(target, r.params.get("q") || "", r.params.get("sort") || "newest"); break;
+      case "search": await views.renderSearch(target, r.params.get("q") || "", sort); break;
       case "queries": await renderQueries(target); break;
-      case "query": await renderSavedQuery(target, Number(r.id)); break;
+      case "query": await renderSavedQuery(target, Number(r.id), sort); break;
       case "play-rules": await renderPlayRules(target); break;
-      case "library": await views.renderLibrary(target, Number(r.id)); break;
+      case "library": await views.renderLibrary(target, Number(r.id), r.params.get("job"), sort); break;
       case "admin": await renderAdmin(target, r.params); break;
-      case "view": await views.renderDeepLink(target, Number(r.id), r.params); break;
+      case "view": await views.renderDeepLink(target, Number(r.id), r.params, sort); break;
       default: await views.renderHome(target);
     }
   } catch (e) {
@@ -232,8 +248,52 @@ async function route() {
   }
 }
 
+const sidebar = document.querySelector("#sidebar");
+const navigationToggle = document.querySelector("#nav-toggle");
+const navigationBackdrop = document.querySelector("#sidebar-backdrop");
+let releaseNavigation;
+function closeNavigation() {
+  if (!releaseNavigation) return;
+  releaseNavigation();
+  releaseNavigation = null;
+  sidebar.classList.remove("open");
+  sidebar.removeAttribute("role");
+  sidebar.removeAttribute("aria-modal");
+  sidebar.removeAttribute("tabindex");
+  navigationBackdrop.hidden = true;
+  navigationToggle.setAttribute("aria-expanded", "false");
+}
+navigationToggle.addEventListener("click", () => {
+  sidebar.classList.add("open");
+  navigationBackdrop.hidden = false;
+  navigationToggle.setAttribute("aria-expanded", "true");
+  releaseNavigation = activateDialog(sidebar, closeNavigation);
+  navigationBackdrop.inert = false;
+});
+document.querySelector("#nav-close").onclick = closeNavigation;
+navigationBackdrop.onclick = closeNavigation;
+sidebar.addEventListener("click", event => { if (event.target.closest("a")) closeNavigation(); });
+matchMedia("(min-width: 961px)").addEventListener("change", closeNavigation);
+
+document.addEventListener("click", event => {
+  const menu = document.querySelector(".account-menu");
+  if (menu && !menu.contains(event.target)) menu.open = false;
+});
+document.addEventListener("keydown", event => {
+  if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey || document.body.classList.contains("dialog-open")) return;
+  if (event.key === "Escape") {
+    const menu = document.querySelector(".account-menu[open]");
+    if (menu) { menu.open = false; menu.querySelector("summary").focus(); }
+  }
+  if (event.key === "/" && state.user && !event.target.closest("input, textarea, select, [contenteditable]")) {
+    event.preventDefault();
+    document.querySelector("#search-input").focus();
+  }
+});
+
 setAuthFailHandler(() => {
   state.user = null;
+  dismissDialogs();
   renderUserBox();
   if (!location.hash.startsWith("#/login")) navigate("#/login");
 });

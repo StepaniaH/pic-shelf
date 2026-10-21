@@ -213,6 +213,42 @@ def test_cancel_queued_then_resume_and_pagination(catalog):
         conn.close()
 
 
+def test_job_history_filters_before_paging_and_bounds_authorization_work(catalog):
+    reader = AccessContext(catalog.users["reader"])
+    north, south = catalog.libraries["north"], catalog.libraries["south"]
+    stamp = db.utcnow()
+    with db.open_db(catalog.cfg.db_path) as conn:
+        conn.execute("UPDATE library_grants SET access='manage' WHERE library_id=? AND group_id IN "
+                     "(SELECT group_id FROM user_groups WHERE user_id=?)", (north, reader.user_id))
+        rows, visible = [], []
+        for number in range(3000):
+            job_id = f"history-{number:04}"
+            owner = reader.user_id if number % 5 else catalog.users["curator"]
+            library = north if number % 3 else south
+            rows.append((job_id, library, owner, job_id, json.dumps({"input":{"plan_id":None}}), stamp, stamp))
+            if owner == reader.user_id and library == north:
+                visible.append(job_id)
+        conn.executemany("INSERT INTO jobs(id,kind,library_id,created_by,request_key,params,state,created_at,updated_at) "
+                         "VALUES(?,'scan',?,?,?,?,'succeeded',?,?)", rows)
+        conn.commit()
+        visible.reverse()
+        statements = []
+        conn.set_trace_callback(statements.append)
+        first = jobs.list_jobs(conn, reader, limit=3)
+        conn.set_trace_callback(None)
+        assert [item["id"] for item in first["items"]] == visible[:3]
+        assert first["next_offset"] == 3
+        assert len(statements) < 100  # Authorization work follows the page, not all 3000 jobs.
+        last = jobs.list_jobs(conn, reader, offset=len(visible) - 2, limit=3)
+        assert [item["id"] for item in last["items"]] == visible[-2:]
+        assert last["next_offset"] is None
+        conn.execute("UPDATE library_grants SET access='view' WHERE library_id=?", (north,))
+        conn.commit()
+        assert jobs.list_jobs(conn, reader)["items"] == []
+        admin_page = jobs.list_jobs(conn, AccessContext(catalog.users["curator"]), limit=3)
+        assert [item["id"] for item in admin_page["items"]] == [f"history-{number:04}" for number in (2999, 2998, 2997)]
+
+
 def test_revocation_disallows_execution_status_and_list(catalog):
     conn = db.open_db(catalog.cfg.db_path)
     reader = AccessContext(catalog.users["reader"])
@@ -461,3 +497,32 @@ def test_legacy_sync_scan_respects_decode_slots_and_keeps_metadata(catalog):
         assert result['unchanged'] == 12 and not result['errors']
     assert metadata_snapshot(conn) == before
     conn.close()
+
+
+def test_summary_polling_skips_journal_reads_and_keeps_live_authorization(catalog):
+    access = AccessContext(catalog.users['reader'])
+    lid = catalog.libraries['north']
+    with db.open_db(catalog.cfg.db_path) as conn:
+        conn.execute("UPDATE library_grants SET access='manage' WHERE library_id=?", (lid,)); conn.commit()
+        job = jobs.submit(conn, access, 'scan', lid)
+        conn.executemany("INSERT INTO job_items(job_id,item_key,state) VALUES(?,?,'succeeded')",
+                         [(job['id'], f'file-{n:05}.png') for n in range(12000)])
+        conn.execute("UPDATE jobs SET state='succeeded',total=12000,completed=12000,succeeded=12000 WHERE id=?", (job['id'],))
+        conn.commit()
+        statements = []
+        conn.set_trace_callback(statements.append)
+        summary = jobs.get_job(conn, access, job['id'], include_items=False)
+        page = jobs.list_jobs(conn, access, include_items=False)
+        conn.set_trace_callback(None)
+        assert summary['completed'] == 12000
+        assert summary['library_name'] == conn.execute('SELECT name FROM libraries WHERE id=?', (lid,)).fetchone()[0]
+        assert page['items'] == [summary]
+        assert 'items' not in summary
+        assert not any('job_items' in statement.lower() for statement in statements)
+        full = jobs.get_job(conn, access, job['id'], offset=100, limit=5)
+        assert full['items_total'] == 12000
+        assert [item['item_key'] for item in full['items']] == [f'file-{n:05}.png' for n in range(100, 105)]
+        assert {key: full[key] for key in summary} == summary
+        conn.execute('DELETE FROM library_grants WHERE library_id=?', (lid,)); conn.commit()
+        with pytest.raises(ServiceError): jobs.get_job(conn, access, job['id'], include_items=False)
+        assert jobs.list_jobs(conn, access, include_items=False)['items'] == []

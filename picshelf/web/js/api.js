@@ -14,14 +14,14 @@ export class ApiError extends Error {
 let authFailHandler = () => {};
 export function setAuthFailHandler(fn) { authFailHandler = fn; }
 
-export async function api(path, { method = "GET", body, signal } = {}) {
+export async function api(path, { method = "GET", body, signal, raw = false } = {}) {
   const headers = { "Accept-Language": getLocale() };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (body !== undefined) headers["Content-Type"] = raw ? "application/octet-stream" : "application/json";
   let res;
   try {
     res = await fetch(BASE + path, {
       method, headers, signal,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body !== undefined ? (raw ? body : JSON.stringify(body)) : undefined,
       credentials: "same-origin",
     });
   } catch (error) {

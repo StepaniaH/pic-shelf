@@ -12,7 +12,7 @@ import shutil
 import sqlite3
 import uuid
 
-from . import hashing, importer, indexer, libsvc, metadata, source_access
+from . import hashing, importer, indexer, libsvc, metadata, source_access, ops
 from .access import AccessContext
 from .config import Config
 from .coordination import library_write_lock
@@ -36,13 +36,23 @@ def _source_identity(stat) -> dict:
     return {**_identity(stat), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
 
 
+def _album_target(conn, access, library_id, album_id):
+    access.require_album(conn, album_id, 'edit')
+    album = conn.execute('SELECT * FROM albums WHERE id=?', (album_id,)).fetchone()
+    if album['kind'] != 'manual' or album['library_id'] != library_id:
+        raise ServiceError('import_album_invalid', t('请选择目标图库中的手工专辑'),
+                           next_step=t('请切换到专辑所属图库，文件夹专辑由扫描自动维护'))
+
+
 def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int,
-                source_dir: str, *, mode=None, rename=True, template=None, template_fields=None) -> dict:
+                source_dir: str, *, mode=None, rename=True, template=None, template_fields=None, album_id=None) -> dict:
     access.require_library(conn, library_id, "manage")
     library = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if library is None:
         raise _failure("library_not_found", t("库不存在"))
     libsvc.require_importable(library)
+    if album_id is not None:
+        _album_target(conn, access, library_id, album_id)
     mode = library["default_import_mode"] if mode is None else mode
     source_access.require_source(conn, access, source_dir, mode=mode)
     snapshot = importer.plan_import(conn, library, source_dir, mode=mode, rename=rename,
@@ -50,6 +60,8 @@ def create_plan(conn: sqlite3.Connection, access: AccessContext, library_id: int
     snapshot["rename"] = rename
     snapshot['template'] = template
     snapshot['template_fields'] = template_fields
+    if album_id is not None:
+        snapshot['album_id'] = album_id
     snapshot["root_identity"] = _identity(Path(snapshot["root"]).stat())
     snapshot["source_identity"] = _identity(Path(snapshot["source"]).stat())
     identities = []
@@ -88,18 +100,24 @@ def _authorized_plan(conn, access, plan_id, *, snapshot=None):
     access.require_library(conn, row["library_id"], "manage")
     if snapshot is None:
         snapshot = json.loads(row["snapshot"])
+    if snapshot.get('album_id') is not None:
+        _album_target(conn, access, row['library_id'], snapshot['album_id'])
     if snapshot.get('reorganize'):
         if libsvc.get_library(conn, row['library_id'])['mode'] != 'managed':
             from .reorganize import _error
             raise _error('reorganization_requires_managed')
     else:
-        source_access.require_source(conn, access, snapshot["source"], mode=snapshot["mode"])
+        completed_upload = conn.execute("SELECT 1 FROM import_uploads WHERE plan_id=? AND source=? "
+                                        "AND state IN ('completed','cleaned')", (plan_id, snapshot['source'])).fetchone()
+        if not completed_upload:
+            source_access.require_source(conn, access, snapshot["source"], mode=snapshot["mode"])
     return row
 
 
 def get_plan(conn, access, plan_id, *, offset=0, limit=300) -> dict:
     row = _authorized_plan(conn, access, plan_id)
     snapshot = json.loads(row["snapshot"])
+    snapshot['browser_upload'] = conn.execute('SELECT 1 FROM import_uploads WHERE plan_id=?', (plan_id,)).fetchone() is not None
     total = len(snapshot["items"])
     offset, limit = max(0, offset), max(1, min(limit, 1000))
     states = {r["position"]: dict(r) for r in conn.execute(
@@ -286,20 +304,23 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
     if not scope_matches:
         raise _failure("plan_scope_changed", t("源目录或目标库已变化，请重新预演"))
     with library_write_lock(cfg, root):
-        # A concurrent request may have completed while this one was preparing.
+        from . import uploads
         row = _authorized_plan(conn, access, plan_id)
-        libsvc.require_importable(conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone())
-        if snapshot.get('reorganize') and row['started_at'] is None:
-            from . import reorganize
-            reorganize.verify_preview(conn, snapshot)
         if row["state"] == "succeeded" or (row["state"] == "partial" and not retry):
             return json.loads(row["result"])
-        if row["cancel_requested"] and not retry:
-            result = _result(conn, plan_id, snapshot)
-            return {**result, "state": "cancelled"}
-        conn.execute("UPDATE import_plans SET state='running',cancel_requested=0,started_at=COALESCE(started_at,?) WHERE id=?",
-                     (datetime.now(timezone.utc).isoformat(), plan_id))
-        conn.commit()
+        with uploads.starting_plan(conn, cfg, plan_id):
+            # Cleanup and discard cannot remove staging before this start commits.
+            row = _authorized_plan(conn, access, plan_id)
+            libsvc.require_importable(conn.execute("SELECT * FROM libraries WHERE id=?", (row["library_id"],)).fetchone())
+            if snapshot.get('reorganize') and row['started_at'] is None:
+                from . import reorganize
+                reorganize.verify_preview(conn, snapshot)
+            if row["cancel_requested"] and not retry:
+                result = _result(conn, plan_id, snapshot)
+                return {**result, "state": "cancelled"}
+            conn.execute("UPDATE import_plans SET state='running',cancel_requested=0,started_at=COALESCE(started_at,?) WHERE id=?",
+                         (datetime.now(timezone.utc).isoformat(), plan_id))
+            conn.commit()
         try:
             for position, item in enumerate(snapshot["items"]):
                 if check:
@@ -328,17 +349,33 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
             result = _result(conn, plan_id, snapshot)
             # Recheck authority before publishing imported files into the catalog.
             current = _authorized_plan(conn, access, plan_id)
-            if sum(result["done"][key] for key in importer.MODES):
+            if sum(result["done"][key] for key in importer.MODES) or snapshot.get('album_id') is not None:
                 result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check)
                 if not snapshot.get('reorganize'):
                     metadata.record_import(conn, row["library_id"], plan_id, snapshot, row["created_by"])
             scan_errors = len(result["scan"]["errors"]) if result["scan"] else 0
             result["scan_error_count"] = scan_errors
+            if snapshot.get('album_id') is not None:
+                _album_target(conn, access, row['library_id'], snapshot['album_id'])
+                hashes = sorted({item['sha256'] for item in snapshot['items'] if item.get('sha256')})
+                image_ids = []
+                for start in range(0, len(hashes), 400):
+                    chunk = hashes[start:start + 400]
+                    image_ids.extend(item[0] for item in conn.execute(
+                        f"SELECT id FROM images WHERE library_id=? AND missing=0 AND scan_error_code IS NULL "
+                        f"AND sha256 IN ({','.join('?' for _ in chunk)})", (row['library_id'], *chunk)))
+                result['album_id'] = snapshot['album_id']
+                result['album_added'] = ops.album_add_images(conn, snapshot['album_id'], image_ids)
             result["resumed_after_expiry"] = expired
             result["state"] = "cancelled" if current["cancel_requested"] else "partial" if result["done"]["error"] or scan_errors else "succeeded"
             conn.execute("UPDATE import_plans SET state=?,result=? WHERE id=?",
                          (result["state"], json.dumps(result), plan_id))
             conn.commit()
+            if result['state'] == 'succeeded':
+                try:
+                    uploads.complete(conn, cfg, plan_id)
+                except (OSError, ServiceError):
+                    pass  # Imported originals and the durable result are already saved.
             return result
         except BaseException:
             conn.execute("UPDATE import_plans SET state='interrupted' WHERE id=?", (plan_id,))

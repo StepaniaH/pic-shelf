@@ -2,7 +2,9 @@
 import { api } from "./api.js";
 import { escapeHtml, toast, uiPrompt, uiConfirm, state } from "./app.js";
 import { t } from "./i18n.js";
-import { jobKey, renderJobs, watchJob } from "./jobs.js";
+import {renderJobs} from "./jobs.js";
+import {renderLibraries} from "./libraries.js";
+import {openImport} from "./importer.js";
 
 const CAP_LABEL = {
   view: t("查看"), rate: t("评分"), comment: t("评论"), note: t("笔记"),
@@ -11,28 +13,20 @@ const CAP_LABEL = {
 const ALL_CAPS = Object.keys(CAP_LABEL);
 
 export async function renderAdmin(view, params = new URLSearchParams()) {
-  if (!state.user.is_admin) {
-    view.innerHTML = t("<p class=\"empty\">需要管理员权限。</p>");
-    return;
-  }
-  view.innerHTML = t("\n    <div class=\"page-head\"><h1>管理</h1></div>\n    <div class=\"admin-tabs\">\n      <button class=\"btn\" data-tab=\"users\">用户</button>\n      <button class=\"btn\" data-tab=\"groups\">用户组</button>\n      <button class=\"btn\" data-tab=\"import\">导入</button>\n      <button class=\"btn\" data-tab=\"libraries\">库</button>\n    </div>\n    <div id=\"admin-body\"></div>");
-  const tasksButton = document.createElement("button");
-  tasksButton.className = "btn";
-  tasksButton.dataset.tab = "jobs";
-  tasksButton.textContent = t("后台任务");
-  view.querySelector(".admin-tabs").appendChild(tasksButton);
+  const tabs = state.user.is_admin
+    ? [["libraries", "图库"], ["jobs", "后台任务"], ["users", "用户"], ["groups", "用户组"]]
+    : [["jobs", "后台任务"]];
+  const selected = tabs.some(([key]) => key === params.get("tab")) ? params.get("tab") : tabs[0][0];
+  view.innerHTML = `<div class="page-head"><h1>${t(state.user.is_admin ? "管理" : "图库操作")}</h1></div>
+    <nav class="admin-tabs" aria-label="${t("管理")}">${tabs.map(([key, label]) =>
+      `<a class="btn ${key === selected ? "active" : ""}" data-tab="${key}" href="#/admin?tab=${key}" ${key === selected ? 'aria-current="page"' : ""}>${t(label)}</a>`).join("")}</nav>
+    <div id="admin-body"></div>`;
   const body = view.querySelector("#admin-body");
-  const setTab = async (t) => {
-    view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === t));
-    if (t === "users") await renderUsers(body);
-    else if (t === "groups") await renderGroups(body, () => setTab("groups"));
-    else if (t === "import") await renderImport(body, params.get("library"));
-    else if (t === "jobs") await renderJobs(body);
-    else await renderLibraries(body);
-  };
-  view.querySelectorAll(".admin-tabs .btn").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
-  const libs = await api("/libraries");
-  await setTab(params.get("tab") || (libs.length ? "users" : "libraries"));
+  if (selected === "users") await renderUsers(body);
+  else if (selected === "groups") await renderGroups(body);
+  else if (selected === "jobs") await renderJobs(body, {jobId:params.get("job"), offset:Math.max(0, Number(params.get("offset")) || 0)});
+  else await renderLibraries(body, {add: params.get("add") === "1", mode: params.get("mode")});
+  if (params.get('tab') === 'import' && body.isConnected) openImport({libraryId:params.get('library')});
 }
 
 // ---------------------------------------------------------------- 用户
@@ -125,11 +119,11 @@ async function renderGroups(body) {
         </div>
         <div class="form-row">${t("成员：")}${g.members.map((m) => `
           <span class="pill">${escapeHtml(m.username)}<button class="icon-btn" data-rm-user="${m.id}" title="${t("移出")}">✕</button></span>`).join("") || `<span class="muted">${t("（无）")}</span>`}
-          <input class="add-user" list="user-dl" placeholder="${t("加成员")}" style="width:130px">
+          <input class="add-user" list="user-dl" placeholder="${t("添加成员")}" style="width:130px">
           <button class="btn small" data-add-user>${t("加入")}</button>
         </div>
         ${g.is_system ? "" : `<div class="form-row">
-          <button class="btn small" data-save-caps>${t("保存能力")}</button>
+          <button class="btn small" data-save-caps>${t("保存权限")}</button>
           <button class="btn small danger" data-del-group>${t("删除组")}</button></div>`}
       </div>`).join(""), v1: users.map((u) => `<option value="${escapeHtml(u.username)}">`).join("")});
 
@@ -178,263 +172,4 @@ async function renderGroups(body) {
       } catch (e) { toast(e.message, "error"); }
     });
   });
-}
-
-// ---------------------------------------------------------------- 库
-
-async function renderLibraries(body) {
-  const [libs, groups] = await Promise.all([api("/libraries"), api("/groups")]);
-  body.innerHTML = `
-    <h2>${t("库")}</h2>
-    <p class="hint">${t("填写运行 Pic Shelf 的服务端目录；容器内使用挂载后的路径，浏览器本地文件不会自动上传。")}</p>
-    <div class="form-row">
-      <label>${t("库名")} <input id="nl-name" required></label>
-      <label>${t("服务端目录")} <input id="nl-path" placeholder="/path/to/images" required></label>
-      <label>${t("用途")} <select id="nl-mode">
-        <option value="indexed">${t("只索引（保留原目录）")}</option>
-        <option value="managed">${t("托管收纳（接收导入）")}</option>
-      </select></label>
-      <label id="nl-default-label" hidden>${t("默认导入方式")} <select id="nl-default">
-        <option value="hardlink">${t("硬链接")}</option><option value="copy">${t("复制")}</option><option value="move">${t("移动")}</option>
-      </select></label>
-      <label>${t("描述（可选）")} <input id="nl-desc"></label>
-      <button class="btn primary" id="nl-create">${t("注册库")}</button>
-    </div>
-    <p class="hint">${t("只索引库仅在数据目录保存索引和整理信息；托管库允许导入。注册和修改用途都不会搬动原文件。")}</p>
-    <div class="form-row"><a class="btn" href="#/admin?tab=import">${t("预演导入")}</a><a class="btn" href="#/admin?tab=jobs">${t("后台任务")}</a></div>
-    ${libs.map((l) => `
-      <div class="grant-item" style="margin-bottom:12px">
-        <div class="form-row">
-          <a href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
-          <span class="muted">${escapeHtml(l.root_path)}</span>
-          <span class="pill">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</span>
-          <label>${t("用途")} <select data-mode="${l.id}">
-            ${l.mode == null ? `<option value="">${t("历史库（保留原行为）")}</option>` : ""}
-            <option value="indexed" ${l.mode === "indexed" ? "selected" : ""}>${t("只索引（保留原目录）")}</option>
-            <option value="managed" ${l.mode === "managed" ? "selected" : ""}>${t("托管收纳（接收导入）")}</option>
-          </select></label>
-          <label>${t("默认导入方式")} <select data-default="${l.id}">
-            ${["hardlink", "copy", "move"].map(m => `<option value="${m}" ${l.default_import_mode === m ? "selected" : ""}>${t({hardlink:"硬链接",copy:"复制",move:"移动"}[m])}</option>`).join("")}
-          </select></label>
-          <button class="btn small" data-save-mode="${l.id}">${t("保存设置")}</button>
-          <button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>
-          ${l.mode !== "indexed" ? `<a class="btn small" href="#/admin?tab=import&library=${l.id}">${t("预演导入")}</a>` : ""}
-        </div>
-        <div class="grant-grid" data-grants="${l.id}">${t("加载授权…")}</div>
-      </div>`).join("") || `<p class="empty">${t("还没有库。在上方注册图片目录。")}</p>`}`;
-  body.querySelector("#nl-mode").addEventListener("change", (event) => {
-    body.querySelector("#nl-default-label").hidden = event.target.value !== "managed";
-  });
-  body.querySelectorAll("[data-save-mode]").forEach(button => button.addEventListener("click", async () => {
-    const id = button.dataset.saveMode;
-    const mode = body.querySelector(`[data-mode="${id}"]`).value || null;
-    const default_import_mode = body.querySelector(`[data-default="${id}"]`).value;
-    button.disabled = true;
-    try {
-      await api(`/libraries/${id}`, {method: "PATCH", body: {mode, default_import_mode}});
-      toast(t("库设置已保存"), "ok");
-      await renderLibraries(body);
-    } catch (error) { toast(error.message, "error"); button.disabled = false; }
-  }));
-
-  body.querySelector("#nl-create").addEventListener("click", async () => {
-    const name = body.querySelector("#nl-name").value.trim();
-    const root_path = body.querySelector("#nl-path").value.trim();
-    const description = body.querySelector("#nl-desc").value.trim() || null;
-    try {
-      await api("/libraries", { method: "POST", body: { name, root_path, description, mode: body.querySelector("#nl-mode").value, default_import_mode: body.querySelector("#nl-default").value } });
-      toast(t("已注册库：{name}", {name: name}), "ok");
-      await renderLibraries(body);
-    } catch (e) { toast(e.message, "error"); }
-  });
-
-  body.querySelectorAll("[data-scan]").forEach((btn) => btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    btn.textContent = t("扫描中…");
-    try {
-      const queued = await api(`/libraries/${btn.dataset.scan}/scan-jobs`, { method: "POST", body: {request_key: jobKey()} });
-      const target = document.createElement("div");
-      btn.parentElement.after(target);
-      const status = await watchJob(queued.id, target);
-      if (!status || !btn.isConnected) return;
-      const s = status.result;
-      if (s) toast(t("扫描完成：新增 {v0}，更新 {v1}，移动 {v2}，缺失 {v3}", {v0: s.added, v1: s.updated, v2: s.moved, v3: s.missing}), status.state === "succeeded" ? "ok" : "error");
-    } catch (e) { toast(e.message, "error"); }
-    if (btn.isConnected) {
-      btn.disabled = false;
-      btn.textContent = t("扫描更新");
-    }
-  }));
-
-  // 授权矩阵
-  body.querySelectorAll("[data-grants]").forEach(async (el) => {
-    const lid = el.dataset.grants;
-    try {
-      const grants = await api(`/libraries/${lid}/grants`);
-      const byGroup = Object.fromEntries(grants.map((g) => [String(g.group_id), g.access]));
-      el.innerHTML = groups.map((g) => t("\n        <label class=\"grant-item\" style=\"display:flex;justify-content:space-between;align-items:center;gap:8px\">\n          <span>{v0}</span>\n          <select data-grant-gid=\"{v1}\">\n            <option value=\"\" {v2}>无</option>\n            <option value=\"view\" {v3}>查看</option>\n            <option value=\"edit\" {v4}>编辑</option>\n            <option value=\"manage\" {v5}>管理</option>\n          </select>\n        </label>", {v0: escapeHtml(g.name), v1: g.id, v2: !byGroup[g.id] ? "selected" : "", v3: byGroup[g.id] === "view" ? "selected" : "", v4: byGroup[g.id] === "edit" ? "selected" : "", v5: byGroup[g.id] === "manage" ? "selected" : ""})).join("");
-      el.querySelectorAll("select[data-grant-gid]").forEach((sel) => sel.addEventListener("change", async () => {
-        try {
-          await api(`/libraries/${lid}/grants`, {
-            method: "PUT",
-            body: { group_id: Number(sel.dataset.grantGid), access: sel.value || null },
-          });
-          toast(t("授权已更新"), "ok");
-        } catch (e) { toast(e.message, "error"); }
-      }));
-    } catch (e) {
-      el.textContent = t("(无权限查看授权)");
-    }
-  });
-}
-
-// ---------------------------------------------------------------- 托管导入
-
-async function renderImport(body, selectedLibrary) {
-  const libs = (await api("/libraries")).filter(library => library.mode !== "indexed");
-  body.innerHTML = t("\n    <h2>托管导入</h2>\n    <p class=\"hint\">把服务端目录的图片导入目标库。导入方式取自库设置，也可单次调整。先「预演」，确认无误后再「执行」；移动会移除源文件。</p>\n    <div class=\"form-row\">\n      <input id=\"imp-src\" placeholder=\"源目录（绝对路径）\" style=\"min-width:300px;flex:1\">\n      <select id=\"imp-lib\">{v0}</select>\n      <select id=\"imp-mode\">\n        <option value=\"hardlink\">硬链接（推荐 · 原文件不动）</option>\n        <option value=\"copy\">复制（原库留档）</option>\n        <option value=\"move\">移动（整理 · 原位置不保留）</option>\n      </select>\n      <label class=\"muted\"><input type=\"checkbox\" id=\"imp-rename\" checked> 文件名规范化</label>\n    </div>\n    <div class=\"form-row\">\n      <button class=\"btn primary\" id=\"imp-plan\">预演</button>\n      <button class=\"btn danger\" id=\"imp-exec\" disabled>执行</button>\n      {v1}\n    </div>\n    <div id=\"imp-out\" class=\"muted\">尚未预演。</div>", {v0: libs.map((l) => `<option value="${l.id}">${escapeHtml(l.name)}${t("（{n} 张）", {n: l.image_count})}</option>`).join(""), v1: libs.length ? "" : `<span class="muted">${t("提示：先到「库」标签页注册一个目标库。")}</span>`});
-
-  let plan = null;
-  let plannedInput = null;
-  let executing = false;
-  const pathHint = document.createElement("p");
-  pathHint.className = "hint";
-  pathHint.textContent = t("填写运行 Pic Shelf 的服务端目录；容器内使用挂载后的路径，浏览器本地文件不会自动上传。");
-  body.querySelector("h2").after(pathHint);
-  const librarySelect = body.querySelector("#imp-lib");
-  if (libs.some(library => String(library.id) === selectedLibrary)) librarySelect.value = selectedLibrary;
-  const applyDefault = () => {
-    const library = libs.find(item => String(item.id) === librarySelect.value);
-    body.querySelector("#imp-mode").value = library?.default_import_mode || "hardlink";
-  };
-  applyDefault();
-  librarySelect.addEventListener("change", applyDefault);
-  body.querySelector("#imp-plan").disabled = !libs.length;
-  if (!libs.length) {
-    const create = document.createElement("a");
-    create.href = "#/admin?tab=libraries";
-    create.textContent = t("创建托管库");
-    pathHint.after(create);
-  }
-  const out = body.querySelector("#imp-out");
-  const execBtn = body.querySelector("#imp-exec");
-  const inputControls = [...body.querySelectorAll("#imp-src, #imp-lib, #imp-mode, #imp-rename, #imp-plan")];
-  const payload = () => ({
-    source_dir: body.querySelector("#imp-src").value.trim(),
-    library_id: Number(body.querySelector("#imp-lib").value),
-    mode: body.querySelector("#imp-mode").value,
-    rename: body.querySelector("#imp-rename").checked,
-  });
-  body.querySelectorAll("#imp-src, #imp-lib, #imp-mode, #imp-rename").forEach((input) => {
-    input.addEventListener("input", () => {
-      plan = null;
-      plannedInput = null;
-      execBtn.disabled = true;
-      out.textContent = t("选项已变化，请重新预演。");
-    });
-  });
-
-  body.querySelector("#imp-plan").addEventListener("click", async () => {
-    const p = payload();
-    if (!p.source_dir) { toast(t("请填写源目录"), "error"); return; }
-    const btn = body.querySelector("#imp-plan");
-    btn.disabled = true;
-    execBtn.disabled = true;
-    plan = null;
-    plannedInput = null;
-    btn.textContent = t("预演中…");
-    try {
-      const saved = await api("/import/plan", { method: "POST", body: p });
-      if (JSON.stringify(payload()) !== JSON.stringify(p)) {
-        out.textContent = t("选项已变化，请重新预演。");
-        return;
-      }
-      plan = saved;
-      plannedInput = p;
-      renderPlan(plan, out, () => plan?.plan_id === saved.plan_id && plan.state === "preview" && !executing);
-      const newN = plan.stats.hardlink + plan.stats.copy + plan.stats.move;
-      execBtn.disabled = newN === 0;
-    } catch (e) {
-      toast(e.message, "error");
-      out.textContent = t("预演失败：") + e.message;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = t("预演");
-    }
-  });
-
-  execBtn.addEventListener("click", async () => {
-    if (!plan || JSON.stringify(payload()) !== JSON.stringify(plannedInput)) return;
-    const selectedPlan = plan;
-    const p = plannedInput;
-    const newN = plan ? plan.stats.hardlink + plan.stats.copy + plan.stats.move : 0;
-    const modeText = { hardlink: t("硬链接"), copy: t("复制"), move: t("移动") }[p.mode] || p.mode;
-    const warn = p.mode === "move" ? t("注意：移动模式下原位置的文件将被移走，不再保留。") : "";
-    if (!(await uiConfirm(t("确认执行导入"), t("将处理 {newN} 个文件（模式：{modeText}）。{warn} 将写入目标库目录。", {newN: newN, modeText: modeText, warn: warn})))) return;
-    if (plan !== selectedPlan || JSON.stringify(payload()) !== JSON.stringify(p)) return;
-    execBtn.disabled = true;
-    executing = true;
-    inputControls.forEach((input) => { input.disabled = true; });
-    execBtn.textContent = t("执行中…");
-    try {
-      const retry = ["partial", "cancelled", "interrupted", "failed"].includes(selectedPlan.state);
-      const queued = await api(`/import/plans/${selectedPlan.plan_id}/jobs`, { method: "POST", body: { confirm: true, request_key: "import:" + selectedPlan.plan_id } });
-      if (retry) await api(`/jobs/${queued.id}/retry`, {method: "POST"});
-      const status = await watchJob(queued.id, out);
-      if (!status) return;
-      selectedPlan.state = status.state;
-      const r = status.result;
-      if (!r) return;
-      toast(t("执行完成：硬链 {v0}，复制 {v1}，移动 {v2}，跳过 {v3}，错误 {v4}", {v0: r.done.hardlink, v1: r.done.copy, v2: r.done.move, v3: r.done.skip, v4: r.done.error}), r.state === "succeeded" ? "ok" : "error");
-      if (plan === selectedPlan && out.isConnected) renderDone(r, out);
-    } catch (e) {
-      toast(e.message, "error");
-    } finally {
-      executing = false;
-      inputControls.forEach((input) => { input.disabled = false; });
-      execBtn.disabled = !plan;
-      execBtn.textContent = ["partial", "cancelled", "interrupted", "failed"].includes(plan?.state) ? t("重试未完成项") : t("执行");
-    }
-  });
-}
-
-function renderPlan(plan, out, isCurrent) {
-  const s = plan.stats;
-  const labels = { hardlink: t("硬链"), copy: t("复制"), move: t("移动"), skip: t("跳过"), error: t("错误") };
-  const rows = plan.items.map((it) => `
-    <tr><td>${labels[it.action] || it.action}</td>
-      <td class="src">${escapeHtml(it.src)}</td>
-      <td class="dst">${escapeHtml(it.dst || "—")}</td>
-      <td>${escapeHtml(it.reason || "")}</td></tr>`).join("");
-  out.innerHTML = t("\n    <p>共 <b>{v0}</b> 个文件：新导入 <b>{v1}</b>，跳过 <b>{v2}</b>（重复/已存在），错误 <b>{v3}</b>。\n    {v4}</p>\n    <div class=\"table-wrap\"><table class=\"data imp-table\"><thead><tr><th>动作</th><th>源</th><th>目标</th><th>说明</th></tr></thead><tbody>{rows}</tbody></table></div>\n    <p class=\"hint\">预演已保存，源文件与目标文件未改动。确认后点「执行」。</p>", {v0: plan.items_total, v1: s.hardlink + s.copy + s.move, v2: s.skip, v3: s.error, v4: t("显示第 {start}–{end} 项，共 {total} 项", {start: plan.items.length ? plan.offset + 1 : 0, end: plan.offset + plan.items.length, total: plan.items_total}), rows: rows});
-  const navigation = document.createElement("div");
-  navigation.className = "form-row";
-  for (const [label, offset] of [[t("上一页"), plan.offset > 0 ? Math.max(0, plan.offset - plan.limit) : null], [t("下一页"), plan.next_offset]]) {
-    const button = document.createElement("button");
-    button.className = "btn";
-    button.textContent = label;
-    button.disabled = offset === null;
-    button.addEventListener("click", async () => {
-      if (!isCurrent()) return;
-      navigation.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-      try {
-        const next = await api(`/import/plans/${plan.plan_id}?offset=${offset}&limit=${plan.limit}`);
-        if (isCurrent()) renderPlan(next, out, isCurrent);
-      } catch (error) {
-        if (isCurrent()) { toast(error.message, "error"); renderPlan(plan, out, isCurrent); }
-      }
-    });
-    navigation.appendChild(button);
-  }
-  out.appendChild(navigation);
-}
-
-function renderDone(r, out) {
-  const d = r.done;
-  out.innerHTML = t("<p>执行完成：硬链 <b>{v0}</b>，复制 <b>{v1}</b>，移动 <b>{v2}</b>，跳过 <b>{v3}</b>，错误 <b>{v4}</b>。\n  {v5}</p>\n  {v6}", {v0: d.hardlink, v1: d.copy, v2: d.move, v3: d.skip, v4: d.error, v5: r.scan ? t("已扫描入库：新增 <b>{v0}</b> 张。", {v0: r.scan.added}) : "", v6: d.errors && d.errors.length ? `<details><summary>${t("错误明细（{v0}）", {v0: d.errors.length})}</summary><pre>${escapeHtml(d.errors.join("\n"))}</pre></details>` : ""});
-  if (r.scan?.errors?.length) {
-    const scanErrors = document.createElement("pre");
-    scanErrors.textContent = t("扫描错误：") + "\n" + r.scan.errors.join("\n");
-    out.appendChild(scanErrors);
-  }
 }

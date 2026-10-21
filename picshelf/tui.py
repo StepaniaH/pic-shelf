@@ -28,7 +28,7 @@ from .config import Config
 from .errors import ServiceError
 from .i18n import t
 from .worker import WorkerManager
-from .tui_screens import ConfirmScreen, HelpScreen, WorkScreen
+from .tui_screens import ConfirmScreen, HelpScreen, WorkScreen, STATES
 
 
 async def _render_preview(path: Path, width: int = 72, height: int = 26) -> str | None:
@@ -116,21 +116,21 @@ class PicShelfTUI(App):
         Binding("ctrl+p", "resume_playback", t("恢复播放"), show=False, priority=True),
         Binding("right", "play_next", t("下一张"), show=False, priority=True),
         Binding("left", "play_previous", t("上一张"), show=False, priority=True),
-        Binding("j", "cursor_down", t("下移")),
-        Binding("k", "cursor_up", t("上移")),
-        Binding("p", "toggle_preview", t("预览")),
+        Binding("j", "cursor_down", t("下移"), show=False),
+        Binding("k", "cursor_up", t("上移"), show=False),
+        Binding("p", "toggle_preview", t("预览"), show=False),
         Binding("r", "rate", t("评分")),
         Binding("f", "favorite", t("收藏")),
         Binding("t", "add_tag", t("加标签")),
-        Binding("c", "comment", t("评论")),
-        Binding("n", "note", t("笔记")),
+        Binding("c", "comment", t("评论"), show=False),
+        Binding("n", "note", t("笔记"), show=False),
         Binding("s", "slideshow", t("幻灯片")),
-        Binding("space", "pause_slideshow", t("暂停/继续")),
-        Binding("g", "refresh", t("刷新")),
+        Binding("space", "pause_slideshow", t("暂停/继续"), show=False),
+        Binding("g", "refresh", t("刷新"), show=False),
         Binding("slash", "focus_search", t("搜索")),
-        Binding("b", "toggle_navigation", t("导航")),
-        Binding("left_square_bracket", "previous_page", t("上一页")),
-        Binding("right_square_bracket", "next_page", t("下一页")),
+        Binding("b", "toggle_navigation", t("导航"), show=False),
+        Binding("left_square_bracket", "previous_page", t("上一页"), show=False),
+        Binding("right_square_bracket", "next_page", t("下一页"), show=False),
     ]
 
     def __init__(self, cfg: Config):
@@ -170,7 +170,7 @@ class PicShelfTUI(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Input(placeholder=t("搜索：tag / -tag / artist:名 / album:ID / rating:>=8 / fav:"), id="search-input")
+        yield Input(placeholder=t("搜索文件名、标签…"), id="search-input")
         with Horizontal(id="body"):
             with Vertical(id="left"):
                 yield Tree(t("浏览"), id="nav-tree")
@@ -385,7 +385,7 @@ class PicShelfTUI(App):
                 if version != self.detail_version or not self.show_preview: return
                 result = content.copy()
                 result.append("\n")
-                result.append(Text.from_ansi(art) if art else Text(t("预览不可用；可继续整理，或安装 chafa / img2txt。")))
+                result.append(Text.from_ansi(art) if art else Text(t("安装 chafa 或 img2txt 后可预览图片。")))
                 detail.update(result)
             self.preview_worker = self.run_worker(preview(),group="preview",exclusive=True,exit_on_error=False)
 
@@ -449,7 +449,7 @@ class PicShelfTUI(App):
 
     def action_favorite(self) -> None:
         if self.selected_ids:
-            self._ask(t("收藏批次：on 收藏 / off 取消"), lambda value: self._prepare_batch({"kind":"favorite","value":value == "on"}) if value in ("on","off") else None)
+            self._ask(t("on 收藏 / off 取消收藏"), lambda value: self._prepare_batch({"kind":"favorite","value":value == "on"}) if value in ("on","off") else None)
             return
         iid = self._selected_id()
         if iid is None:
@@ -592,10 +592,23 @@ class PicShelfTUI(App):
         preview = batches.preview(self.conn,self.access,action,image_ids=ids)
         labels = {'rating':t('评分'),'favorite':t('收藏'),'tags_add':t('加标签'),'artist_add':t('关联艺术家'),
                   'album_add':t('加入手工专辑'),'workflow':t('整理状态')}
-        value = action.get('value',action.get('names',action.get('artist_id',action.get('album_id'))))
-        text = t("固定 {n} 张 · {operation}：{value}",n=preview['total'],operation=labels.get(action['kind'],action['kind']),value=value)
+        operation = labels.get(action['kind'], action['kind'])
+        value = action.get('value')
+        if action['kind'] == 'favorite':
+            operation, value = t('添加收藏' if value else '取消收藏'), None
+        elif action['kind'] == 'rating' and value is None:
+            operation = t('清除评分')
+        elif action['kind'] == 'workflow':
+            value = t('已整理' if value == 'done' else '待整理')
+        elif 'names' in action:
+            value = ', '.join(action['names'])
+        elif preview.get('target_snapshot'):
+            value = preview['target_snapshot']['name']
+        text = t("将修改 {n} 张图片", n=preview['total']) + " · " + operation
+        if value is not None:
+            text += ": " + str(value)
         text += "\n\n" + "\n".join(f"#{item['image_id']} {item['library_name']} / {item['rel_path']}" for item in preview['items'])
-        if preview['total'] > len(preview['items']): text += "\n" + t("仅显示前 {n} 张；完整范围已固定。",n=len(preview['items']))
+        if preview['total'] > len(preview['items']): text += "\n" + t("显示前 {n} 张",n=len(preview['items']))
         self._pause_playback()
         def apply(yes):
             if not yes:
@@ -604,7 +617,7 @@ class PicShelfTUI(App):
                 batches.queue(self.conn,self.access,preview['id'])
                 self._last_batch = preview['id'];self._last_batch_state = None
                 self.work_manager.start()
-                self.notify(t("批次已排队；Ctrl+J 查看进度与取消。"))
+                self.notify(t("已提交；Ctrl+J 查看进度。"))
             except ServiceError as error: self.notify(f"{error.detail} {error.next_step}",severity='error')
         self.push_screen(ConfirmScreen(text),apply)
 
@@ -646,7 +659,7 @@ class PicShelfTUI(App):
             with closing(dbm.open_db(self.cfg.db_path)) as conn:
                 try:
                     result = batches.undo(conn,self.cfg,self.access,batch_id)
-                    self.call_from_thread(self.notify,t("撤销结果：{state}",state=result['state']))
+                    self.call_from_thread(self.notify,t(STATES.get(result['state'], result['state'])))
                 except ServiceError as error:
                     self.call_from_thread(self.notify,f"{error.detail} {error.next_step}",severity='error')
         self.run_worker(undo,thread=True,exit_on_error=False,group='undo')
@@ -658,7 +671,7 @@ class PicShelfTUI(App):
             if value['state'] != self._last_batch_state:
                 self._last_batch_state = value['state']
                 if value['state'] not in ('queued','running','cancelling'):
-                    self.notify(t("批次结束：{state}；Ctrl+J 查看逐项结果。",state=value['state']))
+                    self.notify(t("{state}；Ctrl+J 查看结果。",state=t(STATES.get(value['state'], value['state']))))
                     if not isinstance(self.screen,ModalScreen): self._reload()
         except ServiceError as error:
             self._last_batch = None;self.notify(f"{error.detail} {error.next_step}",severity='error')
@@ -714,8 +727,10 @@ class PicShelfTUI(App):
         self.slideshow_paused = paused
         if paused or state['interval'] == 0: self.slideshow_timer.pause()
         self._display_playback()
-        if state['warnings']:
-            self.notify(t("播放队列 {n} 张；匹配 {matched} 张；上限 10000",n=state['total'],matched=state['matched_total']),severity='warning')
+        if state.get('candidate_limited'):
+            self.notify(t("本次从 {n} 张图片中随机抽取；共匹配 {total} 张。",n=state['candidate_count'],total=state['matched_total']),severity='warning')
+        elif state.get('truncated'):
+            self.notify(t("本次播放 {n} 张，已达到播放上限。",n=state['total']),severity='warning')
 
     def _display_playback(self, *, force=False):
         # Session access and the current item remain live even when rows are reused.

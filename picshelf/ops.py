@@ -10,6 +10,7 @@ import sqlite3
 
 from .db import transaction, utcnow
 from .i18n import t
+from .errors import ServiceError
 from .search import visible_images_sql
 from . import names as entity_names
 
@@ -146,7 +147,7 @@ def remove_tags(conn: sqlite3.Connection, image_id: int, names: list[str]) -> in
 
 
 def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50,
-              allowed_library_ids: list[int] | None = None) -> list[dict]:
+              allowed_library_ids: list[int] | None = None, *, offset: int = 0) -> list[dict]:
     visible, params = visible_images_sql(allowed_library_ids)
     sql = (
         f"WITH visible AS ({visible}) "
@@ -155,14 +156,20 @@ def list_tags(conn: sqlite3.Connection, q: str | None = None, limit: int = 50,
         "LEFT JOIN visible i ON i.id=it.image_id "
     )
     if q:
-        sql += "WHERE picshelf_name_key(t.name) LIKE ? OR EXISTS(SELECT 1 FROM tag_aliases a WHERE a.entity_id=t.id AND a.match_key LIKE ?) "
-        params += [f"%{entity_names.match_key(q)}%"] * 2
+        sql += "WHERE picshelf_name_key(t.name) LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM tag_aliases a WHERE a.entity_id=t.id AND a.match_key LIKE ? ESCAPE '\\') "
+        params += [entity_names.contains_pattern(q)] * 2
     sql += "GROUP BY t.id "
     if allowed_library_ids is not None:
         sql += "HAVING COUNT(i.id)>0 "
-    sql += "ORDER BY count DESC, t.name LIMIT ?"
-    params.append(max(1, min(limit, 500)))
-    return [{**dict(r), "name_aliases": entity_names.aliases(conn, "tag", r["id"])} for r in conn.execute(sql, params).fetchall()]
+    sql += "ORDER BY count DESC, t.name, t.id LIMIT ? OFFSET ?"
+    params.extend([max(1, min(limit, 500)), max(0, offset)])
+    result = [{**dict(row), "name_aliases": []} for row in conn.execute(sql, params)]
+    if result:
+        by_id = {item["id"]: item for item in result}
+        marks = ",".join("?" for _ in by_id)
+        for row in conn.execute(f"SELECT entity_id,name FROM tag_aliases WHERE entity_id IN ({marks}) ORDER BY id", list(by_id)):
+            by_id[row["entity_id"]]["name_aliases"].append(row["name"])
+    return result
 
 
 def rename_tag(conn: sqlite3.Connection, tag_id: int, new_name: str) -> dict:
@@ -170,12 +177,15 @@ def rename_tag(conn: sqlite3.Connection, tag_id: int, new_name: str) -> dict:
     if not new_name:
         raise ValueError(t("新名称不能为空"))
     new_name = entity_names.display(new_name)
-    exists = conn.execute("SELECT id FROM tags WHERE name=? AND id!=?", (new_name, tag_id)).fetchone()
-    if exists:
-        raise ValueError(t("标签已存在：{new_name}", new_name=new_name))
-    ns, _ = split_namespace(new_name)
-    conn.execute("UPDATE tags SET name=?, namespace=? WHERE id=?", (new_name, ns, tag_id))
-    conn.commit()
+    with transaction(conn):
+        current = conn.execute("SELECT name FROM tags WHERE id=?", (tag_id,)).fetchone()
+        if current is None:
+            raise ServiceError("entity_not_found", t("标签或艺术家不存在"), status=404,
+                               next_step=t("请刷新目录并重新选择条目"))
+        if current["name"] != new_name and any(iid != tag_id for iid in entity_names.find(conn, "tag", new_name)):
+            raise ValueError(t("标签已存在：{new_name}", new_name=new_name))
+        ns, _ = split_namespace(new_name)
+        conn.execute("UPDATE tags SET name=?, namespace=? WHERE id=?", (new_name, ns, tag_id))
     return {"id": tag_id, "name": new_name}
 
 
@@ -246,7 +256,7 @@ def get_artist(conn: sqlite3.Connection, artist_id: int,
 
 
 def list_artists(conn: sqlite3.Connection, q: str | None = None, limit: int = 100,
-                 allowed_library_ids: list[int] | None = None) -> list[dict]:
+                 allowed_library_ids: list[int] | None = None, *, offset: int = 0) -> list[dict]:
     visible, params = visible_images_sql(allowed_library_ids)
     sql = (
         f"WITH visible AS ({visible}) "
@@ -255,13 +265,13 @@ def list_artists(conn: sqlite3.Connection, q: str | None = None, limit: int = 10
         "LEFT JOIN visible i ON i.id=ia.image_id "
     )
     if q:
-        sql += "WHERE picshelf_name_key(a.name) LIKE ? OR picshelf_name_key(a.aliases) LIKE ? OR EXISTS(SELECT 1 FROM artist_aliases aa WHERE aa.entity_id=a.id AND aa.match_key LIKE ?) "
-        params += [f"%{entity_names.match_key(q)}%"] * 3
+        sql += "WHERE picshelf_name_key(a.name) LIKE ? ESCAPE '\\' OR picshelf_name_key(a.aliases) LIKE ? ESCAPE '\\' OR EXISTS(SELECT 1 FROM artist_aliases aa WHERE aa.entity_id=a.id AND aa.match_key LIKE ? ESCAPE '\\') "
+        params += [entity_names.contains_pattern(q)] * 3
     sql += "GROUP BY a.id "
     if allowed_library_ids is not None:
         sql += "HAVING COUNT(i.id)>0 "
-    sql += "ORDER BY image_count DESC, a.name LIMIT ?"
-    params.append(max(1, min(limit, 500)))
+    sql += "ORDER BY image_count DESC, a.name, a.id LIMIT ? OFFSET ?"
+    params.extend([max(1, min(limit, 500)), max(0, offset)])
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
@@ -354,6 +364,7 @@ def create_album(conn: sqlite3.Connection, name: str, library_id: int | None = N
     name = (name or "").strip()
     if not name:
         raise ValueError(t("专辑名不能为空"))
+    name = entity_names.display(name)
     cur = conn.execute(
         "INSERT INTO albums(library_id, name, kind, rel_dir, category, description, created_at) "
         "VALUES(?,?, 'manual', NULL, ?, ?, ?)",
@@ -364,6 +375,8 @@ def create_album(conn: sqlite3.Connection, name: str, library_id: int | None = N
 
 
 def update_album(conn: sqlite3.Connection, album_id: int, **fields) -> dict:
+    if fields.get("name") is not None:
+        fields["name"] = entity_names.display(fields["name"])
     allowed = {"name", "category", "description", "cover_image_id"}
     sets, params = [], []
     for k, v in fields.items():
@@ -442,32 +455,48 @@ def get_album(conn: sqlite3.Connection, album_id: int,
 
 
 def list_albums(conn: sqlite3.Connection, *, library_id: int | None = None,
-                allowed_library_ids: list[int] | None = None,
-                kind: str | None = None) -> list[dict]:
-    visible, params = visible_images_sql(allowed_library_ids)
-    sql = (
-        f"WITH visible AS ({visible}) "
-        "SELECT al.*, (SELECT COUNT(*) FROM album_images ai JOIN visible i ON i.id=ai.image_id "
-        "WHERE ai.album_id=al.id) AS image_count, "
-        "(al.cover_image_id IN (SELECT id FROM visible) AND EXISTS(SELECT 1 FROM album_images ai WHERE ai.album_id=al.id AND ai.image_id=al.cover_image_id)) AS cover_visible, "
-        "(SELECT name FROM libraries l WHERE l.id=al.library_id) AS library_name "
-        "FROM albums al WHERE 1=1"
-    )
+                allowed_library_ids: list[int] | None = None, kind: str | None = None,
+                q: str | None = None, limit: int | None = None, offset: int = 0,
+                for_edit: bool = False) -> list[dict]:
+    # Page album identities before reading membership counts and visible covers.
+    params = {}; clauses = []; scope = "i.missing=0"
     if library_id is not None:
-        sql += " AND al.library_id=?"
-        params.append(library_id)
+        clauses.append("al.library_id=:library"); params["library"] = library_id
     if allowed_library_ids is not None:
-        if not allowed_library_ids:
-            return []
-        marks = ",".join("?" * len(allowed_library_ids))
-        sql += f" AND al.library_id IN ({marks})"
-        params += allowed_library_ids
+        if not allowed_library_ids: return []
+        params.update({f"lib{n}": lid for n,lid in enumerate(allowed_library_ids)})
+        marks = ','.join(f":lib{n}" for n in range(len(allowed_library_ids)))
+        scope += f" AND i.library_id IN ({marks})"
+        own = f"al.library_id IN ({marks})"
+        if for_edit:
+            clauses.append(own + f" AND NOT EXISTS(SELECT 1 FROM album_images ai JOIN images i ON i.id=ai.image_id "
+                           f"WHERE ai.album_id=al.id AND i.library_id NOT IN ({marks}))")
+        else:
+            clauses.append(f"({own} OR (al.library_id IS NULL AND EXISTS(SELECT 1 FROM album_images ai "
+                           f"JOIN images i ON i.id=ai.image_id WHERE ai.album_id=al.id AND {scope})))")
     if kind:
-        sql += " AND al.kind=?"
-        params.append(kind)
-    sql += " ORDER BY al.library_id, al.kind DESC, al.name"
-    albums = [dict(r) for r in conn.execute(sql, params).fetchall()]
-    for album in albums:
-        if not album.pop("cover_visible"):
-            album["cover_image_id"] = None
-    return albums
+        clauses.append("al.kind=:kind"); params['kind'] = kind
+    if q:
+        clauses.append("picshelf_name_key(al.name) LIKE :name ESCAPE '\\'")
+        params['name'] = entity_names.contains_pattern(q)
+    where = ' AND '.join(clauses) or '1=1'
+    params.update(limit=-1 if limit is None else max(1,min(500,limit)), offset=max(0,offset))
+    sql = f"""WITH page AS (
+      SELECT al.* FROM albums al WHERE {where}
+      ORDER BY al.library_id,al.kind DESC,al.name,al.id LIMIT :limit OFFSET :offset
+    ) SELECT al.*,l.name AS library_name,
+      (SELECT COUNT(*) FROM album_images ai JOIN images i ON i.id=ai.image_id WHERE ai.album_id=al.id AND {scope}) AS image_count,
+      (SELECT i.id FROM album_images ai JOIN images i ON i.id=ai.image_id
+       WHERE ai.album_id=al.id AND i.id=al.cover_image_id AND {scope}) AS visible_cover_id,
+      (SELECT i.id FROM album_images ai JOIN images i ON i.id=ai.image_id
+       WHERE ai.album_id=al.id AND {scope} ORDER BY ai.position,ai.image_id LIMIT 1) AS first_image_id
+      FROM page al LEFT JOIN libraries l ON l.id=al.library_id
+      ORDER BY al.library_id,al.kind DESC,al.name,al.id"""
+    result = []
+    for row in conn.execute(sql,params):
+        album = dict(row)
+        album['cover_image_id'] = album.pop('visible_cover_id')
+        first = album.pop('first_image_id')
+        album['preview_image_id'] = album['cover_image_id'] or first
+        result.append(album)
+    return result

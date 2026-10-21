@@ -56,6 +56,8 @@ def test_library_access(conn, admin, alice, library):
     assert auth.library_access(conn, alice, library["id"]) == "edit"
     assert auth.visible_library_ids(conn, alice) == [library["id"]]
     assert auth.visible_library_ids(conn, admin) is None
+    assert auth.visible_library_ids(conn, alice, minimum="manage") == []
+    assert auth.visible_library_ids(conn, admin, minimum="manage") is None
 
 
 def test_disabled_user_filtered(conn):

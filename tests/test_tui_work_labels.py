@@ -9,8 +9,8 @@ from tests.test_tui_playback import generated_queue
 
 
 @pytest.mark.parametrize(('lang', 'kind_label', 'phases', 'item_labels', 'preview_label', 'unknown_total'), [
-    ('zh', '扫描', ('启动中', '等待图库', '处理结束', '已恢复'), ('待处理', '写入中', '创建中', '未变化', '已跳过'), '已预演', '待统计'),
-    ('en', 'Scan', ('Starting', 'Waiting for library', 'Finished', 'Restored'), ('Pending', 'Writing', 'Creating', 'Unchanged', 'Skipped'), 'Previewed', 'Not counted yet'),
+    ('zh', '扫描', ('启动中', '等待图库', '处理结束', '已恢复'), ('待处理', '写入中', '创建中', '未变化', '已跳过'), '待确认', '待统计'),
+    ('en', 'Scan', ('Starting', 'Waiting for library', 'Finished', 'Restored'), ('Pending', 'Writing', 'Creating', 'Unchanged', 'Skipped'), 'Unconfirmed', 'Not counted yet'),
 ])
 def test_work_panel_and_item_labels_use_selected_language(tmp_path, lang, kind_label, phases, item_labels, preview_label, unknown_total):
     from picshelf.tui import PicShelfTUI

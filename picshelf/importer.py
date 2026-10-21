@@ -119,12 +119,12 @@ def plan_import(
                 raise ValueError(t("源文件位于源目录之外，请检查符号链接"))
             sha = hashing.sha256_file(path)
             if sha in have:
-                items.append({"src": str(path), "dst": None, "action": "skip",
+                items.append({"src": str(path), "dst": None, "action": "skip", "sha256": sha,
                               "reason": t("库内已有相同内容")})
                 counts["skip"] += 1
                 continue
             if sha in planned:
-                items.append({"src": str(path), "dst": None, "action": "skip",
+                items.append({"src": str(path), "dst": None, "action": "skip", "sha256": sha,
                               "reason": t("与本次计划中的另一文件内容相同")})
                 counts["skip"] += 1
                 continue
@@ -154,7 +154,7 @@ def plan_import(
             if not dst.resolve().is_relative_to(root):
                 raise ValueError(t("目标路径位于库目录之外，请检查符号链接"))
             if skipped_dup:
-                items.append({"src": str(path), "dst": None, "action": "skip",
+                items.append({"src": str(path), "dst": None, "action": "skip", "sha256": sha,
                               "reason": t("目标位置已有相同文件")})
                 counts["skip"] += 1
                 continue

@@ -9,13 +9,52 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import StrictBool, BaseModel, ConfigDict
 
-from .. import import_plans
+from .. import import_plans, source_access, uploads
 from ..access import AccessContext
 from .types import Identifier, BodyIdentifier, MAX_INTEGER
 from .deps import Db, User, ensure_library_access
 from ..i18n import t
 
 router = APIRouter(prefix="/import", tags=["import"])
+
+
+class UploadBody(BaseModel):
+    library_id: BodyIdentifier
+
+
+class UploadPreview(BaseModel):
+    rename: StrictBool = True
+    album_id: BodyIdentifier | None = None
+
+
+@router.get('/sources')
+def browse_sources(conn: Db, user: User, library_id: Identifier | None = None, path: str | None = None):
+    access = AccessContext(user['id'])
+    if library_id is None:
+        access.require_capability(conn, 'admin')
+    else:
+        _target_library(conn, user, library_id)
+    return source_access.browse(conn, access, path)
+
+
+@router.post('/uploads')
+def create_upload(body: UploadBody, request: Request, conn: Db, user: User):
+    return uploads.create(conn, request.app.state.cfg, AccessContext(user['id']), body.library_id)
+
+
+@router.put('/uploads/{upload_id}/file')
+async def upload_file(upload_id: str, path: str, request: Request, conn: Db, user: User):
+    return await uploads.receive(conn, request.app.state.cfg, AccessContext(user['id']), upload_id, path, request)
+
+
+@router.post('/uploads/{upload_id}/plan')
+def preview_upload(upload_id: str, body: UploadPreview, request: Request, conn: Db, user: User):
+    return uploads.preview(conn, request.app.state.cfg, AccessContext(user['id']), upload_id, rename=body.rename, album_id=body.album_id)
+
+
+@router.post('/uploads/{upload_id}/discard')
+def discard_upload(upload_id: str, request: Request, conn: Db, user: User):
+    return uploads.discard(conn, request.app.state.cfg, AccessContext(user['id']), upload_id)
 
 class ImportBody(BaseModel):
     source_dir: str
@@ -24,6 +63,7 @@ class ImportBody(BaseModel):
     rename: StrictBool = True
     template: str | None = None
     template_fields: dict | None = None
+    album_id: BodyIdentifier | None = None
 
 
 class ExecuteBody(ImportBody):
@@ -44,7 +84,7 @@ def plan_import(body: ImportBody, conn: Db, user: User):
     try:
         return import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
                                         body.source_dir, mode=body.mode, rename=body.rename,
-                                        template=body.template, template_fields=body.template_fields)
+                                        template=body.template, template_fields=body.template_fields, album_id=body.album_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
@@ -57,7 +97,7 @@ def execute_import(body: ExecuteBody, request: Request, conn: Db, user: User):
     try:
         plan = import_plans.create_plan(conn, AccessContext(user["id"]), body.library_id,
                                           body.source_dir, mode=body.mode, rename=body.rename,
-                                          template=body.template, template_fields=body.template_fields)
+                                          template=body.template, template_fields=body.template_fields, album_id=body.album_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     return {**import_plans.execute_plan(conn, request.app.state.cfg, AccessContext(user["id"]), plan["plan_id"]),

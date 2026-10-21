@@ -32,6 +32,13 @@ SORTS = {
     "random": "RANDOM()",
 }
 
+# ID selection only needs the sort key, not every image's display metadata.
+_ID_SORTS = {
+    **SORTS,
+    "rating": "COALESCE((SELECT r.value FROM ratings r WHERE r.image_id=i.id AND r.user_id=:uid), -1) DESC, i.id DESC",
+    "avg": "(SELECT ROUND(AVG(r.value), 2) FROM ratings r WHERE r.image_id=i.id) DESC, i.id DESC",
+}
+
 MAX_QUERY_LENGTH = 4096
 _KEYWORDS = ("tag", "artist", "album", "rating", "avg", "fav", "ext", "file",
              "rated", "width", "height", "orientation", "imported", "workflow", "missing")
@@ -212,6 +219,15 @@ def _parse_op(v: str) -> tuple[str, float] | None:
         return None
 
 
+def tag_match_sql(parameter: str) -> str:
+    """Resolve matching names once, then use the tag-to-image index."""
+    return (
+        "i.id IN (SELECT image_id FROM image_tags WHERE tag_id IN ("
+        f"SELECT id FROM tags WHERE picshelf_name_key(name)={parameter} UNION "
+        f"SELECT entity_id FROM tag_aliases WHERE match_key={parameter}))"
+    )
+
+
 def build_where(
     parsed: ParsedQuery,
     user_id: int,
@@ -250,11 +266,7 @@ def build_where(
             subs = []
             for v in values:
                 key = nparam(match_key(v))
-                tag_expr = (
-                    "EXISTS(SELECT 1 FROM image_tags it JOIN tags tg ON tg.id=it.tag_id "
-                    f"WHERE it.image_id=i.id AND (picshelf_name_key(tg.name)={key} OR EXISTS("
-                    f"SELECT 1 FROM tag_aliases ta WHERE ta.entity_id=tg.id AND ta.match_key={key})))"
-                )
+                tag_expr = tag_match_sql(key)
                 if kind == "tag":
                     subs.append(f"({tag_expr})")
                 else:
@@ -268,10 +280,10 @@ def build_where(
             for v in values:
                 pat = nparam(f"%{_like(match_key(v))}%")
                 subs.append(
-                    "EXISTS(SELECT 1 FROM image_artists ia JOIN artists a ON a.id=ia.artist_id "
-                    f"WHERE ia.image_id=i.id AND (picshelf_name_key(a.name) LIKE {pat} ESCAPE '\\' "
-                    f"OR picshelf_name_key(a.aliases) LIKE {pat} ESCAPE '\\' OR EXISTS("
-                    f"SELECT 1 FROM artist_aliases aa WHERE aa.entity_id=a.id AND aa.match_key LIKE {pat} ESCAPE '\\')))"
+                    "i.id IN (SELECT image_id FROM image_artists WHERE artist_id IN ("
+                    f"SELECT id FROM artists WHERE picshelf_name_key(name) LIKE {pat} ESCAPE '\\' "
+                    f"OR picshelf_name_key(aliases) LIKE {pat} ESCAPE '\\' UNION "
+                    f"SELECT entity_id FROM artist_aliases WHERE match_key LIKE {pat} ESCAPE '\\'))"
                 )
             piece = "(" + " OR ".join(subs) + ")"
 
@@ -353,7 +365,7 @@ def build_where(
 
 
 _SELECT = """
-SELECT i.id, i.library_id, i.rel_path, i.filename, i.ext, i.size_bytes,
+SELECT i.id, i.library_id, l.name AS library_name, i.rel_path, i.filename, i.ext, i.size_bytes,
        i.width, i.height, i.mtime, i.sha256, i.phash, i.thumb_rel, i.preview_rel, i.imported_at, i.missing,
        i.phash_version, i.derivative_version, i.scan_error_code, i.scan_error_detail, i.verified_at,
        COALESCE((SELECT w.state FROM image_workflow w WHERE w.image_id=i.id AND w.user_id=:uid), 'inbox') AS workflow_state,
@@ -362,7 +374,7 @@ SELECT i.id, i.library_id, i.rel_path, i.filename, i.ext, i.size_bytes,
        (SELECT COUNT(*) FROM ratings r WHERE r.image_id=i.id) AS rating_count,
        COALESCE((SELECT 1 FROM favorites f WHERE f.image_id=i.id AND f.user_id=:uid), 0) AS favorite,
        (SELECT COUNT(*) FROM image_tags it WHERE it.image_id=i.id) AS tag_count
-FROM images i
+FROM images i JOIN libraries l ON l.id=i.library_id
 WHERE {where}
 """
 
@@ -379,7 +391,9 @@ def search_images(
     extra_where: list[str] | None = None,
     extra_params: dict | None = None,
     now: datetime | None = None,
+    ids_only: bool = False,
 ) -> dict:
+    """Return a consistent count and page; queue builders can omit display metadata."""
     now = now or datetime.now(timezone.utc)
     parsed = parse(query)
     if not isinstance(sort, str) or sort not in SORTS:
@@ -398,7 +412,14 @@ def search_images(
     conn.execute('SAVEPOINT search_read')
     try:
         count = conn.execute(f"SELECT COUNT(*) AS n FROM images i WHERE {where}", params).fetchone()["n"]
-        rows = conn.execute(_SELECT.format(where=where) + f" ORDER BY {order} LIMIT {limit} OFFSET {offset}", params).fetchall()
+        page = f"SELECT i.id FROM images i WHERE {where} ORDER BY {_ID_SORTS[sort]} LIMIT {limit} OFFSET {offset}"
+        if ids_only:
+            rows = conn.execute(page, params).fetchall()
+        elif sort != "random":
+            # Sort and page IDs before calculating per-image metadata summaries.
+            rows = conn.execute(_SELECT.format(where=f"i.id IN ({page})") + f" ORDER BY {order}", params).fetchall()
+        else:
+            rows = conn.execute(_SELECT.format(where=where) + f" ORDER BY {order} LIMIT {limit} OFFSET {offset}", params).fetchall()
     finally:
         conn.execute('RELEASE search_read')
     return {"total": int(count), "items": [dict(r) for r in rows], "limit": limit, "offset": offset,

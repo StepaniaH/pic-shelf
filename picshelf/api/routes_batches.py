@@ -47,8 +47,8 @@ def list_batches(conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),li
 
 
 @router.get("/{batch_id}")
-def get(batch_id: str,conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(200,ge=1,le=1000)):
-    return batches.get(conn,AccessContext(user["id"]),batch_id,offset=offset,limit=limit)
+def get(batch_id: str,conn: Db,user: User,offset: int=Query(0,ge=0,le=MAX_INTEGER),limit: int=Query(200,ge=1,le=1000),include_items: bool=True):
+    return batches.get(conn,AccessContext(user["id"]),batch_id,offset=offset,limit=limit,include_items=include_items)
 
 
 @router.post("/{batch_id}/execute")

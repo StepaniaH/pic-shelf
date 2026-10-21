@@ -1,11 +1,8 @@
 # Metadata and provenance
 
-A file is a sequence of bytes at a library-relative path. An image record is the
-catalog identity to which people attach ratings, tags, artists and notes. Moving
-a file within a library preserves that identity only when scanning can match it
-unambiguously. Identical bytes at different paths do not prove that two records
-represent the same work. Name matching and association merges never merge image
-records or rewrite original files.
+Each image has a catalog ID that links its file to ratings, tags, artists and
+notes. Scanning preserves the ID when a moved file has an unambiguous content
+match. [Works](works.md) group related files while keeping their individual metadata.
 
 | Term | Meaning |
 | --- | --- |
@@ -27,7 +24,7 @@ name still selects its existing entry; otherwise an ambiguous match returns
 Structured aliases participate in tag search, artist search, suggestions and
 name-based association. Existing free-text artist aliases remain unchanged and
 continue to support substring search. Structured aliases are returned separately
-as `name_aliases`. An alias is not permission to read the entry's hidden images.
+as `name_aliases`. Search results follow the current library permissions.
 
 Administrators can preview an alias or transfer selected associations between
 two existing tags or artists. Each preview lists source, target, image IDs,
@@ -45,15 +42,11 @@ picshelf metadata merge-preview artist 4 9 101 105
 picshelf metadata execute <plan-id> --yes
 ```
 
-These operations transfer metadata associations, not image identity, files or
-copyright ownership. They do not delete source tags or artists.
-
 ## Sources and time
 
 Source records preserve an original filename, collected time, creation time,
 URL and note independently. `origin` distinguishes `manual`, `imported` and
-`extracted` statements; the creator and recording time are retained. These fields
-do not establish a license, and Pic Shelf does not fetch a source URL.
+`extracted` statements; the creator and recording time are retained. Source URLs are stored as text.
 
 Managed imports record the original filename before normalization and the time
 the file operation completed. Source directories are excluded from the image's
