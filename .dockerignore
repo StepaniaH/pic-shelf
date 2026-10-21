@@ -14,3 +14,15 @@ AGENTS.md
 TASKS.md
 docs/decisions.md
 docs/research
+docs/screenshots
+.agents
+.codex
+.claude
+.mirasim
+.nowledge
+.scratch
+CLAUDE.md
+.env
+.env.*
+*.key
+*.pem

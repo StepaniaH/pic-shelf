@@ -41,4 +41,9 @@ markers = [
 packages = ["picshelf"]
 
 [tool.hatch.build.targets.sdist]
-exclude = ["/AGENTS.md", "/TASKS.md", "/docs/decisions.md", "/docs/research", "/data", "/.uv-cache", "/.venv", "/.codex", "/.agents"]
+exclude = [
+  "/AGENTS.md", "/CLAUDE.md", "/TASKS.md", "/docs/decisions.md",
+  "/docs/research", "/docs/screenshots", "/data", "/.uv-cache", "/.venv",
+  "/.codex", "/.agents", "/.claude", "/.mirasim", "/.nowledge", "/.scratch",
+  "/.env", "/.env.*", "*.key", "*.pem",
+]
