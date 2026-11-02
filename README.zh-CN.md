@@ -6,7 +6,7 @@
 
 自托管图片库，提供 Web、TUI 和 CLI。浏览图片，用标签和专辑整理收藏，按保存的搜索条件播放幻灯片。全端支持中英双语，零遥测，无需外部服务。
 
-[使用说明](docs/usage.md) · [部署](docs/deployment.md) · [参与开发](CONTRIBUTING.md)
+[使用说明](docs/usage.md) · [部署](docs/zh/deployment.md) · [架构](docs/zh/architecture.md) · [参与开发](CONTRIBUTING.md)
 
 ## 功能
 
@@ -50,7 +50,7 @@ docker compose run --rm picshelf picshelf init --admin admin
 docker compose up -d
 ```
 
-挂载图片目录，并让容器 UID 1000 能写入数据卷。服务默认绑定本机。挂载、远程访问与升级方法见[部署说明](docs/deployment.md)。预构建镜像尚未发布。
+挂载图片目录，并让容器 UID 1000 能写入数据卷。服务默认绑定本机。挂载、远程访问与升级方法见[部署说明](docs/zh/deployment.md)。预构建镜像尚未发布。
 
 ## 维护收藏
 

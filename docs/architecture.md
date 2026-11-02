@@ -1,165 +1,400 @@
-# Pic Shelf 架构
+# Pic Shelf architecture
 
-Pic Shelf 是单机存储的自托管图片库。Python 服务层为 Web、CLI、TUI 提供共同的数据操作；原图保存在注册的库目录中，SQLite 和派生图片保存在数据目录中。
+Pic Shelf is a self-hosted image library with single-machine storage. A Python service layer provides
+shared data operations for the Web, CLI and TUI interfaces; originals stay in registered library
+directories, while SQLite and derivative images live in the data directory.
 
-## 模块与边界
+## Modules and boundaries
 
-| 模块 | 职责 |
+| Module | Responsibility |
 | --- | --- |
-| `config.py` | 数据目录与运行路径；显式参数优先于环境变量 |
-| `db.py` | 每个调用方的 SQLite 连接、事务配置与版本化迁移 |
-| `auth.py` | 口令校验、签名令牌、组能力与库授权 |
-| `access.py` / `errors.py` | 显式服务身份、实时授权检查与可识别的错误类别 |
-| `catalog.py` | 三端共用的查询输入、筛选与评分业务操作 |
-| `hashing.py` | SHA-256、64 位 pHash、EXIF 方向归一化与 WebP 派生图 |
-| `importer.py` | 导入预演、去重、跨平台目标命名与底层文件操作 |
-| `import_plans.py` | 完整预演快照、逐项日志、取消、重试及中断恢复 |
-| `relocations.py` / `reorganize.py` / `templates.py` | 核验副本重绑定根目录、保留图片身份的显式文件重组与确定性命名 |
-| `coordination.py` | 按物理根目录协调同一数据目录内的跨进程写操作 |
-| `jobs.py` / `worker.py` | 持久化任务、逐项进度、权限复核和有界本机执行进程 |
-| `indexer.py` | 增量扫描、移动检测、缺失标记与文件夹专辑维护 |
-| `search.py` | 搜索语法、参数化 SQL、可见图片范围与分页 |
-| `ops.py` | 评分、收藏、标签、艺术家、评论、笔记、专辑操作 |
-| `libsvc.py` | 库注册、可见范围统计与重复检测 |
-| `play.py` | 物化播放队列与游标 |
-| `api/` | HTTP 参数、认证、权限、错误响应与静态文件服务 |
-| `cli.py` / `tui.py` | 本地管理入口；不经 HTTP 调用服务层 |
-| `web/js/` | 原生 ES modules；路由、视图、查看器、幻灯片与共享焦点管理 |
+| `config.py` | Data directory and runtime paths; explicit arguments take precedence over environment variables |
+| `db.py` | Per-caller SQLite connections, transaction configuration and versioned migrations |
+| `auth.py` | Password verification, signed tokens, group capabilities and library grants |
+| `access.py` / `errors.py` | Explicit service identity, live authorization checks and identifiable error categories |
+| `catalog.py` | Query input, filtering and rating operations shared by all three interfaces |
+| `hashing.py` | SHA-256, 64-bit pHash, EXIF orientation normalization and WebP derivatives |
+| `importer.py` | Import preview, de-duplication, cross-platform destination naming and low-level file operations |
+| `import_plans.py` | Complete preview snapshots, per-item logs, cancellation, retry and interruption recovery |
+| `relocations.py` / `reorganize.py` / `templates.py` | Rebinding roots to verified copies, explicit reorganization that preserves image identity, and deterministic naming |
+| `coordination.py` | Cross-process write coordination within one data directory, keyed by physical root |
+| `jobs.py` / `worker.py` | Persistent jobs, per-item progress, permission rechecks and a bounded local executor |
+| `indexer.py` | Incremental scanning, move detection, missing markers and folder-album maintenance |
+| `search.py` | Search syntax, parameterized SQL, visible-image scope and pagination |
+| `ops.py` | Rating, favorites, tags, artists, comments, notes and album operations |
+| `libsvc.py` | Library registration, visible-scope statistics and duplicate detection |
+| `play.py` | Materialized playback queues and cursors |
+| `api/` | HTTP parameters, authentication, permissions, error responses and static file serving |
+| `cli.py` / `tui.py` | Local administrative entry points; they call the service layer without HTTP |
+| `web/js/` | Native ES modules; routing, views, viewer, slideshow and shared focus management |
 
-HTTP 负责读取并验证登录凭据；共享服务显式接收 `AccessContext`，每次操作重新读取账户与库授权，不长期缓存可见范围。`catalog.ImageQuery` 统一 HTTP、CLI 和 TUI 的查询筛选。评分服务同时检查对象、权限和输入；底层 `ops.py`、`search.py` 保留兼容的存储接口，直接使用它们的调用方仍须检查授权。现有 HTTP 权限辅助函数已委托给 `access.py`。
+HTTP reads and validates login credentials; shared services receive an explicit `AccessContext` and
+re-read the account and library grants on every operation rather than caching a visible scope.
+`catalog.ImageQuery` unifies query filtering across HTTP, CLI and TUI. The rating service checks the
+object, the permission and the input together; the lower-level `ops.py` and `search.py` keep compatible
+storage interfaces, so callers that use them directly must still check authorization. Existing HTTP
+permission helpers now delegate to `access.py`.
 
-CLI/TUI 视为拥有数据目录权限的本地管理工具。查询选择某用户视角时遵守该用户的可见范围；本地评分显式使用管理上下文并把评分归给所选用户。HTTP 不能从请求参数开启这个本地管理模式。文件导入与扫描继续由各自服务负责文件不变量，播放负责队列快照，`jobs.py` 和 `worker.py` 负责持久任务与本机执行器。Web 没有构建步骤，不加载远程字体、脚本或统计服务。 下拉框保留原生 `select` 和表单事件，使用共享 CSS 统一触发器与选项列表；支持 `appearance: base-select` 的浏览器显示应用样式的列表，其余浏览器使用系统选择器。展开列表位于浏览器顶层，不受弹窗滚动裁切；Escape 先关闭列表，再关闭父弹窗。
+The CLI and TUI are treated as local administrative tools that already have access to the data
+directory. When a query selects a user's perspective it honours that user's visible scope; local rating
+uses an administrative context explicitly and attributes the rating to the selected user. HTTP cannot
+enable this local administrative mode from request parameters. File import and scanning keep their own
+file invariants; playback owns queue snapshots; `jobs.py` and `worker.py` own persistent jobs and the
+local executor. The web frontend has no build step and loads no remote fonts, scripts or analytics.
 
-Web 的 `source.js` 管理图片分页、取消和按 ID 去重。分页偏移按服务端返回行数推进，重置或离开页面时取消旧请求及等待中的翻页。搜索、筛选和排序共用页面请求管理，同一页面的新请求取消旧请求；候选结果加载失败时保留现有列表。刷新超过单页上限的已加载范围时，分段读取，全部成功后替换列表。每次路由创建独立内容节点，管理页各标签也使用路由。图片深链接直接核对目标图片权限，无需逐页寻找。
+Native `select` elements and form events are preserved for dropdowns, with shared CSS unifying the
+trigger and the option list. Browsers supporting `appearance: base-select` show the application-styled
+list; others use the system picker. An expanded list sits in the browser's top layer, so dialog
+scrolling never clips it; Escape closes the list first, then the parent dialog.
 
-普通刷新共用进行中的读取；元数据修改或撤销后的刷新使先前读取失效，重新请求，避免把修改前的结果当成保存后的状态。
+`source.js` manages image pagination, cancellation and de-duplication by ID. Page offsets advance by the
+number of rows the server returned, and resetting or leaving the page cancels old requests and pending
+page fetches. Search, filtering and sorting share per-page request management, so a new request on the
+same page cancels the previous one; if candidate results fail to load, the current list stays. Refreshing
+an already-loaded range larger than one page reads it in segments and replaces the list only after all
+segments succeed. Every route creates its own content node, and admin tabs are routed the same way.
+Deep links to an image check permission for that image directly instead of paging through to find it.
 
-`image-grid.js` 在超过 240 张后只挂载可见区域及附近行，保留最多 240 张近期卡片供回滚复用。选中状态保存在图片 ID 集合中，键盘焦点和滚动位置独立于卡片挂载；列数变化时重新计算浏览位置。接近底部时续页，失败后等待重试。离开页面会取消请求并释放观察器和缓存。
+Ordinary refreshes share an in-flight read; a metadata edit or undo invalidates earlier reads and
+re-requests, so pre-edit results are never presented as the post-save state.
 
-图片摘要在分页查询中关联图库名称，混合图库网格在文件名下显示所属图库，卡片高度保持固定。批量状态读取带请求代次和取消信号；取消、继续或撤销使之前的读取失效。批量历史先按创建者和当前图库权限过滤，再稳定排序分页，详情读取继续复核权限。
+`image-grid.js` mounts only the visible region and nearby rows once more than 240 cards exist, keeping
+at most 240 recent cards for scroll-back reuse. Selection is held as a set of image IDs; keyboard focus
+and scroll position are independent of which cards are mounted, and the browsing position is
+recalculated when the column count changes. Approaching the bottom loads the next page and waits to
+retry after a failure. Leaving the page cancels requests and releases observers and caches.
 
-查看器与幻灯片共用 `viewer-load.js` 的解码和预加载缓存，每个打开的查看界面最多保留三张预览，进行中的请求也可复用。原图不预加载；关闭界面释放缓存。播放响应附带当前队列中下一张的媒体信息，跨轮重新抽样时不预测下一张。每次切图仍读取当前授权后的元数据，再发布匹配的图片和说明。
+Image summaries join the library name in paged queries, so mixed-library grids show the library below
+the filename while card height stays fixed. Bulk status reads carry a request generation and
+cancellation signal; cancel, resume or undo invalidates earlier reads. Batch history filters by creator
+and current library permission in SQL, then pages in a stable order, and detail reads recheck permission.
 
-`theme.js` 是样式表之前执行的本地脚本，在首屏绘制前读取 `picshelf.appearance`，把明暗模式和配色解析为共享 CSS 变量。九组配色各含深浅两套颜色；预设使用 Navidrome Stat 的对应色值。系统变化和同源标签页的存储事件更新整个界面，存储被禁用时仍保留本次会话的选择。`appearance.js` 在账户菜单中提供原生单选卡片，选择立即生效，不修改账户或服务器配置。图片画布保持中性深色，工具栏、详情、表单和菜单使用当前主题。
+The viewer and slideshow share the decode and preload caches in `viewer-load.js`, keeping at most three
+previews per open view and reusing in-flight requests. Originals are never preloaded, and closing the
+view releases the cache. Playback responses include the media information for the next item in the
+current queue, but a cross-round resample does not predict the next image. Each transition still reads
+the currently authorized metadata before publishing the matching image and captions.
 
-`dialog.js` 管理嵌套弹窗和焦点。登录失效时按从上到下的顺序关闭弹窗，查看器和播放层释放图片、草稿与计时器，再显示登录页。取消播放设置后，迟到的创建会话响应不会打开播放层。
+`theme.js` is a local script that runs before the stylesheets, reading `picshelf.appearance` before the
+first paint and resolving colour mode and palette into shared CSS variables. Each of the nine palettes
+has a light and a dark variant; the presets use the corresponding Navidrome Stat values. System changes
+and storage events from same-origin tabs update the whole interface, and the session's choice survives
+when storage is disabled. `appearance.js` offers native radio cards in the account menu; a choice takes
+effect immediately and changes neither the account nor the server configuration. The image canvas stays
+neutral and dark, while toolbars, details, forms and menus follow the current theme.
 
-`libraries.js` 负责图库注册与设置，`importer.js` 负责来源选择、预览、执行和结果跳转。图库管理员可从图库页面导入，目标列表按当前管理权限查询；源目录授权仍由服务端逐次核验。搜索筛选先加载候选结果，成功后替换网格；保存查询使用独立对话框，原始表达式与显示设置按需展开。
+`dialog.js` manages nested dialogs and focus. When a session expires, dialogs close from the top down,
+the viewer and playback layer release images, drafts and timers, and the sign-in page appears. After
+cancelling playback settings, a late session-creation response never opens the playback layer.
 
-导入表单复用于添加图库、新建专辑和已有集合的原地弹窗。创建集合时延迟到预览再取得目标身份，同一弹窗保留来源选择、预览和执行状态，正常操作不切换路由。内容和键盘顺序一致：名称与目标、来源选择、所选图片缩略图、单个高级选项、底部提交。选择按钮只负责选图，主要按钮随选择切换创建或预览；缩略图对象 URL 在替换选择和关闭时释放。关闭弹窗中止尚未完成的来源请求并释放未执行的上传暂存；已排队任务继续运行。完成关闭后刷新原列表，保留筛选、排序及原页面；焦点回到触发按钮。旧导入深链接仍可打开弹窗，管理页不再提供独立的导入标签。
+`libraries.js` handles library registration and settings, while `importer.js` handles source selection,
+preview, execution and result navigation. A library manager can import from the library page, and the
+destination list is queried under current administrative permission; source-directory authorization is
+still verified per request on the server. Search filters load candidate results first and replace the
+grid on success; saving a query uses its own dialog, with the raw expression and display settings
+expanded on demand.
 
-专辑导入把 `album_id` 保存在不可变预演中，创建、读取、逐文件执行和发布结果时重新核验专辑编辑权限及所属图库。只能指定同库手工专辑。导入扫描后，按预演中的内容哈希关联当前库中的有效图片，已存在的重复内容也可加入专辑，失败或无法解码的图片不加入。关联在后台任务内完成，关闭浏览器不会丢失目标专辑。
+The import form is reused for adding a library, creating an album, and adding to an existing collection
+in an in-place dialog. When creating a collection, the destination identity is resolved at preview time;
+the same dialog keeps source selection, preview and execution state, and normal use does not change the
+route. Content and keyboard order match: name and destination, source selection, selected thumbnails, a
+single advanced option, and the submit button. The select button only chooses images, while the primary
+button switches between create and preview as the selection changes; thumbnail object URLs are released
+when the selection is replaced and when the dialog closes. Closing the dialog aborts unfinished source
+requests and releases staged uploads that never executed; already-queued jobs continue. After a completed
+close, the original list refreshes while keeping filters, sorting and the page, and focus returns to the
+triggering button. Old deep links still open the dialog; the admin page no longer offers a separate
+import tab.
 
-Web 导入优先使用原生文件/文件夹选择和拖拽。`import-files.js` 保留相对目录，循环读取拖入目录的全部批次。浏览器来源通过 `uploads.py` 分文件流式写入数据目录下的私有暂存区，再复用固定快照和后台导入；不尝试从浏览器文件名猜测服务端绝对路径。服务器来源通过 `source_access.browse` 浏览，非管理员只能进入已批准且物理身份仍匹配的源根。管理员可在创建图库前浏览源目录；新专辑按当前所选图库核验权限，浏览和取消不创建集合。Web 默认自动硬链接/复制；移动只在高级选项显式选择后确认。
+Album import stores `album_id` in an immutable preview and rechecks album edit permission and its library
+when creating, reading, executing per file and publishing results. Only manual albums in the same library
+are allowed. After the import scan, valid images in the current library are matched by the content hash
+recorded in the preview, so duplicates that already exist can still join the album, while failed or
+undecodable images are left out. Association happens inside a background job, so closing the browser
+does not lose the target album.
 
-上传记录绑定创建者及目标库，文件写入、封存与清理使用跨进程锁。导入启动在同一上传锁内提交开始状态，清理和丢弃在锁内重新核验状态，防止移除已开始导入的暂存源。每次请求复核当前管理权限，相对路径禁止越界与符号链接跳转。接收上限为单张 256 MiB、每次 10000 张/2 GiB，每账户最多四个未完成上传。上传正文绕过普通 JSON 的 1 MiB 缓冲限制，由接收端按声明长度及实际流量校验；来源校验和登录鉴权照常执行。完整导入后释放暂存副本，保留结果；未开始的暂存 24 小时到期，由后续上传清理，已开始的部分结果保留以便重试。
+Web import prefers native file and folder selection plus drag and drop. `import-files.js` preserves
+relative directories and reads every batch of a dropped directory in a loop. Browser sources stream
+through `uploads.py`, one file at a time, into a private staging area inside the data directory and then
+reuse the fixed snapshot and background import; server-side absolute paths are never guessed from browser
+filenames. Server sources browse through `source_access.browse`, and non-administrators may only enter
+approved source roots whose physical identity still matches. Administrators can browse before creating a
+library; a new album checks permission against the currently selected library, and browsing or cancelling
+creates nothing. The web app hardlinks or copies by default; move requires an explicit choice under
+advanced options.
 
-名称显示保留原文，`names.py` 统一 NFC、空白和大小写匹配；旧名称不自动合并。`metadata.py` 管理来源、每用户待整理状态及标签证据，`entity_edits.py` 在单事务内核对预演与当前关联后转移明确选中的关系。来源实体保留，目标已有关联的作者和时间不变；详情及来源遵守当前库权限。
+Upload records bind the creator and destination library, and writes, sealing and cleanup use a
+cross-process lock. An import start is committed inside the same upload lock, and cleanup or discard
+rechecks the state under the lock, so a staged source that has already started importing is never
+removed. Each request rechecks current administrative permission, and relative paths forbid traversal
+and symbolic-link escapes. Receiving limits are 256 MiB per file, 10,000 files or 2 GiB per request, and
+at most four unfinished uploads per account. Upload bodies bypass the 1 MiB buffering limit for ordinary
+JSON, and the receiver validates the declared length against the actual traffic; origin checks and login
+authentication still apply. After a complete import the staged copy is released and the result kept;
+staged uploads that never started expire after 24 hours and are cleaned by a later upload, while partial
+results from started imports are kept for retry.
 
-## 数据流
+Display names keep their original text, and `names.py` unifies NFC, whitespace and case matching; old
+names are never merged automatically. `metadata.py` manages sources, per-user organization state and tag
+evidence, and `entity_edits.py` verifies the preview against current associations inside one transaction
+before transferring explicitly selected relationships. Source entities are retained, and the author and
+timestamp of associations already on the destination stay unchanged; details and sources follow current
+library permission.
 
-Web 新建接收导入的图库时，名称为必填项，服务端保存位置可留空。省略位置时由 `libsvc.create_managed_library` 在数据目录的 `libraries/` 下分配独立目录，仍执行重叠检查与正常授权；浏览已有目录的索引库继续要求显式路径。
+## Data flow
+
+When the Web app creates a library that receives imports, the name is required and the server-side
+location may be left empty. With no location, `libsvc.create_managed_library` allocates a separate
+directory under `libraries/` in the data directory, still running overlap checks and normal
+authorization; indexed libraries that browse an existing directory still require an explicit path.
 
 ```text
-外部目录 → 导入预演 → 确认 → hardlink / copy / move → 库目录
-库目录 → 扫描 → SHA-256 / pHash / 派生图 → 图片索引 + 文件夹专辑
-搜索条件 + 用户可见库 → 参数化 SQL → 分页结果
-搜索条件 + 用户可见库 → 物化播放队列 → Web / TUI / mpv
+external directory → import preview → confirm → hardlink / copy / move → library directory
+library directory → scan → SHA-256 / pHash / derivative → image index + folder albums
+search conditions + user's visible libraries → parameterized SQL → paged results
+search conditions + user's visible libraries → materialized playback queue → Web / TUI / mpv
 ```
 
-扫描分两阶段处理新路径：先记录已见图片，再将新路径的 SHA-256 与本轮未见记录匹配。仅一条旧记录与一个新路径能够唯一匹配时更新路径，保留 ID 和全部人工关系。多份相同内容无法唯一匹配时报告 ambiguous_moves，保留旧记录及关系，不把新路径随意指派或自动入库；恢复原路径后可以继续扫描。原路径确实消失的记录标为缺失。
+Scanning handles new paths in two phases: it records the images already seen, then matches the SHA-256 of
+each new path against records not seen this round. Only when exactly one old record and one new path match
+is the path updated, preserving the ID and every manual relationship. Multiple identical contents that
+cannot be matched uniquely are reported as `ambiguous_moves`: old records and relationships are kept, and
+the new path is neither assigned arbitrarily nor added automatically. Scanning continues normally once the
+original path returns. Records whose original path has genuinely disappeared are marked missing.
 
-库在首次成功核对后保存物理目录身份；后续扫描在文件边界及缺失判定前检查它。目录被替换或挂载离线时停止，不把新空目录当作原库。旧库尚无目录身份且首次核对找不到任何已知内容时，也不批量标记缺失。读取与解码错误单独记录在 scan_error_code/scan_error_detail，已有人工关系保留；再次成功读取后清除错误。遍历失败子树保留旧索引。
+A library stores its physical directory identity after the first successful verification, and later scans
+check it before file boundaries and missing-day decision. If the directory is replaced or the mount is
+offline, scanning stops rather than treating a new empty directory as the original library. An older
+library without a recorded identity, whose first verification finds no known content, is also not marked
+missing in bulk. Read and decode errors are recorded separately in `scan_error_code` and
+`scan_error_detail`, manual relationships are preserved, and the error clears after a later successful
+read. A failed subtree keeps its old index.
 
-文件夹专辑由扫描器维护，包括清空已移走全部图片的文件夹及修复封面。扫描器不改变手工专辑。增量判定使用文件大小、修改时间和派生图存在性；内容被原地改写而属性不变时需全量扫描。
+Folder albums are maintained by the scanner, including clearing albums whose images have all moved away
+and repairing covers. The scanner never changes manual albums. Incremental decisions use file size,
+modification time and derivative presence; content rewritten in place with unchanged attributes requires
+a full scan.
 
-导入计划持久化完整条目、选项、创建者、到期时间以及源和目标根目录身份。Web 使用保存的计划 ID 执行；CLI 可用 `import-execute` 执行同一快照。预演后新增的源文件不会进入旧计划。文件名按 Unicode NFC、大小写冲突、保留名称和组件长度处理，所有名称变化在预演中展示。
+An import plan persists every item, the options, the creator, the expiry time and the identities of the
+source and destination roots. The Web app executes by saved plan ID; the CLI can execute the same
+snapshot with `import-execute`. Source files added after the preview do not enter an old plan. Filenames
+are normalized for Unicode NFC, case collisions, reserved names and component length, and every name
+change is shown in the preview.
 
-文件操作用独占创建和逐项日志保存目标身份，核对源哈希及文件属性。失败副本只在身份仍匹配且内容为预期源的前缀时续写；后来修改或无法确认归属的文件保留并报告冲突，不自动清理。目标落盘和日志提交先于 move 的源移除。成功项不会重复执行，取消在文件之间生效。未完成的已创建文件不会在扫描中被当成成功图片。解码错误保留文件记录和原始字节，并让导入返回部分失败。
+File operations use exclusive creation and a per-item log to record destination identity, verifying
+source hash and file attributes. A failed copy resumes only when the identity still matches and the
+content is a prefix of the expected source; files modified later, or whose ownership cannot be
+confirmed, are kept and reported as conflicts rather than cleaned up automatically. The destination
+write and the log commit precede removing the source in move mode. Successful items are never executed
+twice, and cancellation takes effect between files. Created files that never completed are not treated
+as successful images by a scan. A decode error keeps the file record and the original bytes and makes
+the import report partial failure.
 
-库用途持久化为 `indexed` 或 `managed`；历史库保留 NULL，不猜测用途或移动文件。默认导入方式独立保存；新注册拒绝重复、父子重叠和循环路径，只索引库仅要求原目录可读。库设置变更与文件任务共用写锁，未完成导入执行前再次核对用途。安装包要求显式数据目录，只有可识别的源码目录保留仓库内 `data/` 默认值。
+A library's purpose persists as `indexed` or `managed`; historical libraries keep NULL, and the purpose is
+neither guessed nor files moved. The default import mode is stored separately. New registrations reject
+duplicates, parent/child overlap and cycles, and an indexed library only requires its original directory
+to be readable. Library setting changes and file jobs share a write lock, and the purpose is rechecked
+before an unfinished import executes. Installed packages require an explicit data directory; only a
+recognizable source checkout keeps the repository's `data/` default.
 
-同一数据目录的扫描和导入通过文件锁协调；同一物理根目录的不同库别名共享锁，其他库可继续操作。进程退出释放锁，再次执行计划恢复未完成项；首次预演到期后须重做，已开始的过期操作可显式重试并重新核对当前文件和权限。索引和文件系统之间仍有崩溃窗口，无法证明目标归属时报告冲突。硬链接继续共享源内容；独立副本须用 copy。整个目录不是一次原子事务。
+Scanning and importing within one data directory coordinate through file locks; different library aliases
+of the same physical root share a lock, while other libraries continue. Exiting the process releases the
+lock, and executing a plan again resumes unfinished items; a plan that expires before it starts must be
+redone, while an expired operation that already started can be retried explicitly with current files and
+permissions rechecked. A crash window remains between the index and the filesystem, and an unprovable
+destination ownership is reported as a conflict. Hardlinks continue to share source content; an
+independent copy requires copy mode. A whole directory is never one atomic transaction.
 
-根目录重绑定和文件重组预演先取得目录快照，再在数据库写事务之外核验文件内容；保存计划或发布目录变化前，重新核对权限、目录身份和修订号。核验期间允许其他元数据写入；若快照失效则拒绝旧计划，要求重新预演。通用事务与嵌套保存点由 `db.transaction` 管理。
+Root rebinding and reorganization previews take a directory snapshot first, then verify file contents
+outside the database write transaction; permission, directory identity and revision are rechecked before
+saving a plan or publishing a directory change. Other metadata writes may proceed during verification,
+and a stale snapshot rejects the old plan in favour of a new preview. General transactions and nested
+savepoints are managed by `db.transaction`.
 
-派生图按图片 ID 分片，文件名包含算法版本与原文件摘要，最大边分别为 400 和 1600 像素。先写同目录临时文件并落盘，再原子替换；两份输出和源一致性检查成功后才更新索引引用。新内容处理失败不会把旧索引指向混合的输出。旧的未引用派生图暂时保留，可在诊断后重建运行缓存。
+Derivatives are sharded by image ID, and their filenames include the algorithm version and a digest of
+the source file, with longest edges of 400 and 1600 pixels. A temporary file in the same directory is
+written and flushed, then replaced atomically; index references update only after both outputs and the
+source-consistency check succeed. A failed new-content pass never leaves the old index pointing at mixed
+output. Previously unreferenced derivatives are kept for a while and can be rebuilt as a runtime cache
+after diagnostics.
 
-扫描使用 `hashing.encode_image` 一次解码、方向处理和颜色归一化，同一份像素生成 pHash 与两份派生图。入口返回内容摘要、尺寸、输出路径和算法版本；处理前后核对文件身份和内容。两份输出先暂存，源核验通过后才发布。旧 `phash_file`、`make_derivatives` 函数接口保持兼容。
+Scanning calls `hashing.encode_image` to decode, normalize orientation and normalize colour once,
+producing the pHash and both derivatives from the same pixels. The entry point returns the content
+digest, dimensions, output paths and algorithm version, checking file identity and content before and
+after processing. Both outputs are staged first and published only after the source verifies. The older
+`phash_file` and `make_derivatives` function interfaces remain compatible.
 
-编码版本 3 保留 EXIF 方向与 sRGB 颜色处理，修复灰度及 RGB PNG 透明色（tRNS）的 alpha 丢失；pHash 使用白底合成后的 32×32 图计算 64 位结果。派生图与 pHash 均升级版本，避免复用旧透明色结果；动画和多页图片仍使用第一帧/首页。算法版本单独记录，相似比较不混合不同版本。旧记录保留原版本及有效输出，安装、启动和未变更文件的增量扫描不会自动重写；通过显式 rebuild --outdated-only 更新版本 0–2 的记录，保留图片 ID 和人工关联。完整扫描仍可核验相同大小和时间戳但不同内容的文件。
+Encoding version 3 keeps EXIF orientation and sRGB colour handling and fixes alpha loss for greyscale and
+RGB PNG transparency (tRNS); the pHash is computed as a 64-bit result from a 32×32 image composited on
+white. Both derivatives and pHash versions were raised so old transparency results are not reused;
+animated and multipage images still use the first frame or page. The algorithm version is recorded
+separately, and similarity comparison never mixes versions. Old records keep their version and valid
+output, and installing, starting or an incremental scan of unchanged files never rewrites them
+automatically; version 0–2 records are updated only through an explicit `rebuild --outdated-only`, which
+preserves image IDs and manual associations. A full scan can still verify files that differ in content
+but share size and timestamp.
 
-## 后台任务
+## Background jobs
 
-Web 扫描与导入使用新增后台入口，返回任务 ID；旧同步 HTTP 路径仍返回原有结果。CLI 默认等待，`--background` 只排队，由 Web 服务或 `picshelf worker` 消费。任务保存操作者、初始库目录身份、参数、请求标识、工作集合、状态和逐项结果。创建者与管理员可以查看任务，但每次读取和每个文件边界都重新检查当前管理权限。
+Web scanning and importing use a new background entry point that returns a job ID; the older synchronous
+HTTP path still returns its original result. The CLI waits by default, and `--background` only queues,
+leaving consumption to the web service or `picshelf worker`. A job stores the operator, the initial
+library directory identity, parameters, request identifier, work set, status and per-item results.
+Creators and administrators can view jobs, but current administrative permission is rechecked on every
+read and at every file boundary.
 
-图库页在扫描提交结果未知时复用请求标识；收到任务 ID 后写入页面地址，刷新页面接续读取。扫描结束或失败均恢复按钮，成功后刷新图库；新扫描复用进度区域，历史任务仍可从任务列表访问。
+When a scan submission on the library page has an unknown outcome, the page reuses the request
+identifier; once the job ID arrives it is written into the page address, so a refresh continues reading
+the same job. The button is restored on completion or failure, and the library refreshes on success. A
+new scan reuses the progress area while historical jobs remain reachable from the job list.
 
-Web 生命周期最多启动两个本机子进程；同一数据目录的所有执行器共用两个执行槽位和物理库文件锁。每个执行器使用独立数据库连接。任务锁仍被占用时状态维持运行；锁已释放的运行记录会在查询或执行器检查时标为中断，等待显式重试。停服先请求安全停止，超时终止的文件操作按导入日志恢复。一个任务失败不会停止队列。
+The Web lifecycle starts at most two local subprocesses; all executors for one data directory share two
+execution slots and a physical library file lock. Each executor uses its own database connection. A job
+whose lock is still held stays running; a run record whose lock has been released is marked interrupted on
+query or executor check and waits for an explicit retry. Stopping the service requests a safe stop, and
+file operations terminated after the timeout are recovered from the import log. One failing job does not
+stop the queue.
 
-扫描首次执行时保存路径集合，重试只选择未完成或失败的路径。每个文件完成后提交索引及进度，取消前已完成的索引不会回滚；缺失标记和文件夹专辑物化仅在走完选定范围后进行。后续新增文件留给新扫描。导入继续原预演，文件操作错误与最终扫描错误分别保留。
+The first scan execution stores its path set, and a retry selects only unfinished or failed paths. The
+index and progress for each file are committed as it completes, and a cancellation never rolls back
+index entries already finished; missing markers and folder-album materialization happen only after the
+selected range completes. Files added later wait for a new scan. An import continues its original
+preview, keeping file-operation errors separate from final scan errors.
 
-每个文件的进度只更新对应日志项，并在同一事务内按状态变化调整任务计数；开始、结束和恢复时才全量同步导入日志。执行期间复用不可变预演快照，逐文件权限、取消状态和源目录授权仍实时检查。限定范围的重建只记录选中路径的遍历错误。任务历史在 SQL 中按创建者和当前管理权限分页，再读取本页详情，避免逐条授权全部历史任务。
+Per-file progress updates only the matching log item and adjusts job counters within the same transaction
+as the status change; start, finish and resume are the only points that synchronize the import log in
+full. Execution reuses the immutable preview snapshot while per-file permission, cancellation state and
+source-directory authorization are still checked live. A scoped rebuild records traversal errors only for
+selected paths. Job history pages in SQL by creator and current administrative permission, then reads
+details for that page, avoiding per-row authorization of all history.
 
-恢复数据库使用排他维护锁，与扫描、导入和任务队列写入互斥。该文件锁不能约束直接打开 SQLite 的其他软件；恢复前仍须停止 Web、TUI 和其他元数据写入命令。任务记录随数据库备份恢复，恢复后先检查库路径与任务，再显式重试。
+Restoring a database takes an exclusive maintenance lock that is mutually exclusive with scanning,
+importing and job-queue writes. That file lock cannot constrain other software that opens SQLite
+directly, so Web, TUI and other metadata-writing commands must still stop before a restore. Job records
+are restored with the database backup; after a restore, check library paths and jobs before an explicit
+retry.
 
-## 数据库（schema v15）
+## Database (schema v15)
 
-SQLite 启用 WAL、外键和 busy timeout。API 为每个请求创建连接；关闭线程检查是为了允许 FastAPI 的请求依赖与同步处理器在不同工作线程运行，不代表可任意并发共享连接。
+SQLite uses WAL, foreign keys and a busy timeout. The API creates a connection per request; the
+closed-thread check exists so FastAPI request dependencies and synchronous handlers can run on different
+worker threads, and does not mean connections may be shared freely.
 
-| 表组 | 内容 |
+| Table group | Contents |
 | --- | --- |
-| `users`, `groups`, `user_groups` | 账号、组与能力 |
-| `revoked_tokens`, `login_attempts` | 会话摘要撤销与有时限的登录失败计数；用户会话版本位于 users |
-| `import_source_roots` | 非管理员导入允许的源根、物理身份与移动权限 |
-| `import_uploads` | 浏览器上传所有者、目标库、暂存目录、容量、到期时间及预演关联 |
-| `metadata_batches`, `metadata_batch_items`, `metadata_versions` | 固定选择、分块事务、逐项前后状态及存储层字段版本，用于冲突检测与撤销 |
-| `saved_queries` | 个人查询/智能专辑规则、排序、显示偏好与编辑版本；结果每次按当前权限计算 |
-| `play_rules`, `play_candidates`, `play_requests` | 个人播放配置、启动时的候选快照与原子导航重试记录；会话另存暂停/版本/轮次及数量边界 |
-| `libraries`, `library_grants` | 库目录及组的 view/edit/manage 授权 |
-| `images` | 相对路径、尺寸、文件属性、哈希、派生图路径、缺失状态 |
-| `albums`, `album_images` | 文件夹/手工专辑、成员与封面 |
-| `tags`, `image_tags` | 标签和图片关联 |
-| `artists`, `image_artists` | 艺术家资料和图片关联 |
-| `ratings`, `favorites` | 每用户评分与收藏 |
-| `image_sources`, `image_workflow`, `tag_claims` | 来源、每用户整理状态、标签来源与确认/移除记录 |
-| `tag_aliases`, `artist_aliases`, `entity_edit_plans` | 结构化别名及固定范围的关联变更预演 |
-| `comments`, `notes` | 评论、文本笔记及软删除；geometry 为后续区域笔记预留 |
-| `play_sessions`, `play_items` | 队列条件、游标与物化的图片顺序 |
-| `scans`, `meta` | 扫描记录与 schema 版本 |
-| `import_plans`, `import_plan_items` | 不可变导入快照、所有者、执行状态和逐项恢复日志 |
-| `jobs`, `job_items` | 本机持久化队列、请求幂等标识、状态、工作集合和单项错误 |
-| `portable_ids`, `portable_import_ids`, `manifest_plans` | 跨数据库稳定身份、导入身份别名与固定范围的元数据导入；全局目录修订号防止预演后修改再改回 |
-| `relocation_plans` | 固定目标根身份及完整相对文件清单；重组沿用导入逐项日志，记录图片 ID 与目录发布状态 |
-| `works`, `work_images`, `pending_work_images` | 手工作品、独立文件版本与待匹配稳定引用；不继承或合并图片元数据 |
+| `users`, `groups`, `user_groups` | Accounts, groups and capabilities |
+| `revoked_tokens`, `login_attempts` | Session-digest revocation and time-limited failed-login counters; the user session version lives on users |
+| `import_source_roots` | Source roots non-administrators may import from, their physical identity and move permission |
+| `import_uploads` | Browser upload owner, destination library, staging directory, capacity, expiry and preview association |
+| `metadata_batches`, `metadata_batch_items`, `metadata_versions` | Fixed selections, chunked transactions, per-item before/after state and storage-layer field versions for conflict detection and undo |
+| `saved_queries` | Personal query and smart-album rules, sorting, display preferences and edit version; results are recomputed under current permission |
+| `play_rules`, `play_candidates`, `play_requests` | Personal playback configuration, the candidate snapshot taken at start, and atomic navigation retry records; sessions separately store pause, version, round and count bounds |
+| `libraries`, `library_grants` | Library directories and group view/edit/manage grants |
+| `images` | Relative path, dimensions, file attributes, hashes, derivative paths and missing state |
+| `albums`, `album_images` | Folder and manual albums, members and covers |
+| `tags`, `image_tags` | Tags and image associations |
+| `artists`, `image_artists` | Artist profiles and image associations |
+| `ratings`, `favorites` | Per-user ratings and favorites |
+| `image_sources`, `image_workflow`, `tag_claims` | Sources, per-user organization state, tag provenance and confirmation or removal records |
+| `tag_aliases`, `artist_aliases`, `entity_edit_plans` | Structured aliases and scoped previews of association changes |
+| `comments`, `notes` | Comments, text notes and soft deletion; geometry is reserved for future region notes |
+| `play_sessions`, `play_items` | Queue conditions, cursor and materialized image order |
+| `scans`, `meta` | Scan records and schema version |
+| `import_plans`, `import_plan_items` | Immutable import snapshots, owner, execution state and per-item recovery log |
+| `jobs`, `job_items` | Local persistent queue, idempotent request identifiers, status, work set and per-item errors |
+| `portable_ids`, `portable_import_ids`, `manifest_plans` | Cross-database stable identity, imported identity aliases and scoped metadata import; a global catalog revision prevents preview-then-change-then-change-back |
+| `relocation_plans` | Fixed destination root identity and the complete relative file list; reorganization reuses the import per-item log, recording image IDs and directory publication state |
+| `works`, `work_images`, `pending_work_images` | Manual works, independent file versions and pending stable references; image metadata is never inherited or merged |
 
-迁移只追加到 `MIGRATIONS` 并更新 `SCHEMA_VERSION`，不重写已发布版本。所有待执行版本的结构变更与版本记录在同一个 `BEGIN IMMEDIATE` 事务中提交；失败或进程退出会回滚。并发初始化在取得写锁后重新检查版本。迁移脚本不得自行提交、回滚、修改 PRAGMA 或附加数据库，也不得调用 `executescript()` 隐式提交外围事务。
+Migrations only append to `MIGRATIONS` and update `SCHEMA_VERSION`; published versions are never
+rewritten. Every pending structural change and its version record commit in one `BEGIN IMMEDIATE`
+transaction, so a failure or process exit rolls back. Concurrent initialization rechecks the version
+after taking the write lock. Migration scripts must not commit or roll back themselves, change PRAGMAs,
+attach databases, or call `executescript()`, which would implicitly commit an outer transaction.
 
-已有数据库升级前，在数据目录的 `migration-backups/` 保存 SQLite 一致性快照，包含已提交 WAL 内容，权限为仅当前用户可读写。快照失败时不执行迁移。重复打开当前版本不创建快照；未来版本、损坏版本记录和非本项目数据库会被拒绝。回退需要停止所有写入后恢复快照，没有通用逆向迁移。升级前必须停止旧程序，不能依赖新进程的版本检查约束仍在运行的旧代码。
+Before upgrading an existing database, a consistent SQLite snapshot is written under
+`migration-backups/` in the data directory, including committed WAL content and readable only by the
+current user. If the snapshot fails, no migration runs. Reopening the current version creates no
+snapshot; future versions, corrupted version records and databases from other projects are rejected.
+Rolling back requires stopping all writers and restoring the snapshot; there is no general reverse
+migration. The old program must stop before upgrading, because a new process's version check cannot
+constrain old code that is still running.
 
-备份和恢复使用 SQLite backup API，避免丢失或混入 WAL 中的已提交数据。应用连接在关闭前持有共享维护锁；恢复使用排他锁，先验证归档成员、校验和、schema 与关联，在临时数据库完成升级，再保存当前快照并恢复。原图、密钥和配置分别备份；恢复使会话失效，待执行文件任务转为中断。只读 `check` 检查文件、派生图和关联，不自动修复或删除。详见[备份恢复](backups.md)。
+Backup and restore use the SQLite backup API, so committed data in the WAL is neither lost nor mixed in.
+Application connections hold a shared maintenance lock until closed; restore takes an exclusive lock,
+validates archive members, checksums, schema and associations, completes the upgrade in a temporary
+database, then saves the current snapshot and restores. Originals, the signing key and configuration are
+backed up separately; a restore invalidates sessions and turns pending file jobs into interrupted ones.
+The read-only `check` inspects files, derivatives and associations without repairing or deleting.
+See [backup and restore](backups.md).
 
-## 权限与接口
+## Permissions and interfaces
 
-组能力为 view、rate、comment、note、tag_edit、manage_library、admin。库授权为 view、edit、manage，后者包含前者。全局管理员可访问所有库；新库默认授予 admins 管理权限、members 查看权限。
+Group capabilities are view, rate, comment, note, tag_edit, manage_library and admin. Library grants are
+view, edit and manage, where manage includes the others. Global administrators can reach every library;
+new libraries grant admins manage and members view by default.
 
-图片查询、媒体、统计和关联实体查询都按可见库过滤。派生图和原图也检查路径仍位于对应根目录内，防止扫描后替换符号链接造成越界读取。全局用户数量只对管理员返回。
+Image queries, media, statistics and related-entity queries all filter by visible libraries. Derivatives
+and originals also verify that the path still lies inside its root, preventing an out-of-bounds read
+caused by a symbolic link replaced after scanning. The global user count is returned to administrators
+only.
 
-认证使用有成本上限的 scrypt 与带过期时间、用户会话版本的 HMAC 令牌。改密、账户启停和显式撤销会让旧会话失效；单次登出记录令牌摘要。Cookie 为 HttpOnly、SameSite=Lax，HTTPS 或明确 HTTPS 站点配置启用 Secure；Cookie 变更请求校验来源，脚本使用 Bearer。登录失败有短时限流，并发密码检查和请求体有上限。默认只绑定本机，HTTP 本身不提供 TLS；当前仍是私有网络内的可信共享模型。
+Authentication uses a cost-bounded scrypt and HMAC tokens with expiry and a user session version.
+Changing a password, enabling or disabling an account and explicit revocation invalidate old sessions;
+a single sign-out records the token digest. Cookies are HttpOnly and SameSite=Lax, with Secure enabled
+under HTTPS or an explicit HTTPS site configuration; state-changing cookie requests verify origin, while
+scripts use Bearer tokens. Failed logins are rate-limited for a short period, and concurrent password
+checks and request bodies are bounded. The default bind is loopback, and HTTP itself provides no TLS;
+the current model is trusted sharing within a private network.
 
-全局名称/作者资料修改需要 admin 能力，单图关联需要 tag_edit 和 edit 库授权。非管理员导入需要管理员批准源根，移动还需额外批准；预演和逐文件执行检查目录身份、符号链接与当前授权。API 和媒体均不持久缓存。完整权限表、升级影响及代理信任配置见 [安全说明](security.md)。
+Changing global names or artist profiles needs the admin capability, and single-image associations need
+tag_edit plus an edit library grant. Non-administrator import needs an administrator-approved source
+root, and move needs additional approval; preview and per-file execution check directory identity,
+symbolic links and current grants. Neither API nor media responses are persistently cached. The full
+permission table, upgrade effects and proxy trust configuration are in [security](security.md).
 
-接口路径和命令示例见 [使用说明](usage.md)，部署与卷配置见 [部署指南](deployment.md)。交互式 API 文档位于 `/api/docs`。
+Interface paths and command examples are in [usage](usage.md); deployment and volume configuration are in
+[deployment](deployment.md). Interactive API documentation is at `/api/docs`.
 
-## 性能与边界
+## Performance and limits
 
-- 搜索单页最多 10,000 张；正常 Web 页为 120 张，TUI 页为 500 张。时间、路径和评分排序先筛选本页 ID，再读取评分、标签等摘要；计数和列表使用同一读取快照。路径与评分排序附带 ID 排序，避免相同排序值导致分页不稳定。顺序播放只读取 ID，并与浏览共用来源筛选条件。
-- 标签、艺术家搜索先解析匹配名称，再通过关联索引查找图片。标签列表批量读取别名；名称列表支持 `limit` / `offset`，搜索中的 `%` 和 `_` 按字面匹配。
-- 播放队列最多 10,000 张。shuffle/random 均为一次不重复的随机排列，循环重复该队列。
-- Web 查看器通过会话参数 `start_image_id` 定位当前图片；服务端在同一事务内校验图片属于授权后的队列并设置游标。起点不写入播放规则，不改变队列排序或数量限制。
-- TUI 播放表格每页最多 500 行，通过有界关联查询只读取名称、尺寸、个人评分和收藏。同页复用当前页，跨页、换账户/队列、重新乱序、元数据修订或显式刷新时重新查询。普通导航版本不用于失效判断；账户、队列授权、当前详情和当前文件仍实时复核，权限失败清空显示并暂停。
-- 精确查重使用 SHA-256 分组。相似查重保留首代表语义；半径 1–5 使用稀疏位段候选，6–8 用位集合统计相同位段，按原顺序核对完整距离。索引按指纹算法版本隔离，最坏仍为平方级。元数据清单在 SQL 中筛选范围；所有导出表、身份别名与字段版本的事务触发器更新目录修订号，用于检测预演后的修改与修改再改回。测量方法与实际边界见[性能说明](performance.md)。
-- 后台执行上限为两个任务，同一物理库最多一个；兼容的同步扫描同样占用执行槽，嵌套后台扫描复用已有槽。单文件先检查 256 MiB 编码体积与 33,554,432 像素上限（按 16 字节/像素分配 512 MiB 输入预算）。这是解码准入限制，不是对原生编解码器的操作系统 RSS 硬上限；实际峰值须按工作负载测量。大图或慢存储会延长单文件取消等待。Web 以 0.5 至 3 秒退避轮询状态，断线后重试；列表和轮询使用 `include_items=false`，不读取或统计逐项日志，展开详情后再分页加载。每次读取仍复核权限与进程状态。锁仅覆盖使用同一数据目录的本机进程。
-- 大库性能取决于查询、图片大小和硬件，尚无固定容量承诺。全文索引、向量索引、视频/归档导入应按实际需求单独评估。
-- 默认数据路径在源码检出中锚定到项目；安装 wheel 时应显式设置可写的 `--data` 或 `PICSHELF_DATA`。
-- 中英双语使用中文消息 ID 和英文目录；API 语言通过 ContextVar 按请求隔离。新增交互文本应同时维护相应目录。
+- A search page holds at most 10,000 images; a normal web page is 120 and a TUI page is 500. Sorting by
+  time, path or rating first filters the page's IDs and then reads ratings, tags and other summaries;
+  counts and lists use the same read snapshot. Path and rating sorts append an ID tiebreaker so equal
+  values cannot make pagination unstable. Sequential playback reads IDs only, sharing the browsing
+  source filters.
+- Tag and artist searches resolve matching names first, then find images through association indexes.
+  Tag lists read aliases in bulk; name lists support `limit` / `offset`, and `%` and `_` in a search are
+  matched literally.
+- A playback queue holds at most 10,000 images. Shuffle and random are a single non-repeating permutation
+  that loops.
+- The web viewer locates the current image through the session parameter `start_image_id`; the server
+  verifies inside one transaction that the image belongs to the authorized queue and sets the cursor.
+  The starting point is not written into play rules and does not change queue order or count limits.
+- A TUI playback table holds at most 500 rows per page and reads only names, dimensions, the personal
+  rating and favorites through a bounded join. The same page is reused; a different page, account or
+  queue, a reshuffle, a metadata revision or an explicit refresh re-queries. The ordinary navigation
+  version is not used for invalidation, while account, queue authorization, current details and the
+  current file are still rechecked live; a permission failure clears the display and pauses.
+- Exact duplicate detection groups by SHA-256. Similar detection keeps the first-representative
+  semantics; radii 1–5 use sparse-bit candidates counted by popcount, 6–8 use bit-set counts of matching
+  segments, and the full distance is verified in original order. Indexes are isolated by fingerprint
+  algorithm version and the worst case stays quadratic. Metadata manifests filter their scope in SQL;
+  transaction triggers on every exported table, identity alias and field version update the catalog
+  revision, which detects edits made or reverted after a preview. Measurement method and actual limits
+  are in [performance](performance.md).
+- Background execution runs at most two jobs, and at most one per physical library; a compatible
+  synchronous scan occupies an execution slot too, and a nested background scan reuses an existing slot.
+  A single file is first checked against a 256 MiB encoded size and a 33,554,432-pixel ceiling (a 512 MiB
+  input budget at 16 bytes per pixel). That is a decode admission limit, not a hard OS RSS cap on native
+  codecs; actual peaks must be measured per workload. Large files or slow storage extend the per-file
+  cancellation wait. The web app polls status with a 0.5 to 3 second backoff and retries after a
+  disconnect; lists and polls use `include_items=false` and do not read or count per-item logs, loading
+  details by page after expansion. Every read still rechecks permission and process state. Locks cover
+  only local processes using the same data directory.
+- Large-library performance depends on queries, image sizes and hardware, with no fixed capacity promise
+  yet. Full-text indexes, vector indexes and video or archive import should be evaluated per actual need.
+- The default data path is anchored to the project in a source checkout; a wheel install must set a
+  writable `--data` or `PICSHELF_DATA` explicitly.
+- Bilingual support uses Chinese message IDs with an English catalog; the API language is isolated per
+  request through a ContextVar. New interactive text must be maintained in both catalogs.
