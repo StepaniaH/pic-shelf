@@ -28,7 +28,20 @@ SKIP_DIRS = {
 }
 
 
-def _iter_image_files(root: Path, onerror=None):
+def _iter_image_files(root: Path, onerror=None, *, only_paths=None):
+    if only_paths is not None:
+        for rel in sorted(only_paths):
+            path = root / rel
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                if onerror:
+                    onerror(exc)
+            else:
+                yield path
+        return
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=onerror):
         dirnames[:] = sorted(
             d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS
@@ -67,7 +80,12 @@ def scan_library(
     check: Callable[[], None] | None = None,
     item_result: Callable[[str, list[str]], None] | None = None,
     only_paths: set[str] | None = None,
+    target_paths: set[str] | None = None,
 ) -> dict:
+    if target_paths is not None:
+        if only_paths is not None:
+            raise ValueError('only_paths and target_paths are mutually exclusive')
+        only_paths = set(target_paths)
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
         raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
@@ -77,14 +95,15 @@ def scan_library(
     with library_write_lock(cfg, root), worker_slot(cfg):
         try:
             return _scan_library(conn, cfg, library_id, full=full, progress=progress,
-                                 check=check, item_result=item_result, only_paths=only_paths)
+                                 check=check, item_result=item_result, only_paths=only_paths,
+                                 targeted=target_paths is not None)
         except BaseException:
             conn.rollback()
             raise
 
 
 def _scan_library(conn, cfg, library_id, *, full=False, progress=None, check=None,
-                  item_result=None, only_paths=None) -> dict:
+                  item_result=None, only_paths=None, targeted=False) -> dict:
     lib = conn.execute("SELECT * FROM libraries WHERE id=?", (library_id,)).fetchone()
     if lib is None:
         raise ValueError(t("库 #{library_id} 不存在", library_id=library_id))
@@ -107,7 +126,8 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None, check=Non
         if progress:
             progress({"scan_id": scan_id, "phase": "starting"})
         return _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, full=full,
-                           progress=progress, check=check, item_result=item_result, only_paths=only_paths)
+                           progress=progress, check=check, item_result=item_result, only_paths=only_paths,
+                           targeted=targeted)
     except BaseException:
         conn.rollback()
         conn.execute("UPDATE scans SET finished_at=?,status='interrupted' WHERE id=?", (utcnow(), scan_id))
@@ -116,7 +136,7 @@ def _scan_library(conn, cfg, library_id, *, full=False, progress=None, check=Non
 
 
 def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, full=False,
-                progress=None, check=None, item_result=None, only_paths=None):
+                progress=None, check=None, item_result=None, only_paths=None, targeted=False):
     def guard():
         if check:
             check()
@@ -133,6 +153,9 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
     stats = {"added": 0, "updated": 0, "moved": 0, "missing": 0, "unchanged": 0, "errors": [], "ambiguous_moves": []}
     seen_ids: set[int] = set()
     folder_ids: dict[str, list[int]] = {}
+    if targeted:
+        folder_ids = {('' if Path(rel).parent == Path('.') else Path(rel).parent.as_posix()): []
+                      for rel in only_paths}
     pending_new: list[tuple[str, str, Path, os.stat_result]] = []
     blocked_paths: set[str] = set()
 
@@ -189,7 +212,9 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                 seen_ids.add(int(row["id"]))
                 if not row["missing"]:
                     parent = Path(rel).parent.as_posix()
-                    folder_ids.setdefault("" if parent == "." else parent, []).append(int(row["id"]))
+                    parent = "" if parent == "." else parent
+                    if not targeted or parent in folder_ids:
+                        folder_ids.setdefault(parent, []).append(int(row["id"]))
 
     def walk_error(exc):
         # 无法遍历的子树不等于文件消失，保留其索引与关联。
@@ -211,7 +236,9 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
 
     # ---------- 阶段 1：walk ----------
     count = 0
-    for path in _iter_image_files(root, onerror=walk_error):
+    files = (_iter_image_files(root, onerror=walk_error, only_paths=only_paths) if targeted else
+             _iter_image_files(root, onerror=walk_error))
+    for path in files:
         guard()
         rel = path.relative_to(root).as_posix()
         if only_paths is not None and rel not in only_paths:
@@ -351,10 +378,12 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
 
     # ---------- 阶段 4：软删除 ----------
     guard()
-    if not root_confirmed:
+    # Targeted refresh preserves all out-of-scope rows; it cannot certify an
+    # unverified legacy root for a later full-library missing-file pass.
+    if not root_confirmed and not targeted:
         raise ServiceError("library_root_unverified", t("首次核对根目录时未找到匹配的旧图片，未标记缺失"), status=409,
                            next_step=t("请检查挂载和库路径，恢复可核对的原图片后重新扫描"))
-    if lib["root_device"] is None:
+    if lib["root_device"] is None and root_confirmed:
         conn.execute("UPDATE libraries SET root_device=?,root_inode=? WHERE id=?", (*root_identity, library_id))
     for rel_path, row in existing.items():
         if int(row["id"]) not in seen_ids and not row["missing"]:
@@ -363,8 +392,9 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
 
     # ---------- 专辑物化 ----------
     # 空文件夹也要清理旧成员与封面；不删除专辑本身或手工专辑。
-    for album in conn.execute("SELECT rel_dir FROM albums WHERE library_id=? AND kind='folder'", (library_id,)):
-        folder_ids.setdefault(album["rel_dir"], [])
+    if not targeted:
+        for album in conn.execute("SELECT rel_dir FROM albums WHERE library_id=? AND kind='folder'", (library_id,)):
+            folder_ids.setdefault(album["rel_dir"], [])
     for rel_dir, ids in folder_ids.items():
         album_id = _ensure_album(conn, library_id, rel_dir, lib["name"])
         members = {
