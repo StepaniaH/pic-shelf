@@ -41,3 +41,25 @@ See [packaging](docs/packaging.md) for installation and container checks, and
 - Append database migrations in `picshelf/db.py`. Preserve image IDs and metadata.
 - Describe the behavior change and actual test results in pull requests. Use
   concise English commits with a Conventional Commits prefix.
+
+## Maintainer releases
+
+Releases are tag-only: pushing a `v*` tag creates the GitHub release from
+`CHANGELOG.md` and publishes the image. Nothing is published from a branch.
+
+Before tagging:
+
+1. Move the notes out of `## [Unreleased]` into a dated `## [X.Y.Z]` section and set
+   the same version in `pyproject.toml` and `picshelf/__init__.py`.
+2. Run `make check` and `make verify` on a clean checkout of `main`.
+3. Confirm the repository has valid `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets.
+4. Create and push an annotated tag:
+
+   ```sh
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+The tag publishes `stepaniah/pic-shelf:X.Y.Z` and moves `latest`, and the same image to
+`ghcr.io/stepaniah/pic-shelf`. Only tag a prerelease when moving `latest` is intended.
+Do not move or reuse a published tag; roll back by deploying an earlier version tag.

@@ -1,59 +1,51 @@
 # Changelog
 
-## Unreleased
+User-facing changes, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-- Choose images or folders, drag them into collection dialogs, or browse approved
-  server folders. Create managed libraries without entering a storage path.
-- Add light, dark and system appearance modes, nine color palettes, and application
-  icons. Share menu styling across native dropdowns while retaining keyboard controls.
-- Keep large image grids bounded and preload adjacent slideshow previews. Page
-  collection pickers and task histories without loading full journals.
-- Preserve fixed import previews and recover file operations after cancellation
-  or interruption. Scan, import, rebuild and large metadata batches support
-  persistent local background jobs.
-- Distinguish library purpose, file errors and missing originals. Version derived
-  images and fingerprints, preserve EXIF orientation/alpha/color behavior, and
-  refuse ambiguous moves or replaced roots.
-- Add source records, explicit organization state, conflict-safe batch undo,
-  saved queries and resumable playback rules. Keep zero ratings separate from
-  unrated images and retain existing random/shuffle semantics.
-- Add portable metadata, validated database archives, verified root rebinding,
-  naming templates and manual work/file-version relationships.
-- Recheck current permissions, invalidate revoked sessions, restrict server import
-  sources, and stabilize JSON errors, numeric bounds and noninteractive CLI use.
-- Improve Web/TUI navigation, selection and editing; add local redacted diagnostics
-  and reproducible dependency/package checks.
-- Preserve unrelated memberships when editing a group, parse alternatives in the
-  search condition editor, and stop random browsing at the current sample.
-- Accept library, artist and favorite filters from URL query parameters.
-- Reject out-of-range identifiers and malformed nested batch actions before
-  database operations.
-- Fix slideshow startup with native browser timers and complete English task
-  and navigation labels.
-- Update job progress incrementally and keep file verification outside database
-  write transactions while rechecking catalog changes before publishing.
-- Share strict catalog query rules across transports while preserving URL parsing
-  and JSON type checks.
-- Decode and normalize each scanned image once; verify source changes before
-  publishing derivatives.
-- Read bounded TUI playback summaries and reuse the current page while rechecking
-  access, current details and file availability.
-- Report local storage categories and cache cleanup candidates without deletion;
-  redacted diagnostics include aggregate cleanup counts.
-- Add complete local acceptance checks and installed schema-upgrade/restore checks.
-- Recheck every current album member's library permission when portable metadata
-  automatically reuses an existing album, including after preview.
-- Keep tag additions atomic so failed input or writes cannot be committed by a
-  later edit; invalidate pending TUI previews when playback access fails.
-- Preserve grayscale/RGB PNG transparent colors in derivatives and fingerprints.
-  Algorithm version 3 requires an explicit rebuild of older records.
-- Keep scan recovery messages actionable and translate task kinds, phases and
-  item states in the TUI.
+## [Unreleased]
 
-Existing databases upgrade through additive migrations and receive a consistent
-pre-upgrade snapshot. Stop older processes before upgrading. Sign in again after
-the authentication upgrade or a database restore. Historical libraries keep their
-paths and unspecified purpose; choose a purpose explicitly before reorganization.
-Old fingerprint records require an explicit rebuild to use the current algorithm.
-Originals remain outside database archives and portable metadata. Development
-package version remains `0.0.1`; this entry does not announce a published release.
+## [0.0.2] - 2026-11-02
+
+First published build. Everything below landed between the initial commit and this release.
+
+### Added
+
+- Managed libraries: import by copy, hard link or move; drag images or folders into collection dialogs, or browse an approved server folder without typing a storage path.
+- Light, dark and system appearance modes with nine color palettes and application icons.
+- Background jobs for scan, import, rebuild and large metadata batches, with progress that survives a restart.
+- Library purpose, explicit organization state (inbox / done) and source records per image.
+- Portable metadata manifests, validated database archives, root rebinding and naming templates.
+- Saved queries, smart albums, resumable playback rules and work/file-version relationships.
+- Local redacted diagnostics and storage categories, including cache cleanup candidates without deleting them.
+- Library, artist and favorite filters from URL query parameters.
+
+### Changed
+
+- Large image grids stay bounded, adjacent slideshow previews preload, and collection pickers and task histories are paged instead of loading full journals.
+- Derived images and fingerprints are versioned; EXIF orientation, alpha and color behavior are preserved.
+- Each scanned image is decoded and normalized once, and source changes are verified before derivatives are published.
+- Imports refresh only the paths they touched instead of walking the whole library.
+- Web and TUI navigation, selection and editing were reworked; repository checks now verify installed packages and locked dependencies.
+- The Docker instructions create the data directory before the first build, run the first start in the foreground, and pass the initial password on standard input.
+- Administrators must choose a password of at least eight characters.
+
+### Fixed
+
+- Files that are not regular files — pipes, sockets, devices — are reported and skipped instead of stalling an import preview.
+- Permissions and revoked sessions are rechecked on every request; server-side import sources are restricted.
+- Library memberships are preserved when editing a group; album permissions are rechecked when portable metadata reuses an album.
+- Tag additions are atomic, batch undo is conflict-safe, and malformed or out-of-range identifiers are rejected before any database write.
+- Slideshow start uses native browser timers; pending TUI previews are invalidated when playback access fails.
+- Job progress updates incrementally, and file verification runs outside database write transactions.
+- Catalog query rules are shared across transports while URL parsing and JSON type checks stay intact.
+- Scan recovery messages are actionable, and task kinds, phases and item states are translated in the TUI.
+- Grayscale and RGB PNG transparent colors survive derivatives and fingerprints.
+- Slideshow, navigation and task labels are complete in English.
+
+### Upgrading
+
+Existing databases upgrade through additive migrations and receive a consistent pre-upgrade snapshot. Stop older processes before upgrading. Sign in again after the authentication upgrade or a database restore. Historical libraries keep their paths and unspecified purpose; choose a purpose explicitly before reorganization. Fingerprint algorithm version 3 requires an explicit rebuild of older records. Originals stay outside database archives and portable metadata.
+
+## [0.0.1]
+
+Initial commit. Not published.
