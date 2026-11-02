@@ -54,11 +54,15 @@ modes and manual server paths are available under Advanced options.
 ## Docker
 
 ```sh
-docker compose build
 mkdir -p data
-docker compose run --rm picshelf picshelf init --admin admin
-docker compose up -d
+docker compose build
+printf '%s\n' "$PASSWORD" | docker compose run --rm -T picshelf picshelf init --admin admin --password-stdin
+docker compose up
 ```
+
+`mkdir -p data` comes first: if the directory is missing, Docker creates it as
+`root`, and the container (UID 1000) cannot write to it. `docker compose up`
+without `-d` shows the startup banner; add `-d` once you see it.
 
 Mount your image directories and make the data volume writable by container UID
 1000. The service binds to loopback by default. See [deployment](docs/deployment.md)
