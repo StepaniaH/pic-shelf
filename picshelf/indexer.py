@@ -285,7 +285,7 @@ def _scan_files(conn, cfg, library_id, lib, root, root_identity, scan_id, *, ful
                 root_confirmed = True
             pending_hashes[rel] = sha
             by_hash.setdefault(sha, []).append(rel)
-        except OSError as exc:
+        except (OSError, ServiceError) as exc:
             before_errors = len(stats["errors"])
             stats["errors"].append(f"{rel}: {exc}")
             report_item(rel, before_errors)

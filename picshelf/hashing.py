@@ -4,8 +4,10 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import stat
 import tempfile
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,9 +41,32 @@ THUMB_MAX = 400
 PREVIEW_MAX = 1600
 
 
+@contextmanager
+def open_regular_file(path: Path):
+    def require_regular(observed):
+        if not stat.S_ISREG(observed.st_mode):
+            raise ServiceError('file_not_regular', t('只支持普通文件，无法读取管道、套接字或设备文件'),
+                               next_step=t('请选择只含普通图片文件的目录后重试'))
+
+    require_regular(path.stat())
+    # A source can be replaced after stat; nonblocking open prevents a FIFO
+    # replacement from hanging before the descriptor type can be checked.
+    def opener(name, flags):
+        descriptor = os.open(name, flags | getattr(os, 'O_NONBLOCK', 0))
+        try:
+            require_regular(os.fstat(descriptor))
+        except BaseException:
+            os.close(descriptor)
+            raise
+        return descriptor
+
+    with open(path, 'rb', opener=opener) as stream:
+        yield stream
+
+
 def sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     h = hashlib.sha256()
-    with open(path, "rb") as f:
+    with open_regular_file(path) as f:
         while True:
             block = f.read(chunk)
             if not block:
@@ -60,7 +85,7 @@ def _open_image(path: Path) -> Image.Image:
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(path, formats=READ_FORMATS) as img:
+            with open_regular_file(path) as source, Image.open(source, formats=READ_FORMATS) as img:
                 img.seek(0)
                 if img.width * img.height > MAX_PIXELS:
                     raise too_large()
