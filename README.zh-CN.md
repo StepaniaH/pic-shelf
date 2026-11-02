@@ -7,7 +7,6 @@
 自托管图片库，提供 Web、TUI 和 CLI。浏览图片，用标签和专辑整理收藏，按保存的搜索条件播放幻灯片。零遥测，无需外部服务。
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/stepaniah/pic-shelf)](https://hub.docker.com/r/stepaniah/pic-shelf)
-[![Docker Hub](https://img.shields.io/docker/v/stepaniah/pic-shelf?label=docker%20hub&sort=semver)](https://hub.docker.com/r/stepaniah/pic-shelf)
 [![GitHub release](https://img.shields.io/github/v/tag/StepaniaH/pic-shelf?label=version)](https://github.com/StepaniaH/pic-shelf/tags)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
