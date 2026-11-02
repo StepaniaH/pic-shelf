@@ -14,7 +14,7 @@ cd pic-shelf
 docker compose build
 mkdir -p data
 
-# 2) 首次初始化；此时尚未启动 Web 服务
+# 2) 首次初始化（会提示设置管理员密码，至少 8 位）；此时尚未启动 Web 服务
 docker compose run --rm picshelf picshelf init --admin admin
 
 # 3) 启动服务（默认仅本机可访问）

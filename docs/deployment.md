@@ -22,7 +22,7 @@ docker compose run --rm picshelf picshelf init --admin admin
 docker compose up -d
 ```
 
-Step 2 prompts for the administrator password. Watch the output: if `init` fails, the reason appears there.
+Step 2 prompts for the administrator password, which must be at least eight characters. Watch the output: if `init` fails, the reason appears there.
 
 ## Directories and volumes
 
