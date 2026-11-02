@@ -27,7 +27,7 @@ jobs:
           if not m:
               m = re.search(r"^## \[Unreleased\].*?(?=^## |\Z)", text, re.M | re.S)
           notes = m.group(0).strip() if m else f"See CHANGELOG.md for {os.environ['TAG']}."
-          notes = re.sub(rf"^## \[{re.escape(version)}\] - ", "## ", notes)
+          notes = re.sub(rf"^## \[({re.escape(version)})\]", r"## \1", notes)
           pathlib.Path("release-notes.md").write_text(notes + "\n", encoding="utf-8")
           PY
 
