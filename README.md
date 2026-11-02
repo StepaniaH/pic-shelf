@@ -8,7 +8,7 @@ A self-hosted image library with Web, TUI and CLI interfaces. Browse your images
 organize them with tags and albums, and play slideshows from saved searches.
 Chinese and English are supported throughout. No telemetry or external services.
 
-[Usage](docs/usage.md) · [Deployment](docs/deployment.md) · [Contributing](CONTRIBUTING.md)
+[Usage](docs/usage.md) · [Deployment](docs/deployment.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
 ## Features
 
@@ -77,4 +77,4 @@ files, scan errors and storage use.
 
 Animated and multipage images use their first frame or page for previews. Format
 support depends on Pillow; see [supported formats](docs/usage.md#scan-safety-and-derivative-versions).
-Video and comic archives are not supported.
+Video and comic archives are not supported, and only regular files are read — pipes, sockets and device files are reported and skipped.
