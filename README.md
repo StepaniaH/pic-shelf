@@ -6,7 +6,7 @@
 
 A self-hosted image library with Web, TUI and CLI interfaces. Browse your images,
 organize them with tags and albums, and play slideshows from saved searches.
-Chinese and English are supported throughout. No telemetry or external services.
+No telemetry, no external services.
 
 [Usage](docs/usage.md) · [Deployment](docs/deployment.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
@@ -43,30 +43,37 @@ Originals stay in the registered directory. The data directory holds the databas
 and thumbnails. Use the same data directory for every command; installed packages
 require `PICSHELF_DATA` or `--data`. See [installation](docs/packaging.md).
 
-To bring files into a managed library, follow [importing](docs/usage.md#import-and-scanning).
-In the web app, choose images or a folder, or drag them into the import area.
-Import stays in the Add library, New album or Import images dialog, keeping the
-current page open.
-Local originals are kept. For files already on the server, browse to a source
-folder; Pic Shelf tries hard links and copies when needed. Explicit copy/move
-modes and manual server paths are available under Advanced options.
+To import into a managed library, see [importing](docs/usage.md#import-and-scanning).
+The web app accepts dropped files, a folder, or an approved server path; hard links
+are used when source and library are on the same filesystem, otherwise copies.
 
 ## Docker
 
-```sh
-mkdir -p data
-docker compose build
-printf '%s\n' "$PASSWORD" | docker compose run --rm -T picshelf picshelf init --admin admin --password-stdin
-docker compose up
+```yaml
+services:
+  picshelf:
+    image: stepaniah/pic-shelf:0.0.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:39431:39431"
+    volumes:
+      - ./data:/data
+      - /path/to/images:/libraries/photos:ro
+    user: "1000:1000"
 ```
 
-`mkdir -p data` comes first: if the directory is missing, Docker creates it as
-`root`, and the container (UID 1000) cannot write to it. `docker compose up`
-without `-d` shows the startup banner; add `-d` once you see it.
+`user` is your own UID and GID (`id -u`, `id -g`); `./data` must be writable by it.
+Create the directory before the first start, initialize once, then run:
 
-Mount your image directories and make the data volume writable by container UID
-1000. The service binds to loopback by default. See [deployment](docs/deployment.md)
-for volume configuration, remote access and upgrades. A prebuilt image is not yet published.
+```sh
+mkdir -p data
+docker compose run --rm picshelf picshelf init --admin admin
+docker compose up -d
+```
+
+Add one volume line per library you want to index. The image is also published to
+`ghcr.io/stepaniah/pic-shelf`. See [deployment](docs/deployment.md) for remote access,
+upgrades and permission details.
 
 ## Keeping your collection
 
@@ -77,4 +84,4 @@ files, scan errors and storage use.
 
 Animated and multipage images use their first frame or page for previews. Format
 support depends on Pillow; see [supported formats](docs/usage.md#scan-safety-and-derivative-versions).
-Video and comic archives are not supported, and only regular files are read — pipes, sockets and device files are reported and skipped.
+Video and comic archives are not supported.

@@ -1,22 +1,16 @@
 # Pic Shelf — Docker Compose
 #
-# First run:    mkdir -p data          (must be first: Docker would otherwise
-#                                     create ./data as root and UID 1000 cannot write it)
-#               docker compose build
-#               printf '%s\n' "$PASSWORD" | docker compose run --rm -T picshelf picshelf init --admin admin --password-stdin
-# Start:        docker compose up     (foreground: shows "Application startup complete")
-#               docker compose up -d  (once it starts)
-# Docs:         docs/deployment.md (volumes / networking / permissions / backups)
+# First run:  mkdir -p data
+#             docker compose run --rm picshelf picshelf init --admin admin
+#             docker compose up -d
 #
-# Notes:
-#  - Binds to 127.0.0.1 by default (loopback only). Use a LAN / Tailscale
-#    address to expose it privately; never map it to the public internet.
-#  - UI language: set PICSHELF_LANG=zh (or en) under `environment:` to pin it;
-#    unset follows the system locale.
+# Docs: docs/deployment.md (volumes / networking / permissions / backups)
 services:
   picshelf:
-    build: .
-    image: pic-shelf:local
+    # Published image. To build from this checkout instead, replace both lines with:
+    #   build: .
+    #   image: pic-shelf:local
+    image: stepaniah/pic-shelf:0.0.2
     container_name: picshelf
     restart: unless-stopped
     ports:
@@ -24,4 +18,7 @@ services:
     volumes:
       - ./data:/data                                # database / thumbnails / secret key
       # - /path/to/your/images:/libraries/photos:ro # image library, read-only is fine for index mode
-    # user: "1000:1000"                             # uncomment when the host UID is not 1000
+    user: "1000:1000"                               # your own UID:GID — `id -u`, `id -g`
+    environment:
+      # UI language: zh / en. Unset follows the system locale.
+      # PICSHELF_LANG: en

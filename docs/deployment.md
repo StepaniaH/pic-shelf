@@ -11,8 +11,7 @@ For remote access, use a private network such as Tailscale (see “Networking an
 git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
 
-# 1) Build the image, then create the data directory (write access: see UID/GID below)
-docker compose build
+# 1) Create the data directory (write access: see UID/GID below)
 mkdir -p data
 
 # 2) Initialize once; the web service is not running yet
@@ -21,6 +20,9 @@ docker compose run --rm picshelf picshelf init --admin admin
 # 3) Start the service (loopback only by default)
 docker compose up -d
 ```
+
+`docker-compose.yml` pulls `stepaniah/pic-shelf`; replace `image:` with `build: .` to build from this
+checkout instead.
 
 Step 2 prompts for the administrator password, which must be at least eight characters. Watch the output: if `init` fails, the reason appears there.
 
@@ -60,21 +62,18 @@ upgrade effects, and import source permissions.
 
 ## Permissions (UID/GID)
 
-The container runs as UID 1000, and `./data` must be writable by it. If your host UID is not 1000,
-choose one:
-
-```bash
-sudo chown -R 1000:1000 ./data     # option A: give the data directory to UID 1000
-
-# option B: uncomment user: in docker-compose.yml and set your own UID:GID
-```
+Set `user:` in `docker-compose.yml` to your own UID and GID (`id -u`, `id -g`). `./data` must be
+writable by that user; `chown` it once if needed.
 
 ## Upgrading
 
 ```bash
 git pull
-docker compose up -d --build        # rebuild and replace; database migrations run on startup
+docker compose pull
+docker compose up -d                # database migrations run on startup
 ```
+
+Building from a checkout instead? Use `docker compose up -d --build`.
 
 All state lives in `./data`, so rebuilding the container leaves it untouched.
 

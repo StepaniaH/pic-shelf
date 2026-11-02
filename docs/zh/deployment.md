@@ -10,8 +10,7 @@
 git clone https://github.com/StepaniaH/pic-shelf.git
 cd pic-shelf
 
-# 1) 构建镜像并准备数据目录（写权限见下方 UID/GID 说明）
-docker compose build
+# 1) 准备数据目录（写权限见下方 UID/GID 说明）
 mkdir -p data
 
 # 2) 首次初始化（会提示设置管理员密码，至少 8 位）；此时尚未启动 Web 服务
@@ -22,6 +21,8 @@ docker compose up -d
 
 # 4) 打开浏览器登录
 ```
+
+`docker-compose.yml` 拉取 `stepaniah/pic-shelf` 镜像；要从当前检出构建，把 `image:` 换成 `build: .`。
 
 ## 目录与卷
 
@@ -50,13 +51,7 @@ TLS 终止部署需设置 `PICSHELF_PUBLIC_ORIGIN` 为浏览器访问的完整�
 
 ## 权限（UID/GID）
 
-容器以 UID 1000 运行；`./data` 需要该 UID 可写。宿主 UID 不是 1000 时二选一：
-
-```bash
-sudo chown -R 1000:1000 ./data     # 方案 A：把数据目录归属给 1000
-
-# 方案 B：取消 docker-compose.yml 中 user: 的注释，改成你的 UID:GID
-```
+在 `docker-compose.yml` 里把 `user:` 设成你自己的 UID 和 GID（`id -u`、`id -g`），`./data` 需要该用户可写；必要时执行一次 `chown`。
 
 ## 升级
 

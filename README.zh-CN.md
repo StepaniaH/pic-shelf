@@ -4,7 +4,7 @@
 
 [English](README.md) | **简体中文**
 
-自托管图片库，提供 Web、TUI 和 CLI。浏览图片，用标签和专辑整理收藏，按保存的搜索条件播放幻灯片。全端支持中英双语，零遥测，无需外部服务。
+自托管图片库，提供 Web、TUI 和 CLI。浏览图片，用标签和专辑整理收藏，按保存的搜索条件播放幻灯片。零遥测，无需外部服务。
 
 [使用说明](docs/usage.md) · [部署](docs/zh/deployment.md) · [架构](docs/zh/architecture.md) · [参与开发](CONTRIBUTING.md)
 
@@ -37,20 +37,34 @@ export PICSHELF_DATA="$PWD/data"
 
 原图留在注册的目录中，数据库和缩略图保存在数据目录。所有命令应使用同一个数据目录；安装包运行时需设置 `PICSHELF_DATA` 或 `--data`，详见[安装说明](docs/packaging.md)。
 
-要将文件收纳到托管库，请看[导入流程](docs/usage.md#import-and-scanning)。Web 支持选择图片、选择文件夹，以及直接拖入，电脑上的原文件会保留。已有文件放在服务器上时，可以浏览选择源文件夹，自动尝试硬链接、必要时复制。手动路径和复制/移动方式放在高级选项中。
-
-添加图库、新建专辑和导入图片均在当前页面的弹窗内完成选择、预览和执行，完成后刷新原列表。
+要将文件收纳到托管库，请看[导入流程](docs/usage.md#import-and-scanning)。Web 端支持拖入文件、选择文件夹，或从已批准的服务器路径导入；源目录与库在同一文件系统时用硬链接，否则复制。
 
 ## Docker
 
+```yaml
+services:
+  picshelf:
+    image: stepaniah/pic-shelf:0.0.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:39431:39431"
+    volumes:
+      - ./data:/data
+      - /path/to/images:/libraries/photos:ro
+    user: "1000:1000"
+```
+
+`user` 填你自己的 UID 和 GID（`id -u`、`id -g`），`./data` 需要该用户可写。
+先建目录，初始化一次，然后启动：
+
 ```sh
-docker compose build
 mkdir -p data
 docker compose run --rm picshelf picshelf init --admin admin
 docker compose up -d
 ```
 
-挂载图片目录，并让容器 UID 1000 能写入数据卷。服务默认绑定本机。挂载、远程访问与升级方法见[部署说明](docs/zh/deployment.md)。预构建镜像尚未发布。
+每个要索引的图库加一行 volumes。镜像同时发布在 `ghcr.io/stepaniah/pic-shelf`。
+远程访问、升级和权限细节见[部署说明](docs/zh/deployment.md)。
 
 ## 维护收藏
 
