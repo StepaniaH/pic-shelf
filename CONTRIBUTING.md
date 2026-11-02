@@ -60,6 +60,6 @@ Before tagging:
    git push origin vX.Y.Z
    ```
 
-The tag publishes `stepaniah/pic-shelf:X.Y.Z` and moves `latest`, and the same image to
+The tag publishes `stepaniah/pic-shelf:vX.Y.Z` and moves `latest`, and the same image to
 `ghcr.io/stepaniah/pic-shelf`. Only tag a prerelease when moving `latest` is intended.
 Do not move or reuse a published tag; roll back by deploying an earlier version tag.
