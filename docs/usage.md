@@ -6,7 +6,7 @@ and thumbnails in a separate data directory.
 ## Web browsing
 
 **Library** shows your libraries and recently added images. **All images**,
-**Favorites** and **Unorganized** open image grids. Albums, artists and tags provide
+**Favorites** and **Inbox** open image grids. Albums, artists and tags provide
 other ways to browse. Use the side navigation on desktop or the menu button on a phone.
 Mixed-library grids show library names below filenames so identical filenames
 remain distinguishable. Selection starts afresh when you open another collection.
@@ -49,7 +49,7 @@ Switching still checks current access. Original sizing and Download fetch the
 original file. Reduced-data browser settings disable preloading. Albums, artists
 and tags support name search and pagination.
 Account actions are under your name in the top bar; administrative tools are in
-**Management**, starting with library setup.
+**Admin**, starting with library setup.
 
 ## Appearance
 
@@ -80,7 +80,7 @@ to add or remove tags on selected images; undo preserves later edits.
 
 ## Add images in the web app
 
-Choose **Add library** on the library home screen or in Management. The dialog
+Choose **Add library** on the library home screen or in Admin. The dialog
 defaults to receiving imports: enter a name, then choose images or a folder, or
 drop them directly into the same dialog. Preview, execution and results stay in
 that dialog; closing it returns focus to the original page and refreshes its list.
@@ -293,7 +293,7 @@ picshelf library configure archive --mode indexed
 An empty catalog offers **Add library**. Choose **Browse an existing directory**
 to index files in place, or **Receive imports** for a managed library. In the
 import form, choose **Preview import**, review the files, then **Start import**.
-Scan actions show background progress under Management → Background tasks;
+Scan actions show background progress under Admin → Background tasks;
 expand **Task details** for the task ID and file results. Indexed libraries remain editable for ratings,
 tags and other metadata even when the original directory is read-only.
 

@@ -2,7 +2,7 @@
 
 Click **Select** above an image grid, then check the images to edit. Selections persist while loading more images or changing the sort. **Done selecting** clears them. **Select loaded images** adds the images already shown. **Select all results** uses the current server query; its membership is fixed when you request a preview. Newly indexed images never join an existing preview or retry.
 
-**Preview changes** shows the operation, image count and sample paths. Changing the operation or selection invalidates that preview. **Confirm changes** applies it. **Batch history** includes the complete image list, results, pending work and undo conflicts. The **Unorganized** view shows images you have not marked as done.
+**Preview changes** shows the operation, image count and sample paths. Changing the operation or selection invalidates that preview. **Confirm changes** applies it. **Batch history** includes the complete image list, results, pending work and undo conflicts. The **Inbox** view shows images you have not marked as done.
 
 Artist and album targets have searchable, paginated pickers. **New album** in the
 album picker keeps the current image selection and selects the new album.
