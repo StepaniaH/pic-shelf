@@ -52,7 +52,7 @@ are used when source and library are on the same filesystem, otherwise copies.
 ```yaml
 services:
   picshelf:
-    image: stepaniah/pic-shelf:0.0.2
+    image: stepaniah/pic-shelf:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:39431:39431"

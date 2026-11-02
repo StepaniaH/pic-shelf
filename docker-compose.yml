@@ -10,7 +10,7 @@ services:
     # Published image. To build from this checkout instead, replace both lines with:
     #   build: .
     #   image: pic-shelf:local
-    image: stepaniah/pic-shelf:0.0.2
+    image: stepaniah/pic-shelf:latest
     container_name: picshelf
     restart: unless-stopped
     ports:
