@@ -350,7 +350,13 @@ def execute_plan(conn, cfg: Config, access: AccessContext, plan_id: str, *, retr
             # Recheck authority before publishing imported files into the catalog.
             current = _authorized_plan(conn, access, plan_id)
             if sum(result["done"][key] for key in importer.MODES) or snapshot.get('album_id') is not None:
-                result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check)
+                finished = conn.execute('SELECT position,destination FROM import_plan_items '
+                                        "WHERE plan_id=? AND state='succeeded'", (plan_id,)).fetchall()
+                targets = {Path(item['destination']).relative_to(root).as_posix() for item in finished}
+                if snapshot.get('reorganize'):
+                    targets.update(snapshot['items'][item['position']]['original_rel'] for item in finished)
+                result["scan"] = indexer.scan_library(conn, cfg, row["library_id"], check=check,
+                                                     target_paths=targets)
                 if not snapshot.get('reorganize'):
                     metadata.record_import(conn, row["library_id"], plan_id, snapshot, row["created_by"])
             scan_errors = len(result["scan"]["errors"]) if result["scan"] else 0
