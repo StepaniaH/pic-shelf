@@ -1,5 +1,7 @@
 # Pic Shelf 架构
 
+[English](../architecture.md) | **简体中文**
+
 Pic Shelf 是单机存储的自托管图片库。Python 服务层为 Web、CLI、TUI 提供共同的数据操作；原图保存在注册的库目录中，SQLite 和派生图片保存在数据目录中。
 
 ## 模块与边界

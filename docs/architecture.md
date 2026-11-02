@@ -1,5 +1,7 @@
 # Pic Shelf architecture
 
+**English** | [简体中文](zh/architecture.md)
+
 Pic Shelf is a self-hosted image library with single-machine storage. A Python service layer provides
 shared data operations for the Web, CLI and TUI interfaces; originals stay in registered library
 directories, while SQLite and derivative images live in the data directory.

@@ -1,5 +1,7 @@
 # Pic Shelf 部署指南（Docker）
 
+[English](../deployment.md) | **简体中文**
+
 面向自托管部署：默认**仅本机访问**，不对外暴露。远程访问建议走 Tailscale 等私有网络（见「网络与访问」）。
 
 ## 快速开始

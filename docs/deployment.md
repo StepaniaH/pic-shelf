@@ -1,5 +1,7 @@
 # Pic Shelf deployment guide (Docker)
 
+**English** | [简体中文](zh/deployment.md)
+
 For self-hosted deployment: the service listens on **loopback only** by default and is not exposed.
 For remote access, use a private network such as Tailscale (see “Networking and access”).
 
