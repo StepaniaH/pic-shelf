@@ -65,6 +65,8 @@ def t(msgid: str, **kw) -> str:
 # Keyed by the Chinese message template. Appended per module as the codebase
 # gets localized; every user-visible Chinese string must have an entry here.
 EN: dict[str, str] = {
+    '只支持普通文件，无法读取管道、套接字或设备文件': 'Only regular files are supported; pipes, sockets and devices cannot be read',
+    '请选择只含普通图片文件的目录后重试': 'Choose a directory containing only regular image files and retry',
     '外观': 'Appearance',
     '明暗模式': 'Color mode',
     '跟随系统': 'System',

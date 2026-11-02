@@ -162,7 +162,7 @@ def _sync_directory(path):
 
 @contextmanager
 def _verified_source(path, expected_identity, expected_hash):
-    with path.open("rb") as source:
+    with hashing.open_regular_file(path) as source:
         if expected_identity is None or _source_identity(os.fstat(source.fileno())) != expected_identity:
             raise _failure("source_changed", t("源文件在预演后发生变化，请重新预演"))
         digest = hashlib.file_digest(source, "sha256").hexdigest()
