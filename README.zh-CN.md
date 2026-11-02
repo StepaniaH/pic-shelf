@@ -33,7 +33,7 @@ export PICSHELF_DATA="$PWD/data"
 .venv/bin/picshelf serve
 ```
 
-将 `/path/to/images` 替换为图片目录。初始化时设置管理员密码，启动后打开 `serve` 输出的地址。终端界面使用 `.venv/bin/picshelf tui`。
+将 `/path/to/images` 替换为图片目录。初始化时设置管理员密码（至少 8 位），启动后打开 `serve` 输出的地址。终端界面使用 `.venv/bin/picshelf tui`。
 
 原图留在注册的目录中，数据库和缩略图保存在数据目录。所有命令应使用同一个数据目录；安装包运行时需设置 `PICSHELF_DATA` 或 `--data`，详见[安装说明](docs/packaging.md)。
 

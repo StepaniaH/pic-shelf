@@ -36,7 +36,7 @@ export PICSHELF_DATA="$PWD/data"
 ```
 
 Replace `/path/to/images` with your image directory. Initialization prompts for
-an administrator password. Open the address printed by `serve`, or run
+an administrator password of at least eight characters. Open the address printed by `serve`, or run
 `.venv/bin/picshelf tui` for the terminal interface.
 
 Originals stay in the registered directory. The data directory holds the database
