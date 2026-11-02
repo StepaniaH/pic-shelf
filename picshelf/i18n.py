@@ -1107,6 +1107,7 @@ EN: dict[str, str] = {
     "文件夹专辑自动维护，不能手工增删": "Folder albums are maintained automatically",
     "评分范围 0–10": "Rating range is 0–10",
     "口令不能为空": "Password cannot be empty",
+    "口令不能少于 8 个字符": "Password must be at least 8 characters",
     "管理员组": "Administrators",
     "普通成员组": "Members",
     "未知模式：{mode}（可选 {v0}）": "Unknown mode: {mode} (choices: {v0})",
