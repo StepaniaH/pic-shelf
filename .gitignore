@@ -1,5 +1,8 @@
 # runtime data (db, thumbnails, secret key, playlists, exports)
 data/
+*.db
+*.db-wal
+*.db-shm
 .uv-cache/
 
 # python
