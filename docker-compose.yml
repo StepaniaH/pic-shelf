@@ -1,8 +1,11 @@
 # Pic Shelf — Docker Compose
 #
-# First run:    docker compose build
-#               docker compose run --rm picshelf picshelf init --admin admin
-# Start:        docker compose up -d
+# First run:    mkdir -p data          (must be first: Docker would otherwise
+#                                     create ./data as root and UID 1000 cannot write it)
+#               docker compose build
+#               printf '%s\n' "$PASSWORD" | docker compose run --rm -T picshelf picshelf init --admin admin --password-stdin
+# Start:        docker compose up     (foreground: shows "Application startup complete")
+#               docker compose up -d  (once it starts)
 # Docs:         docs/deployment.md (volumes / networking / permissions / backups)
 #
 # Notes:

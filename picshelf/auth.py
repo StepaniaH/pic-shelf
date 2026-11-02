@@ -25,9 +25,14 @@ DEFAULT_MEMBER_CAPS = ("view", "rate", "comment", "note", "tag_edit")
 
 # ---------------------------------------------------------------- 口令
 
+MIN_PASSWORD_LENGTH = 8
+
+
 def hash_password(password: str, *, n: int = 2**14, r: int = 8, p: int = 1) -> str:
     if not password:
         raise ValueError(t("口令不能为空"))
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(t("口令不能少于 8 个字符"))
     if len(password) > 1024:
         raise ValueError(t("口令不能超过 1024 个字符"))
     salt = secrets.token_bytes(16)

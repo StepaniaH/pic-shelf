@@ -65,3 +65,26 @@ def test_disabled_user_filtered(conn):
     conn.execute("UPDATE users SET disabled=1 WHERE id=?", (uid,))
     conn.commit()
     assert auth.get_user(conn, uid) is None
+
+
+def test_password_has_a_minimum_length():
+    """新建口令必须有下限：3 字符能被接受的话，管理员口令等于没有。"""
+    import pytest
+
+    with pytest.raises(ValueError):
+        auth.hash_password("abc")
+    with pytest.raises(ValueError):
+        auth.hash_password("")
+    # 8 字符是下限本身，必须通过
+    assert auth.hash_password("abcdefgh").startswith("scrypt$")
+
+
+def test_legacy_short_password_can_still_log_in():
+    """下限只约束"新建"：历史遗留的短口令哈希必须仍能验证，否则改完就被锁在门外。"""
+    import hashlib
+    import secrets
+
+    salt = secrets.token_bytes(16)
+    dk = hashlib.scrypt(b"abc", salt=salt, n=2 ** 14, r=8, p=1, dklen=32)
+    legacy = f"scrypt$16384$8$1${salt.hex()}${dk.hex()}"
+    assert auth.verify_password("abc", legacy)
