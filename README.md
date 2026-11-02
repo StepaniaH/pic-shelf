@@ -8,6 +8,11 @@ A self-hosted image library with Web, TUI and CLI interfaces. Browse your images
 organize them with tags and albums, and play slideshows from saved searches.
 No telemetry, no external services.
 
+[![Docker Pulls](https://img.shields.io/docker/pulls/stepaniah/pic-shelf)](https://hub.docker.com/r/stepaniah/pic-shelf)
+[![Docker Hub](https://img.shields.io/docker/v/stepaniah/pic-shelf?label=docker%20hub&sort=semver)](https://hub.docker.com/r/stepaniah/pic-shelf)
+[![GitHub release](https://img.shields.io/github/v/tag/StepaniaH/pic-shelf?label=version)](https://github.com/StepaniaH/pic-shelf/tags)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 [Usage](docs/usage.md) · [Deployment](docs/deployment.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
 ## Features
