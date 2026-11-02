@@ -73,4 +73,4 @@ files, scan errors and storage use.
 
 Animated and multipage images use their first frame or page for previews. Format
 support depends on Pillow; see [supported formats](docs/usage.md#scan-safety-and-derivative-versions).
-Video and comic archives are not supported.
+Video and comic archives are not supported, and only regular files are read — pipes, sockets and device files are reported and skipped.

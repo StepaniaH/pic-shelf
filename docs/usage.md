@@ -422,7 +422,7 @@ picshelf import-execute <plan-id> --retry --yes --json
 picshelf import-cancel <plan-id>
 ```
 
-The default is `hardlink`. Hardlinks share file contents with their source: editing either link edits the same file. Use `copy` for an independent copy. Cross-device hardlinks fall back to copying. `move` removes the source only after creating the destination. `--yes` explicitly accepts the import confirmation for automation.
+The default is `hardlink`. Hardlinks share file contents with their source: editing either link edits the same file. Use `copy` for an independent copy. Cross-device hardlinks fall back to copying. `move` removes the source only after creating the destination. Only regular files are read: pipes, sockets and device files are reported as errors and skipped, and an open descriptor is rechecked so a file replaced after inspection cannot block the preview. `--yes` explicitly accepts the import confirmation for automation.
 
 Import deduplicates by SHA-256, reserves destination names within each plan and never overwrites a file that appears after planning. A source changed after the dry run requires a new plan. Sources and destinations must not contain one another; links escaping the source or library directory are rejected.
 
