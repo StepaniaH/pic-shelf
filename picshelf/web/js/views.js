@@ -269,6 +269,7 @@ export async function renderHome(view) {
 // ---------------------------------------------------------------- 专辑
 
 export async function renderAlbums(view, params) {
+  view.classList.add("quiet-collection-page", "albums-page");
   const libraryId = params.get("library_id");
   view.innerHTML = `<div class="page-head"><h1>${t("专辑")}</h1><span class="count" data-list-count></span>
     ${can("tag_edit") ? `<div class="toolbar"><button class="btn primary" data-new-album>${t("新建专辑")}</button></div>` : ""}</div>
@@ -291,10 +292,13 @@ export async function renderAlbums(view, params) {
       const values = await api(`/albums?${query}`, {signal:controller.signal});
       if (requested !== revision || !view.isConnected) return;
       if (reset) { grid.replaceChildren(); offset = 0; }
-      grid.insertAdjacentHTML("beforeend", values.slice(0, 100).map(album => `<a class="card" href="#/album/${album.id}">
-        ${album.preview_image_id ? `<img loading="lazy" decoding="async" src="${mediaUrl("thumb", album.preview_image_id)}" alt="">` : `<div class="empty-cover">${t("空专辑")}</div>`}
-        <div class="album-caption"><strong>${escapeHtml(album.name)}</strong><span class="muted">${escapeHtml(album.library_name || "")} · ${t("共 {v0} 张", {v0:album.image_count})}</span>
-        <span class="badge">${t(album.kind === "manual" ? "手工" : "文件夹")}</span></div></a>`).join(""));
+      grid.insertAdjacentHTML("beforeend", values.slice(0, 100).map(album => {
+        const summary = `${t("共 {v0} 张", {v0:album.image_count})} · ${t(album.kind === "manual" ? "手工" : "文件夹")}`;
+        const label = [album.name, album.library_name !== album.name ? album.library_name : "", summary].filter(Boolean).join(" · ");
+        return `<a class="card" href="#/album/${album.id}" aria-label="${escapeHtml(label)}" title="${escapeHtml(album.library_name || album.name)}">
+          ${album.preview_image_id ? `<img loading="lazy" decoding="async" src="${mediaUrl("thumb", album.preview_image_id)}" alt="">` : `<div class="empty-cover">${t("空专辑")}</div>`}
+          <div class="album-caption"><strong title="${escapeHtml(album.name)}">${escapeHtml(album.name)}</strong><span class="muted">${escapeHtml(summary)}</span></div></a>`;
+      }).join(""));
       offset += Math.min(100, values.length); more.hidden = values.length <= 100;
       view.querySelector("[data-list-count]").textContent = t("已显示 {n} 项", {n:offset});
       if (!offset) grid.innerHTML = `<p class="empty">${t(input.value || kind.value ? "没有匹配的结果" : "还没有专辑。")}</p>`;

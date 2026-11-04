@@ -905,3 +905,14 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 }
 
 .quiet-collection-page [data-batch-status]:not(:empty) { margin: var(--content-group-space) 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+
+/* Album cards represent content; their tools share the quiet list controls. */
+.albums-page .collection-toolbar { flex-wrap: nowrap; }
+.albums-page .collection-toolbar input { flex: 1 1 12rem; width: 100%; min-width: 0; max-width: 480px; }
+.albums-page .collection-toolbar select { flex: 0 1 auto; max-width: 50%; }
+.albums-page .album-grid .card { display: grid; grid-template-rows: auto 1fr; align-self: start; min-width: 0; border: 0; border-radius: var(--shell-radius-2); background: var(--panel); box-shadow: none; }
+.albums-page .album-grid .card :is(img, .empty-cover) { width: 100%; aspect-ratio: 4 / 3; border: 0; border-radius: 0; object-fit: cover; }
+.albums-page .album-caption { grid-template-rows: 21px 18px; gap: var(--content-space); padding: var(--content-space); min-width: 0; min-height: 64px; line-height: 1.5; }
+.albums-page .album-caption :is(strong, .muted) { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.albums-page .album-caption strong { font-size: var(--shell-text); }
+.albums-page .empty-cover { font-size: var(--shell-text-xs); }

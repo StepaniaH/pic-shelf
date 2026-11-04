@@ -997,13 +997,13 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
     expect(content.locator('[data-select-image]:checked')).to_have_count(0)
     check_controls()
     # Route changes discard the pilot marker and restore the existing content styles.
-    for route in ('#/albums', '#/admin', '#/tags'):
+    for route in ('#/home', '#/tags', '#/artists'):
         navigate_from_sidebar(page, route)
         expect(page.locator('#view .page-head h1')).to_be_visible()
         expect(page.locator('.quiet-collection-page')).to_have_count(0)
         expect(page.locator('body')).to_have_css('font-size', '15px')
-    navigate_from_sidebar(page, '#/albums')
-    expect(page.locator('[data-new-album]')).to_have_css('border-width', '1px')
+    navigate_from_sidebar(page, '#/home')
+    expect(page.locator('.lib-card').first).to_have_css('border-width', '1px')
 
 
 @pytest.mark.parametrize('route,operation', [('favorites', 'favorite_off'), ('inbox', 'workflow_done')])
@@ -1070,6 +1070,54 @@ def test_quiet_collections_preserve_membership_preview_and_undo(page, web_server
     finally:
         for image_id in added_favorites:
             assert page.request.post(f'{base}/images/{image_id}/favorite', headers=headers, data={}).ok
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_album_cards_keep_content_identity_and_quiet_tools(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    base = web_server.url + '/api/v1'
+    headers = {'Origin': web_server.url}
+    library = next(item for item in page.request.get(base + '/libraries').json() if item['name'] == 'Gallery')
+    image_id = page.request.get(f"{base}/images?library_id={library['id']}&limit=1").json()['items'][0]['id']
+    covered = page.request.post(base + '/albums', headers=headers, data={'name':'Gallery','library_id':library['id']}).json()
+    empty_name = f'Quiet empty {language} {width}'
+    empty = page.request.post(base + '/albums', headers=headers, data={'name':empty_name,'library_id':library['id']}).json()
+    assert page.request.post(f"{base}/albums/{covered['id']}/images", headers=headers, data={'image_ids':[image_id]}).ok
+    navigate_from_sidebar(page, '#/albums')
+    content = page.locator('.albums-page')
+    card = content.locator(f'.card[href="#/album/{covered["id"]}"]')
+    empty_card = content.locator(f'.card[href="#/album/{empty["id"]}"]')
+    expect(card.locator('img')).to_have_count(1)
+    expect(empty_card.locator('.empty-cover')).to_have_count(1)
+    expect(card.locator('.album-caption strong')).to_have_text('Gallery')
+    expect(card.locator('.album-caption .muted')).to_have_text('共 1 张 · 手工' if language == 'zh' else '1 images · Manual')
+    assert card.inner_text().count('Gallery') == 1
+    expect(card.locator('.badge')).to_have_count(0)
+    expect(card).to_have_css('border-width', '0px')
+    expect(card).to_have_css('box-shadow', 'none')
+    expect(card).to_have_css('border-radius', '8px')
+    expect(card.locator('img')).to_have_css('object-fit', 'cover')
+    dimensions = content.locator('.album-grid .card').evaluate_all('els=>els.map(el=>({w:el.getBoundingClientRect().width,h:el.getBoundingClientRect().height}))')
+    assert max(d['w'] for d in dimensions) - min(d['w'] for d in dimensions) < 1
+    assert max(d['h'] for d in dimensions) - min(d['h'] for d in dimensions) < 1
+    page.mouse.move(0, 0)
+    measured = content.evaluate(COLLECTION_PAGE_AUDIT)
+    assert set(measured['fonts']) <= {12, 14, 16}, measured
+    assert set(measured['radii']) <= {4, 8}, measured
+    assert set(measured['spacing']) <= {8, 24}, measured
+    assert measured['filled'] == [] and measured['borderedButtons'] == [], measured
+    assert not measured['framedPanels'] and not measured['overflow'], measured
+    expect(content.locator('input[type=search]')).to_have_css('border-width', '1px')
+    expect(content.locator('select')).to_have_css('border-width', '0px')
+    # Filtering and opening a real empty album must survive the presentation change.
+    content.locator('select').select_option('manual')
+    content.locator('input[type=search]').fill(empty_name)
+    expect(content.locator('.album-grid .card')).to_have_count(1)
+    empty_card.click()
+    expect(page.locator('#view .page-head h1')).to_contain_text(empty_name)
 
 
 @pytest.mark.parametrize('width', [390, 1440])
