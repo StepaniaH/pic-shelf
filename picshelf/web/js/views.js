@@ -437,8 +437,9 @@ export async function renderTag(view, name, sort = "newest") {
 
 export async function renderFavorites(view, sort = "newest") {
   view.classList.add("quiet-collection-page");
-  const source = new Source(t("我的收藏"), { favorites: true, title: t("我的收藏") },
-    { sort, filters: { favorites: "true" } });
+  const title = t("收藏");
+  const source = new Source(title, { favorites: true, title },
+    { sort, filters: { favorites: "true" }, emptyText: t("还没有收藏的图片") });
   if (!await loadSource(view, source)) return;
   renderGridInto(view, source, {});
 }
