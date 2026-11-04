@@ -1122,6 +1122,79 @@ def test_album_cards_keep_content_identity_and_quiet_tools(page, web_server, wid
 
 @pytest.mark.parametrize('width', [390, 1440])
 @pytest.mark.parametrize('language', ['zh', 'en'])
+def test_admin_text_navigation_connects_real_panels_and_library_actions(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    base = web_server.url + '/api/v1'
+    headers = {'Origin': web_server.url}
+    library = next(item for item in page.request.get(base + '/libraries').json() if item['name'] == 'Gallery')
+    queued = page.request.post(f"{base}/libraries/{library['id']}/scan-jobs", headers=headers,
+                               data={'request_key': secrets.token_urlsafe(24)})
+    assert queued.status == 202
+    navigate_from_sidebar(page, '#/admin')
+    content = page.locator('.admin-page')
+    expect(content.locator('h1')).to_have_text('管理' if language == 'zh' else 'Admin')
+    expect(content.locator('h1')).to_have_css('font-size', '20px')
+    assert content.locator('h1,h2,h3,h4').evaluate_all("els=>els.filter(el=>el.checkVisibility()&&getComputedStyle(el).fontSize==='20px').length") == 1
+    expect(content.locator('.admin-tabs a')).to_have_count(4)
+    subjects = {'libraries': '.library-record', 'users': '[data-uid]', 'groups': '[data-gid]', 'jobs': '[data-job]'}
+    for key, selector in subjects.items():
+        content.locator(f'#admin-tab-{key}').click()
+        active = content.locator(f'#admin-tab-{key}')
+        expect(active).to_have_attribute('aria-current', 'page')
+        expect(active).to_have_css('text-decoration-line', 'underline')
+        expect(active).to_have_css('background-color', 'rgba(0, 0, 0, 0)')
+        panel = content.locator('#admin-body')
+        expect(panel).to_have_attribute('aria-labelledby', 'admin-tab-' + key)
+        expect(panel.locator(selector).first).to_be_visible()
+        expect(panel.get_by_role('heading', name=active.inner_text(), exact=True)).to_have_count(0)
+        page.mouse.move(0, 0)
+        measured = content.evaluate(COLLECTION_PAGE_AUDIT)
+        assert set(measured['fonts']) <= {14, 16, 20}, measured
+        assert set(measured['radii']) <= {4, 8}, measured
+        assert set(measured['spacing']) <= {8, 24}, measured
+        assert measured['filled'] == [] and measured['borderedButtons'] == [], measured
+        assert not measured['framedPanels'] and not measured['overflow'], measured
+        for link in content.locator('.admin-tabs a').all():
+            expect(link).to_have_css('border-width', '0px')
+        if key == 'libraries':
+            record = panel.locator(f'[data-library-id="{library["id"]}"]')
+            expect(record).to_have_css('border-top-width', '0px')
+            expect(record).to_have_css('border-left-width', '0px')
+            expect(record).to_have_css('border-right-width', '0px')
+            expect(record).to_have_css('border-radius', '0px')
+            expect(record.locator('.library-record-actions')).to_have_css('justify-content', 'flex-end')
+            assert panel.evaluate("el=>Boolean(el.querySelector('.library-records').compareDocumentPosition(el.querySelector('[data-new-library]')) & Node.DOCUMENT_POSITION_FOLLOWING)")
+            toggle = record.locator('[data-library-settings-toggle]')
+            toggle.click()
+            expect(toggle).to_have_attribute('aria-expanded', 'true')
+            settings = record.locator('[data-library-settings]')
+            expect(settings).to_be_visible()
+            expect(settings).to_have_attribute('id', toggle.get_attribute('aria-controls'))
+            expect(settings.locator('[data-grant-gid]').first).to_be_visible()
+            for select in settings.locator('select').all():
+                expect(select).to_have_css('border-width', '0px')
+            page.mouse.move(0, 0)
+            expanded = content.evaluate(COLLECTION_PAGE_AUDIT)
+            assert set(expanded['fonts']) <= {14, 16, 20} and set(expanded['spacing']) <= {8, 24}, expanded
+            assert expanded['filled'] == [] and expanded['borderedButtons'] == [] and not expanded['overflow'], expanded
+            toggle.click()
+            expect(settings).to_be_hidden()
+            add = panel.get_by_role('button', name='添加图库' if language == 'zh' else 'Add library', exact=True)
+            add.click()
+            dialog = page.get_by_role('dialog').last
+            expect(dialog.locator('#nl-name')).to_be_visible()
+            dialog.locator('[data-library-actions] [data-close]').click()
+            expect(add).to_be_focused()
+            with page.expect_response(lambda response:'/scan-jobs' in response.url and response.request.method == 'POST') as scan:
+                record.locator('[data-scan]').click()
+            assert scan.value.status == 202
+            expect(record.locator('[data-scan]')).to_be_enabled(timeout=10000)
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
 def test_shell_groups_tokens_and_logo_preserve_navigation(page, web_server, width, language):
     from playwright.sync_api import expect
     page.set_viewport_size({'width': width, 'height': 1000})

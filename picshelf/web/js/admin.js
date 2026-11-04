@@ -13,14 +13,15 @@ const CAP_LABEL = {
 const ALL_CAPS = Object.keys(CAP_LABEL);
 
 export async function renderAdmin(view, params = new URLSearchParams()) {
+  view.classList.add("quiet-collection-page", "admin-page");
   const tabs = state.user.is_admin
     ? [["libraries", "图库"], ["jobs", "后台任务"], ["users", "用户"], ["groups", "用户组"]]
     : [["jobs", "后台任务"]];
   const selected = tabs.some(([key]) => key === params.get("tab")) ? params.get("tab") : tabs[0][0];
   view.innerHTML = `<div class="page-head"><h1>${t(state.user.is_admin ? "管理" : "图库操作")}</h1></div>
     <nav class="admin-tabs" aria-label="${t("管理")}">${tabs.map(([key, label]) =>
-      `<a class="btn ${key === selected ? "active" : ""}" data-tab="${key}" href="#/admin?tab=${key}" ${key === selected ? 'aria-current="page"' : ""}>${t(label)}</a>`).join("")}</nav>
-    <div id="admin-body"></div>`;
+      `<a id="admin-tab-${key}" class="btn ${key === selected ? "active" : ""}" data-tab="${key}" href="#/admin?tab=${key}" ${key === selected ? 'aria-current="page"' : ""}>${t(label)}</a>`).join("")}</nav>
+    <section id="admin-body" class="admin-panel" aria-labelledby="admin-tab-${selected}"></section>`;
   const body = view.querySelector("#admin-body");
   if (selected === "users") await renderUsers(body);
   else if (selected === "groups") await renderGroups(body);
@@ -33,7 +34,7 @@ export async function renderAdmin(view, params = new URLSearchParams()) {
 
 async function renderUsers(body) {
   const [users, groups] = await Promise.all([api("/users"), api("/groups")]);
-  body.innerHTML = t("\n    <h2>用户</h2>\n    <div class=\"form-row\">\n      <input id=\"nu-name\" placeholder=\"用户名\" style=\"width:150px\">\n      <input id=\"nu-pass\" type=\"password\" placeholder=\"密码（≥6 位）\" style=\"width:170px\">\n      <label class=\"muted\"><input type=\"checkbox\" id=\"nu-admin\"> 管理员</label>\n      <button class=\"btn primary\" id=\"nu-create\">创建用户</button>\n    </div>\n    <div class=\"table-wrap\">\n    <table class=\"data\"><thead><tr><th>ID</th><th>用户名</th><th>状态</th><th>用户组</th><th>操作</th></tr></thead>\n    <tbody>{v0}\n    </tbody></table>\n    </div>", {v0: users.map((u) => `
+  body.innerHTML = t("\n    \n    <div class=\"form-row\">\n      <input id=\"nu-name\" placeholder=\"用户名\" style=\"width:150px\">\n      <input id=\"nu-pass\" type=\"password\" placeholder=\"密码（≥6 位）\" style=\"width:170px\">\n      <label class=\"muted\"><input type=\"checkbox\" id=\"nu-admin\"> 管理员</label>\n      <button class=\"btn primary\" id=\"nu-create\">创建用户</button>\n    </div>\n    <div class=\"table-wrap\">\n    <table class=\"data\"><thead><tr><th>ID</th><th>用户名</th><th>状态</th><th>用户组</th><th>操作</th></tr></thead>\n    <tbody>{v0}\n    </tbody></table>\n    </div>", {v0: users.map((u) => `
       <tr data-uid="${u.id}">
         <td>${u.id}</td><td>${escapeHtml(u.username)}</td>
         <td>${u.is_admin ? t("管理员") : t("普通用户")}${u.disabled ? t(" · 已禁用") : ""}</td>
@@ -108,8 +109,8 @@ async function renderUsers(body) {
 
 async function renderGroups(body) {
   const [groups, users] = await Promise.all([api("/groups"), api("/users")]);
-  body.innerHTML = t("\n    <h2>用户组</h2>\n    <div class=\"form-row\">\n      <input id=\"ng-name\" placeholder=\"组名\" style=\"width:150px\">\n      <input id=\"ng-desc\" placeholder=\"描述（可选）\" style=\"width:230px\">\n      <button class=\"btn primary\" id=\"ng-create\">创建组</button>\n    </div>\n    {v0}\n    <datalist id=\"user-dl\">{v1}</datalist>", {v0: groups.map((g) => `
-      <div class="grant-item" data-gid="${g.id}" style="margin-bottom:12px">
+  body.innerHTML = t("\n    \n    <div class=\"form-row\">\n      <input id=\"ng-name\" placeholder=\"组名\" style=\"width:150px\">\n      <input id=\"ng-desc\" placeholder=\"描述（可选）\" style=\"width:230px\">\n      <button class=\"btn primary\" id=\"ng-create\">创建组</button>\n    </div>\n    {v0}\n    <datalist id=\"user-dl\">{v1}</datalist>", {v0: groups.map((g) => `
+      <div class="grant-item" data-gid="${g.id}">
         <div class="form-row"><b>${escapeHtml(g.name)}</b>
           ${g.is_system ? `<span class="pill">${t("系统组")}</span>` : ""}
           ${g.description ? `<span class="muted">${escapeHtml(g.description)}</span>` : ""}</div>

@@ -152,7 +152,7 @@ export async function renderJobs(body, {offset = 0, jobId = null} = {}) {
   if (jobId) { await renderJob(body, jobId, offset); return; }
   const data = await api(`/jobs?offset=${offset}&include_items=false`);
   if (!body.isConnected) return;
-  body.innerHTML = `<div class="page-head"><h2>${t("后台任务")}</h2><button class="btn" data-refresh>${t("刷新")}</button></div>
+  body.innerHTML = `<div class="page-head"><button class="btn" data-refresh>${t("刷新")}</button></div>
     <div class="table-wrap"><table class="data"><thead><tr><th>${t("任务")}</th><th>${t("状态")}</th><th>${t("进度")}</th><th>${t("操作")}</th></tr></thead><tbody>
     ${data.items.map(job => `<tr data-job="${job.id}"><td>${escapeHtml(t(KINDS[job.kind] || job.kind))} · ${escapeHtml(job.library_name)}<br><small>${escapeHtml(formatTimestamp(job.created_at))}</small></td><td>${escapeHtml(label(job.state))}</td><td>${job.completed}/${job.total ?? "—"}</td><td><a class="btn small" data-view href="${jobUrl(job.id)}&offset=${offset}">${t("查看详情")}</a></td></tr>`).join("") || `<tr><td colspan="4">${t("暂无任务")}</td></tr>`}
     </tbody></table></div>`;

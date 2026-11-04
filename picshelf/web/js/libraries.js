@@ -97,30 +97,33 @@ export function openLibraryForm(defaultMode = "managed", onCreated = () => {}, {
 export async function renderLibraries(body, {add = false, mode = "managed"} = {}) {
   const libs = await api("/libraries");
   body.innerHTML = `
-    <div class="section-head library-list-head"><h2>${t("图库")}</h2>
-      <button class="btn primary" data-new-library>${t("添加图库")}</button></div>
-    ${libs.map((l) => `
-      <div class="grant-item" style="margin-bottom:12px">
-        <div class="form-row">
-          <a href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
-          <span class="muted">${escapeHtml(l.root_path)}</span>
-          <span class="pill">${t("图片 {v0} · 专辑 {v1}", {v0: l.image_count, v1: l.album_count})}</span>
+    <div class="library-records">${libs.map((l) => `
+      <article class="library-record" data-library-id="${l.id}">
+        <div class="library-record-main">
+          <a id="library-name-${l.id}" class="library-record-name" href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
+          <p class="muted library-record-meta">${escapeHtml(l.root_path)} · ${t("图片 {v0} · 专辑 {v1}", {v0:l.image_count, v1:l.album_count})}</p>
+        </div>
+        <div class="library-record-actions">
           <button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>
           ${l.mode !== "indexed" ? `<button class="btn small" data-import="${l.id}">${t("导入图片")}</button>` : ""}
+          <button id="library-settings-toggle-${l.id}" class="btn small" data-library-settings-toggle="${l.id}" aria-expanded="false" aria-controls="library-settings-${l.id}">${t("设置与权限")}</button>
         </div>
-        <details data-library-settings><summary>${t("设置与权限")}</summary><div class="form-row">
-          <label>${t("用途")} <select data-mode="${l.id}">
-            ${l.mode == null ? `<option value="">${t("未设置用途")}</option>` : ""}
-            <option value="indexed" ${l.mode === "indexed" ? "selected" : ""}>${t("浏览已有目录")}</option>
-            <option value="managed" ${l.mode === "managed" ? "selected" : ""}>${t("接收导入")}</option>
-          </select></label>
-          <label>${t("默认导入方式")} <select data-default="${l.id}">
-            ${["hardlink", "copy", "move"].map(m => `<option value="${m}" ${l.default_import_mode === m ? "selected" : ""}>${t({hardlink:"硬链接",copy:"复制",move:"移动"}[m])}</option>`).join("")}
-          </select></label>
-          <button class="btn small" data-save-mode="${l.id}">${t("保存设置")}</button>
-        </div>
-        <div class="grant-grid" data-grants="${l.id}">${t("加载授权…")}</div></details>
-      </div>`).join("") || `<p class="empty">${t("还没有图库")}</p>`}`;
+        <section id="library-settings-${l.id}" class="library-settings" data-library-settings aria-labelledby="library-name-${l.id} library-settings-toggle-${l.id}" hidden>
+          <div class="form-row">
+            <label>${t("用途")} <select data-mode="${l.id}">
+              ${l.mode == null ? `<option value="">${t("未设置用途")}</option>` : ""}
+              <option value="indexed" ${l.mode === "indexed" ? "selected" : ""}>${t("浏览已有目录")}</option>
+              <option value="managed" ${l.mode === "managed" ? "selected" : ""}>${t("接收导入")}</option>
+            </select></label>
+            <label>${t("默认导入方式")} <select data-default="${l.id}">
+              ${["hardlink", "copy", "move"].map(m => `<option value="${m}" ${l.default_import_mode === m ? "selected" : ""}>${t({hardlink:"硬链接",copy:"复制",move:"移动"}[m])}</option>`).join("")}
+            </select></label>
+            <button class="btn small" data-save-mode="${l.id}">${t("保存设置")}</button>
+          </div>
+          <div class="grant-grid" data-grants="${l.id}">${t("加载授权…")}</div>
+        </section>
+      </article>`).join("") || `<p class="empty">${t("还没有图库")}</p>`}</div>
+    <div class="library-add-action"><button class="btn" data-new-library><span aria-hidden="true">＋</span> ${t("添加图库")}</button></div>`;
   const refresh = () => {
     const button = document.activeElement;
     const selector = button?.dataset.import ? `[data-import="${button.dataset.import}"]` : '[data-new-library]';
@@ -166,10 +169,13 @@ export async function renderLibraries(body, {add = false, mode = "managed"} = {}
 
   // 授权矩阵
   body.querySelectorAll("[data-grants]").forEach(el => {
-    const details = el.closest("details");
+    const panel = el.closest("[data-library-settings]");
+    const toggle = body.querySelector(`[data-library-settings-toggle="${el.dataset.grants}"]`);
     let loaded = false;
-    details.addEventListener("toggle", async () => {
-      if (!details.open || loaded) return;
+    toggle.addEventListener("click", async () => {
+      panel.hidden = !panel.hidden;
+      toggle.setAttribute("aria-expanded", String(!panel.hidden));
+      if (panel.hidden || loaded) return;
       loaded = true;
       const lid = el.dataset.grants;
       try {

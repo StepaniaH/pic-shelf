@@ -916,3 +916,30 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 .albums-page .album-caption :is(strong, .muted) { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .albums-page .album-caption strong { font-size: var(--shell-text); }
 .albums-page .empty-cover { font-size: var(--shell-text-xs); }
+
+/* Admin: one page title, text navigation and records instead of nested cards. */
+.admin-page { --admin-text: 14px; }
+.admin-page h1 { font-size: 20px; }
+.admin-page :is(h2, h3, .muted, .hint, .count, .pill, .badge, small) { font-size: var(--admin-text); }
+.admin-page .admin-tabs { flex-wrap: nowrap; overflow-x: auto; min-width: 0; gap: var(--content-space); margin: 0 0 var(--content-group-space); padding: 0; }
+.admin-page .admin-tabs .btn { flex: 0 0 auto; background: transparent; border: 0; border-radius: 0; white-space: nowrap; }
+.admin-page .admin-tabs .btn.active { color: var(--accent); background: transparent; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 8px; }
+.admin-page .admin-tabs .btn:hover { color: var(--accent); background: transparent; }
+.admin-page .admin-panel { min-width: 0; }
+.admin-page .library-record { display: grid; gap: var(--content-space); padding: var(--content-group-space) 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; box-shadow: none; }
+.admin-page .library-record:first-child { padding-top: 0; }
+.admin-page .library-record-main, .admin-page .library-record-meta { min-width: 0; overflow-wrap: anywhere; }
+.admin-page .library-record-main { display: grid; gap: var(--content-space); }
+.admin-page .library-record-meta { margin: 0; }
+.admin-page .library-record-name { color: inherit; }
+.admin-page .library-record-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--content-space); }
+.admin-page .library-add-action { margin-top: var(--content-group-space); }
+.admin-page .library-settings { min-width: 0; padding-top: var(--content-space); }
+.admin-page .grant-grid, .admin-page .checkbox-row { gap: var(--content-space); }
+.admin-page .grant-item { min-width: 0; padding: var(--content-space) 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.admin-page .grant-item[data-gid] { padding: var(--content-space) 0 var(--content-group-space); margin: 0 0 var(--content-group-space); border-bottom: 1px solid var(--border); }
+.admin-page .pill { display: inline-flex; align-items: center; gap: var(--content-space); padding: 0; border: 0; border-radius: 0; background: transparent; }
+.admin-page .checkbox-row label { gap: var(--content-space); font-size: var(--admin-text); }
+.admin-page table.data { font-size: var(--admin-text); }
+.admin-page table.data :is(th, td) { padding: var(--content-space); }
+.admin-page .job-progress :is(p, pre) { font-size: var(--admin-text); }
