@@ -3,7 +3,7 @@ import { api, mediaUrl, imageMediaUrl } from "./api.js";
 import { escapeHtml, toast, can, state, uiConfirm, showModal } from "./app.js";
 import { openSlideshow } from "./slideshow.js";
 import { t } from "./i18n.js";
-import {metadataHtml, workflowHtml, bindMetadata} from "./metadata.js";
+import {metadataHtml, bindMetadata} from "./metadata.js";
 import {formatTimestamp} from "./format.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
 import {ViewerLoader, PreviewCache, decodeImage} from "./viewer-load.js";
@@ -190,7 +190,8 @@ export function openViewer(source, index) {
       button.className = button.matches('[data-workflow="done"]') ? "viewer-primary"
         : button.className === "viewer-icon" ? "viewer-icon" : "viewer-action";
     }
-    for (const status of backdrop.querySelectorAll(".viewer-panel .workflow-row .pill")) status.classList.remove("pill");
+    if (!detail?.metadata?.tag_claims?.length) backdrop.querySelector('.viewer-panel [data-section="claims"] > p')?.remove();
+    if (!detail?.metadata?.sources?.length) backdrop.querySelector('.viewer-panel [data-section="sources"] > p.muted')?.remove();
     if (frame) {
       frame.alt = detail.filename;
       backdrop.querySelector(".viewer-stage").prepend(frame);
@@ -208,12 +209,20 @@ export function openViewer(source, index) {
     if (focusKey && isTopDialog(backdrop)) backdrop.querySelector(focusKey)?.focus({preventScroll:true});
   }
 
+  function fieldHtml(name, label, value, control = null) {
+    const labelId = `viewer-label-${name}`;
+    const tag = control ? "label" : "span";
+    return `<div class="viewer-field${name === "rating" ? " viewer-rating-heading" : ""}" data-field="${name}" role="group" aria-labelledby="${labelId}">
+      <${tag} class="viewer-field-label" id="${labelId}"${control ? ` for="${control}"` : ""}>${label}</${tag}>
+      <div class="viewer-field-value">${value}</div></div>`;
+  }
+
   function workHtml(d) {
     if (!d.work) return "";
     const labels = {original: "原图版本", compressed: "压缩版", crop: "裁剪版", resize: "尺寸版本", revision: "修订版", other: "其他版本"};
-    return `<section><p class="viewer-caption">${t("作品文件")} · ${escapeHtml(d.work.name)}</p><div class="add-row">${d.work.images.map(image =>
+    return `<section class="viewer-group">${fieldHtml("work", t("作品文件"), `<span>${escapeHtml(d.work.name)}</span><div class="add-row">${d.work.images.map(image =>
       `<button class="viewer-action" data-work-image="${image.id}" ${image.missing || image.id === d.id ? "disabled" : ""}>${escapeHtml(image.filename)} · ${t(labels[image.role])}${image.id === d.work.preferred_image_id ? ` · ${t("首选")}` : ""}</button>`
-    ).join("")}</div></section>`;
+    ).join("")}</div>`)}</section>`;
   }
 
   function panelHtml(item) {
@@ -222,39 +231,44 @@ export function openViewer(source, index) {
     const editable = d.metadata_editable;
     const chips = (items, render) => items.map(render).join("");
     const size = d.size_bytes >= 1024 * 1024 ? `${(d.size_bytes / (1024 * 1024)).toFixed(1)} MB` : `${(d.size_bytes / 1024).toFixed(1)} KB`;
-    return `<div class="viewer-panel-heading"><p class="viewer-identity" id="viewer-identity">${escapeHtml(d.filename)}<span class="viewer-summary">${formatTimestamp(d.imported_at)} · ${d.width}×${d.height} · ${size}</span></p></div>` + `
-      <section class="viewer-rating"><div class="viewer-rating-heading"><label for="v-rating">${t("我的评分")} <span class="viewer-caption">0–10</span></label><output id="v-rating-value" for="v-rating">${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}</output>
-        ${can("rate") ? `<button class="viewer-action" id="v-rating-clear" ${d.my_rating == null || d.my_rating < 0 ? "disabled" : ""}>${t("清除评分")}</button>` : ""}</div>
-        ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}">` : ""}
-        <span class="viewer-caption">${t("平均 {score}", {score:d.avg_rating ?? "—"})}</span>
+    const tags = chips(d.tags || [], tag => `<span class="viewer-tag">${escapeHtml(tag.name)}${editable ? `<button class="viewer-icon" data-untag="${escapeHtml(tag.name)}" aria-label="${t("移除")} ${escapeHtml(tag.name)}" title="${t("移除")} ${escapeHtml(tag.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`);
+    const tagEditor = editable ? `<details class="viewer-editor" data-section="tag-editor"><summary aria-label="${t("添加标签")}" title="${t("添加标签")}"><span aria-hidden="true">+ </span>${tags ? "" : t("添加标签")}</summary><div class="add-row"><input list="tag-dl" id="tag-input" aria-label="${t("添加标签")}" placeholder="${t("添加标签")}"><datalist id="tag-dl"></datalist><button class="viewer-action" id="tag-add">${t("添加")}</button></div></details>` : "";
+    const artists = chips(d.artists || [], artist => `<span class="viewer-tag">${escapeHtml(artist.name)}${editable ? `<button class="viewer-icon" data-unartist="${artist.id}" aria-label="${t("取消关联")} ${escapeHtml(artist.name)}" title="${t("取消关联")} ${escapeHtml(artist.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`);
+    const artistEditor = editable ? `<details class="viewer-editor" data-section="artist-editor"><summary aria-label="${t("关联艺术家")}" title="${t("关联艺术家")}"><span aria-hidden="true">+ </span>${artists ? "" : t("关联艺术家")}</summary><div class="add-row"><input list="artist-dl" id="artist-input" aria-label="${t("关联艺术家")}" placeholder="${t("关联艺术家")}"><datalist id="artist-dl"></datalist><button class="viewer-action" id="artist-add">${t("关联")}</button></div></details>` : "";
+    const albums = (d.albums || []).map(album => `<button class="viewer-action" data-album="${album.id}">${escapeHtml(album.name)}</button>`).join('<span class="viewer-caption" aria-hidden="true">·</span>');
+    const albumActions = editable ? `<div class="add-row"><button class="viewer-action" id="album-add">${t("加入手工专辑")}</button><button class="viewer-action" id="album-create">${t("新建专辑")}</button></div>` : "";
+    const done = d.metadata?.workflow.state === "done";
+    const workflow = d.metadata ? fieldHtml("state", t("状态"), `<span>${t(done ? "已整理" : "待整理")}</span><button class="viewer-action" data-workflow="${done ? "inbox" : "done"}">${t(done ? "标记为待整理" : "标记为已整理")}</button>`) : "";
+    const fileFields = [["library", t("库"), d.library?.name], ["path", t("路径"), d.rel_path], ["sha", "SHA-256", d.sha256], ["phash", "pHash", d.phash]]
+      .filter(([, , value]) => value != null && value !== "")
+      .map(([name, label, value]) => fieldHtml(name, label, `<span class="viewer-file-value">${escapeHtml(value)}</span>`)).join("");
+    return `<div class="viewer-panel-heading"><p class="viewer-summary" id="viewer-summary">${formatTimestamp(d.imported_at)} · ${d.width}×${d.height} · ${size}</p></div>
+      <section class="viewer-group viewer-reading-group">
+        <div class="viewer-rating">${fieldHtml("rating", `${t("我的评分")} <span class="viewer-caption">0–10</span>`, `<output id="v-rating-value" for="v-rating">${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}</output>${can("rate") ? `<button class="viewer-action" id="v-rating-clear" ${d.my_rating == null || d.my_rating < 0 ? "disabled" : ""}>${t("清除评分")}</button>` : ""}`, "v-rating")}
+          ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}">` : ""}
+          ${d.avg_rating != null ? `<span class="viewer-caption">${t("平均 {score}", {score:d.avg_rating})}</span>` : ""}
+        </div>
+        ${tags || tagEditor ? fieldHtml("tags", t("标签"), `${tags ? `<div class="viewer-values">${tags}</div>` : ""}${tagEditor}`) : ""}
       </section>
-      <section aria-label="${t("标签")}"><div class="viewer-values">${chips(d.tags || [], tag =>
-        `<span class="viewer-tag">${escapeHtml(tag.name)}${editable ? `<button class="viewer-icon" data-untag="${escapeHtml(tag.name)}" aria-label="${t("移除")} ${escapeHtml(tag.name)}" title="${t("移除")} ${escapeHtml(tag.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
-        ${editable ? `<details class="viewer-editor" data-section="tag-editor"><summary>${t("添加标签")}</summary><div class="add-row"><input list="tag-dl" id="tag-input" aria-label="${t("添加标签")}" placeholder="${t("添加标签")}"><datalist id="tag-dl"></datalist><button class="viewer-primary" id="tag-add">${t("添加")}</button></div></details>` : ""}
+      <section class="viewer-group viewer-context-group">
+        ${artists || artistEditor ? fieldHtml("artists", t("艺术家"), `${artists ? `<div class="viewer-values">${artists}</div>` : ""}${artistEditor}`) : ""}
+        ${albums || albumActions ? fieldHtml("albums", t("专辑"), `${albums ? `<div class="viewer-values">${albums}</div>` : ""}${albumActions}`) : ""}
+        ${workflow}
       </section>
-      <section aria-label="${t("艺术家")}"><div class="viewer-values">${chips(d.artists || [], artist =>
-        `<span class="viewer-tag">${escapeHtml(artist.name)}${editable ? `<button class="viewer-icon" data-unartist="${artist.id}" aria-label="${t("取消关联")} ${escapeHtml(artist.name)}" title="${t("取消关联")} ${escapeHtml(artist.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
-        ${editable ? `<details class="viewer-editor" data-section="artist-editor"><summary>${t("关联艺术家")}</summary><div class="add-row"><input list="artist-dl" id="artist-input" aria-label="${t("关联艺术家")}" placeholder="${t("关联艺术家")}"><datalist id="artist-dl"></datalist><button class="viewer-primary" id="artist-add">${t("关联")}</button></div></details>` : ""}
-      </section>
-      <section aria-label="${t("专辑")}"><div class="viewer-values">${(d.albums || []).map(album => `<button class="viewer-action" data-album="${album.id}">${escapeHtml(album.name)}</button>`).join('<span class="viewer-caption" aria-hidden="true">·</span>') || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
-        ${editable ? `<div class="add-row"><button class="viewer-action" id="album-add">${t("加入手工专辑")}</button><button class="viewer-action" id="album-create">${t("新建专辑")}</button></div>` : ""}
-      </section>
-      ${workflowHtml(d)}
       ${workHtml(d)}
-      <details data-section="comments"><summary>${t("评论")} · ${(d.comments || []).length}</summary>
-        <div id="comment-list">${chips(d.comments || [], comment => `<div class="comment"><div class="meta">${escapeHtml(comment.username)} · ${formatTimestamp(comment.created_at)}
-          ${comment.user_id === state.user.id || state.user.is_admin ? `<button class="viewer-icon" data-del-comment="${comment.id}" aria-label="${t("删除评论")}" title="${t("删除评论")}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button>` : ""}</div>${escapeHtml(comment.body)}</div>`)}</div>
-        ${can("comment") ? `<div class="add-row"><textarea id="comment-input" rows="2" aria-label="${t("写评论…")}" placeholder="${t("写评论…")}"></textarea><button class="viewer-primary" id="comment-add">${t("发表")}</button></div>` : ""}
-      </details>
-      <details data-section="notes"><summary>${t("笔记")} · ${(d.notes || []).length}</summary>
-        ${chips(d.notes || [], note => `<div class="comment"><div class="meta">${escapeHtml(note.username)}</div>${escapeHtml(note.body)}</div>`)}
-        ${can("note") ? `<div class="add-row"><input id="note-input" aria-label="${t("写笔记…")}" placeholder="${t("写笔记…")}"><button class="viewer-primary" id="note-add">${t("添加")}</button></div>` : ""}
-      </details>
-      ${metadataHtml(d)}
-      <details data-section="file"><summary>${t("文件信息")}</summary>
-        <p class="kv">${escapeHtml(d.library?.name || "—")} / ${escapeHtml(d.rel_path)}</p>
-        <p class="kv">SHA-256: ${escapeHtml(d.sha256 || "—")}<br>pHash: ${escapeHtml(d.phash || "—")}</p>
-      </details>`;
+      <section class="viewer-group viewer-extra-group">
+        <details data-section="comments"><summary>${t("评论")} · ${(d.comments || []).length}</summary>
+          <div id="comment-list">${chips(d.comments || [], comment => `<div class="comment"><div class="meta">${escapeHtml(comment.username)} · ${formatTimestamp(comment.created_at)}
+            ${comment.user_id === state.user.id || state.user.is_admin ? `<button class="viewer-icon" data-del-comment="${comment.id}" aria-label="${t("删除评论")}" title="${t("删除评论")}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button>` : ""}</div>${escapeHtml(comment.body)}</div>`)}</div>
+          ${can("comment") ? `<div class="add-row"><textarea id="comment-input" rows="2" aria-label="${t("写评论…")}" placeholder="${t("写评论…")}"></textarea><button class="viewer-action" id="comment-add">${t("发表")}</button></div>` : ""}
+        </details>
+        <details data-section="notes"><summary>${t("笔记")} · ${(d.notes || []).length}</summary>
+          ${chips(d.notes || [], note => `<div class="comment"><div class="meta">${escapeHtml(note.username)}</div>${escapeHtml(note.body)}</div>`)}
+          ${can("note") ? `<div class="add-row"><input id="note-input" aria-label="${t("写笔记…")}" placeholder="${t("写笔记…")}"><button class="viewer-action" id="note-add">${t("添加")}</button></div>` : ""}
+        </details>
+        ${metadataHtml(d)}
+        <details data-section="file"><summary>${t("文件信息")}</summary><div class="viewer-file-fields">${fileFields}</div></details>
+      </section>`;
   }
 
   // ---------------------------------------------------------------- 事件

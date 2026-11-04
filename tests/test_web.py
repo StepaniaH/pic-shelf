@@ -416,7 +416,7 @@ def test_viewer_ignores_late_response_for_previous_image(page, web_server):
     page.evaluate("window.releaseSlowResponse()")
     page.wait_for_function("window.slowResponseFinished === true")
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", expected)
-    expect(page.locator(".viewer-panel #viewer-identity")).to_contain_text(expected)
+    expect(page.locator(".viewer-panel [data-field=path] .viewer-field-value")).to_contain_text(expected)
     expect(page.locator("[data-untag]")).to_have_count(0)
 
 
@@ -850,10 +850,10 @@ def test_viewer_failed_pixels_and_saves_keep_context_and_inputs(page, web_server
     cards.first.click()
     expect(page.locator(".viewer-status")).to_contain_text("could not be displayed")
     expect(page.locator(".viewer-stage img")).to_have_count(0)
-    expect(page.locator(".viewer-panel #viewer-identity")).to_have_count(0)
+    expect(page.locator(".viewer-panel [data-field=path] .viewer-field-value")).to_have_count(0)
     page.locator("#v-next").click()
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", second_name)
-    expect(page.locator(".viewer-panel #viewer-identity")).to_contain_text(second_name)
+    expect(page.locator(".viewer-panel [data-field=path] .viewer-field-value")).to_contain_text(second_name)
     page.unroute(f"**/media/preview/{first}?*")
     draft = "A comment to keep through a failed save"
     show_viewer_info(page).locator('[data-section="comments"] > summary').click()
@@ -1901,7 +1901,9 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     # Closed details can retain layout rectangles; assert actual visibility instead.
     for field in viewer.locator('#viewer-details input:not([type=range]), #viewer-details textarea, #viewer-details select').all():
         expect(field).to_be_hidden()
-    expect(viewer.locator('#viewer-identity')).to_contain_text(card.locator('.fname').text_content())
+    expect(viewer.locator('#viewer-identity')).to_have_count(0)
+    expect(viewer.locator('#viewer-summary')).not_to_contain_text(card.locator('.fname').text_content())
+    expect(viewer.locator('#viewer-summary')).to_have_css('font-size', '12px')
     expect(viewer.locator('.viewer-summary')).to_contain_text('×')
     # Count the actual panel, including every editor and menu, rather than a quiet collapsed shell.
     viewer.locator('details').evaluate_all('elements => elements.forEach(el => el.open = true)')
@@ -1918,14 +1920,21 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
           roles: [...new Set(buttons.map(el => el.className))],
           maxFont: Math.max(...values(['fontSize'])),
           maxTargets: elements.filter(el=>parseFloat(getComputedStyle(el).fontSize)===Math.max(...values(['fontSize']))).map(el=>el.id),
-          headings: elements.filter(el=>el.matches('h2,h3')).length,
+          headings: elements.filter(el=>el.matches('h1,h2,h3,h4,h5,h6')).length,
           pills: elements.filter(el=>el.matches('.pill,.chip,[class*="chip"]')).length,
           boxes: elements.filter(el=>['Top','Right','Bottom','Left'].filter(side=>parseFloat(getComputedStyle(el)['border'+side+'Width'])>0 && getComputedStyle(el)['border'+side+'Style']!=='none').length>=3).length,
           primaryActions: buttons.filter(el=>el.className==='viewer-primary').map(el=>el.getAttribute('data-workflow')),
           tiny: elements.filter(el => el.matches('button,input,select,textarea,summary,a[href]'))
             .filter(el => {const r = el.getBoundingClientRect(); return r.height < 43.9 || r.width < 43.9;}).map(el => el.outerHTML)};
       };
-      return {chrome: measure(root, true), panel: measure(panel), overflow: root.scrollWidth > root.clientWidth};
+      const fields=[...panel.querySelectorAll('.viewer-field')];
+      const spacing=[...new Set([panel,...panel.querySelectorAll('*')].filter(el=>el.getClientRects().length).flatMap(el=>['marginTop','marginRight','marginBottom','marginLeft','paddingTop','paddingRight','paddingBottom','paddingLeft','rowGap','columnGap'].map(prop=>parseFloat(getComputedStyle(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))];
+      const chrome=measure(root,true), max=chrome.maxFont;
+      const title=root.querySelector('.viewer-top .viewer-heading h1.title');
+      const allMax=[root,...root.querySelectorAll('*')].filter(el=>el.getClientRects().length&&parseFloat(getComputedStyle(el).fontSize)===max);
+      return {chrome, panel: measure(panel), overflow: root.scrollWidth > root.clientWidth,spacing,
+        maxIsTitle:allMax.length===1&&allMax[0]===title,
+        unlabeled:fields.filter(el=>el.querySelectorAll(':scope > .viewer-field-label').length!==1||el.querySelectorAll(':scope > .viewer-field-value').length!==1).length};
     }''')
     assert not measured['overflow']
     for name in ('chrome', 'panel'):
@@ -1939,8 +1948,10 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
         assert set(data['roles']) <= {'viewer-action', 'viewer-primary', 'viewer-icon'}, data
         assert not data['tiny'], data
     content = measured['panel']
-    assert set(content['fonts']) <= {12, 14, 16}, content
-    assert content['maxFont'] == 16 and content['maxTargets'] == ['viewer-identity'], content
+    assert set(content['fonts']) <= {12, 14}, content
+    assert measured['maxIsTitle'], measured
+    assert measured['unlabeled'] == 0, measured
+    assert set(measured['spacing']) == {8,24}, measured
     assert content['headings'] == 0 and content['pills'] == 0, content
     assert content['boxes'] <= 6, content
     assert len(content['primaryActions']) <= 1 and set(content['primaryActions']) <= {'done'}, content
@@ -1995,3 +2006,39 @@ def test_viewer_pilot_rating_keeps_all_values_zero_clear_and_keyboard_focus(page
     page.locator('#v-close').click()
     expect(page.locator('.modal-backdrop')).to_have_count(0)
     expect(card).to_be_focused()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_viewer_empty_fields_keep_labels_and_add_actions_without_placeholders(page, web_server, width):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width':width,'height':1000})
+    sign_in(page,web_server)
+    card=page.locator('#grid .card').first
+    image_id=card.get_attribute('data-id')
+    # A read-only response fixture exercises absent values without changing stored metadata.
+    def empty_metadata(route):
+        response=route.fetch()
+        data=response.json()
+        data.update(tags=[],artists=[],albums=[])
+        data['metadata']['tag_claims']=[]
+        route.fulfill(response=response,json=data)
+    page.route(f'**/api/v1/images/{image_id}',empty_metadata)
+    card.click()
+    viewer=show_viewer_info(page)
+    for field,label,editor in [('tags','Tags','tag-editor'),('artists','Artists','artist-editor'),('albums','Albums',None)]:
+        row=viewer.locator(f'.viewer-field[data-field={field}]')
+        expect(row.locator(':scope > .viewer-field-label')).to_have_text(label)
+        value=row.locator(':scope > .viewer-field-value')
+        assert value.inner_text().strip()
+        assert '(none)' not in value.inner_text().lower()
+        assert '—' not in value.inner_text()
+        left=row.locator('.viewer-field-label').bounding_box()
+        right=value.bounding_box()
+        assert left['x']+left['width'] <= right['x']
+        if editor:
+            value.locator(f'[data-section={editor}] > summary').click()
+            expect(value.locator('input')).to_be_visible()
+            value.locator(f'[data-section={editor}] > summary').click()
+    expect(viewer.locator('#viewer-summary')).to_contain_text('UTC')
+    expect(viewer.locator('#viewer-identity')).to_have_count(0)
+    page.locator('#v-close').click()
