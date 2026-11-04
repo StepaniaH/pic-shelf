@@ -936,6 +936,7 @@ def test_shell_groups_tokens_and_logo_preserve_navigation(page, web_server, widt
     from playwright.sync_api import expect
     page.set_viewport_size({'width': width, 'height': 1000})
     sign_in(page, web_server, language)
+    initial_library_count = page.locator('.lib-card').count()
     sidebar = page.locator('#sidebar')
     topbar = page.locator('#topbar')
     expect(topbar).to_have_css('min-height', '48px')
@@ -987,7 +988,7 @@ def test_shell_groups_tokens_and_logo_preserve_navigation(page, web_server, widt
             expect(sidebar).to_be_hidden()
     navigate_from_sidebar(page, '#/home')
     expect(page).to_have_url(web_server.url + '/#/home')
-    expect(page.locator('.lib-card')).to_have_count(1)
+    expect(page.locator('.lib-card')).to_have_count(initial_library_count)
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
 
