@@ -361,6 +361,7 @@ export async function renderAlbum(view, albumId, sort = "path") {
 
 async function renderCatalogList(view, kind) {
   const artists = kind === "artists";
+  view.classList.add("quiet-collection-page", "catalog-page", artists ? "artists-page" : "tags-page");
   view.innerHTML = `<div class="page-head"><h1>${t(artists ? "艺术家" : "标签")}</h1><span class="count" data-list-count></span></div>
     <form class="entity-search" role="search"><input type="search" maxlength="300" aria-label="${t("搜索名称")}" placeholder="${t("搜索名称")}"></form>
     <p class="error" data-list-error role="status" hidden></p><button class="btn small" data-list-retry hidden>${t("重试")}</button><div class="entity-list"></div>
@@ -384,7 +385,7 @@ async function renderCatalogList(view, kind) {
       if (requested !== revision || !view.isConnected) return;
       if (reset) { list.replaceChildren(); offset = 0; }
       const rows = values.slice(0, 100);
-      list.insertAdjacentHTML("beforeend", rows.map(item => `<div class="entity-row"><a class="entity-link" href="${artists ? `#/artist/${item.id}` : `#/tag/${encodeURIComponent(item.name)}`}">
+      list.insertAdjacentHTML("beforeend", rows.map(item => `<div class="entity-row"><a class="entity-link" title="${escapeHtml(item.name)}" href="${artists ? `#/artist/${item.id}` : `#/tag/${encodeURIComponent(item.name)}`}">
         <span class="entity-symbol" aria-hidden="true">${artists ? escapeHtml(item.name.slice(0, 1)) : "#"}</span>
         <span class="entity-name">${escapeHtml(item.name)}</span><span class="muted">${t("共 {v0} 张", {v0:artists ? item.image_count : item.count})}</span></a>
         ${!artists && can("admin") ? `<button class="btn small" data-edit-tag="${item.id}" aria-label="${escapeHtml(t("管理标签：{name}", {name:item.name}))}">${t("管理标签")}</button>` : ""}</div>`).join(""));

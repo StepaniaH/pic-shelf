@@ -930,6 +930,19 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
   .home-page .page-head .toolbar { grid-column: 1 / -1; justify-content: flex-end; }
 }
 
+/* Tags and artists are index records, not nested content cards. */
+.catalog-page h1 { font-size: 20px; }
+.catalog-page :is(.count, .muted, .entity-symbol) { font-size: var(--shell-text); }
+.catalog-page .entity-search { margin: 0 0 var(--content-group-space); }
+.catalog-page .entity-list { gap: var(--content-space); }
+.catalog-page .entity-row { min-width: 0; min-height: 44px; gap: var(--content-space); padding: var(--content-space) 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+.catalog-page .entity-row:hover { background: transparent; }
+.catalog-page .entity-link { min-width: 0; gap: var(--content-space); }
+.catalog-page .entity-link:hover .entity-name { text-decoration: underline; }
+.catalog-page .entity-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.catalog-page .entity-symbol { width: 24px; height: 24px; border-radius: 0; background: transparent; }
+.catalog-page .entity-list .empty { margin: 0; padding: var(--content-group-space); }
+
 /* Admin: one page title, text navigation and records instead of nested cards. */
 .admin-page { --admin-text: 14px; }
 .admin-page h1 { font-size: 20px; }

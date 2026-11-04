@@ -997,11 +997,91 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
     expect(content.locator('[data-select-image]:checked')).to_have_count(0)
     check_controls()
     # Route changes discard the pilot marker and restore the existing content styles.
-    for route in ('#/tags', '#/artists'):
+    for route in ('#/queries', '#/play-rules'):
         navigate_from_sidebar(page, route)
         expect(page.locator('#view .page-head h1')).to_be_visible()
         expect(page.locator('.quiet-collection-page')).to_have_count(0)
         expect(page.locator('body')).to_have_css('font-size', '15px')
+
+
+@pytest.mark.parametrize('kind', ['tags', 'artists'])
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_catalog_records_keep_filter_paging_retry_and_entry_actions(page, tmp_path, kind, width, language):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    originals = tmp_path / 'originals'
+    password = secrets.token_urlsafe(24)
+    primary = 'Landscape' if kind == 'tags' else 'Studio North'
+    long_name = 'A deliberately long descriptive catalog name that should remain available'
+    names = [primary, long_name] + [f'Sample {n:03}' for n in range(101)]
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        uid = auth.create_user(conn, 'browser-test', password, is_admin=True)
+        for n in range(2):
+            make_image(originals / f'picture-{n}.png', (n * 80, 90, 130), size=(160, 100))
+        library_id = libsvc.create_library(conn, 'Gallery', str(originals))
+        indexer.scan_library(conn, cfg, library_id)
+        ids = [row[0] for row in conn.execute('SELECT id FROM images')]
+        if kind == 'tags':
+            for iid in ids:
+                ops.add_tags(conn, iid, names, uid)
+        else:
+            for name in names:
+                artist = ops.create_artist(conn, name)
+                for iid in ids:
+                    ops.link_artist(conn, iid, artist['id'])
+    page.set_viewport_size({'width': width, 'height': 1000})
+    with http_server(cfg) as client:
+        live = WebServer(str(client.base_url), password, originals, originals)
+        sign_in(page, live, language)
+        navigate_from_sidebar(page, '#/' + kind)
+        content = page.locator('.catalog-page')
+        expect(content.locator('.entity-row')).to_have_count(100)
+        more = content.locator('[data-list-more]')
+        expect(more).to_be_visible()
+        more.click()
+        expect(content.locator('.entity-row')).to_have_count(103)
+        expect(more).to_be_hidden()
+        expect(content.locator('.entity-link').filter(has_text=long_name)).to_have_attribute('title', long_name)
+
+        def check_style():
+            page.mouse.move(0, 0)
+            measured = content.evaluate(COLLECTION_PAGE_AUDIT)
+            assert set(measured['fonts']) <= {14, 16, 20}, measured
+            assert set(measured['radii']) <= {4, 8} and set(measured['spacing']) <= {8, 24}, measured
+            assert not measured['filled'] and not measured['borderedButtons'] and not measured['overflow'], measured
+            expect(content.locator('input[type=search]')).to_have_css('border-width', '1px')
+            assert content.locator('h1,h2,h3').evaluate_all("els=>els.filter(el=>el.checkVisibility()&&getComputedStyle(el).fontSize==='20px').length") == 1
+            assert content.locator('.entity-row').evaluate_all(
+                "els=>els.every(el=>['Top','Left','Right'].every(side=>parseFloat(getComputedStyle(el)['border'+side+'Width'])===0))")
+
+        check_style()
+        # An existing failed refresh keeps its records and offers the same retry action.
+        pattern = '**/api/v1/' + kind + '?*'
+        page.route(pattern, lambda route: route.fulfill(status=503, json={'message': 'Synthetic temporary error'}))
+        query = content.locator('input[type=search]')
+        query.fill('recovery')
+        query.press('Enter')
+        retry = content.locator('[data-list-retry]')
+        expect(retry).to_be_visible()
+        expect(content.locator('.entity-row')).to_have_count(103)
+        check_style()
+        page.unroute(pattern)
+        retry.click()
+        expect(content.locator('.entity-row')).to_have_count(0)
+        query.fill(primary)
+        query.press('Enter')
+        expect(content.locator('.entity-row')).to_have_count(1)
+        if kind == 'tags':
+            edit = content.locator('[data-edit-tag]')
+            edit.click()
+            expect(page.locator('[data-rename] [name=name]')).to_have_value(primary)
+            page.locator('.modal [data-close]').click()
+            expect(edit).to_be_focused()
+        content.locator('.entity-link').click()
+        expect(page.locator('#grid .card')).to_have_count(2)
 
 
 @pytest.mark.parametrize('width', [390, 1440])
