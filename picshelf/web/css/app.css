@@ -917,6 +917,19 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 .albums-page .album-caption strong { font-size: var(--shell-text); }
 .albums-page .empty-cover { font-size: var(--shell-text-xs); }
 
+/* The landing page contains real library covers and recent images. */
+.home-page .home-libraries { gap: var(--content-space); margin: 0 0 var(--content-group-space); }
+.home-page .lib-card { padding: 0; border: 0; border-radius: var(--shell-radius-2); overflow: hidden; box-shadow: none; }
+.home-page .library-cover { aspect-ratio: 4 / 3; margin: 0; border: 0; border-radius: 0; }
+.home-page .lib-card h3 { margin: var(--content-space) var(--content-space) 0; font-size: var(--shell-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-page .library-count { margin: var(--content-space) 0 0; padding: 0 var(--content-space) var(--content-space); font-size: var(--shell-text-xs); }
+.home-page .section-head { gap: var(--content-space); margin: var(--content-group-space) 0 var(--content-space); }
+.home-page .empty-state { max-width: none; margin: var(--content-group-space) 0; }
+@media (max-width: 600px) {
+  .home-page .page-head { grid-template-columns: auto minmax(0, 1fr); }
+  .home-page .page-head .toolbar { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
 /* Admin: one page title, text navigation and records instead of nested cards. */
 .admin-page { --admin-text: 14px; }
 .admin-page h1 { font-size: 20px; }

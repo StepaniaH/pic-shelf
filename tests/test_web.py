@@ -997,13 +997,70 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
     expect(content.locator('[data-select-image]:checked')).to_have_count(0)
     check_controls()
     # Route changes discard the pilot marker and restore the existing content styles.
-    for route in ('#/home', '#/tags', '#/artists'):
+    for route in ('#/tags', '#/artists'):
         navigate_from_sidebar(page, route)
         expect(page.locator('#view .page-head h1')).to_be_visible()
         expect(page.locator('.quiet-collection-page')).to_have_count(0)
         expect(page.locator('body')).to_have_css('font-size', '15px')
-    navigate_from_sidebar(page, '#/home')
-    expect(page.locator('.lib-card').first).to_have_css('border-width', '1px')
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_home_quiet_actions_keep_library_and_recent_navigation(page, tmp_path, width, language):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    originals, empty = tmp_path / 'originals', tmp_path / 'empty'
+    empty.mkdir()
+    empty_name = 'Empty library with a deliberately long descriptive name'
+    password = secrets.token_urlsafe(24)
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        auth.create_user(conn, 'browser-test', password, is_admin=True)
+        for n in range(2):
+            make_image(originals / f'picture-{n}.png', (n * 80, 90, 130), size=(160, 100))
+        library_id = libsvc.create_library(conn, 'Gallery', str(originals))
+        indexer.scan_library(conn, cfg, library_id)
+        libsvc.create_library(conn, empty_name, str(empty))
+    page.set_viewport_size({'width': width, 'height': 1000})
+    with http_server(cfg) as client:
+        live = WebServer(str(client.base_url), password, originals, empty)
+        sign_in(page, live, language)
+        content = page.locator('.home-page')
+        expect(content.locator('.lib-card')).to_have_count(2)
+        expect(content.locator('#grid .card')).to_have_count(2)
+        expect(content.locator('.card-selection')).to_have_count(0)
+        page.mouse.move(0, 0)
+        measured = content.evaluate(COLLECTION_PAGE_AUDIT)
+        assert measured['filled'] == [] and measured['borderedButtons'] == [], measured
+        assert set(measured['fonts']) <= {12, 14, 16}, measured
+        assert set(measured['radii']) <= {4, 8} and set(measured['spacing']) <= {8, 24}, measured
+        assert not measured['framedPanels'] and not measured['overflow'], measured
+        for card in content.locator('.lib-card').all():
+            expect(card).to_have_css('border-width', '0px')
+            expect(card).to_have_css('border-radius', '8px')
+            expect(card).to_have_css('box-shadow', 'none')
+        expect(content.locator('.library-title').filter(has_text=empty_name)).to_have_attribute('title', empty_name)
+        all_images = content.locator('.home-view-all')
+        assert all_images.evaluate('el=>getComputedStyle(el).color') == content.locator('[data-new-library]').evaluate('el=>getComputedStyle(el).color')
+        content.locator('[data-new-library]').click()
+        expect(page.locator('#nl-name')).to_be_visible()
+        page.locator('[data-library-actions] [data-close]').click()
+        expect(content.locator('[data-new-library]')).to_be_focused()
+        content.locator('[data-import]').click()
+        expect(page.locator('.import-modal')).to_be_visible()
+        page.locator('.import-modal [data-close]').click()
+        expect(content.locator('.library-title').first).to_be_visible()
+        content.locator(f'.library-title[href="#/library/{library_id}"]').click()
+        expect(page.locator('#grid .card')).to_have_count(2)
+        navigate_from_sidebar(page, '#/home')
+        page.locator('.home-page #grid .card').first.click()
+        expect(page.locator('.viewer-backdrop')).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(page.locator('.viewer-backdrop')).to_have_count(0)
+        page.locator('.home-view-all').click()
+        expect(page).to_have_url(str(client.base_url) + '/#/search')
+        expect(page.locator('.images-page #grid .card')).to_have_count(2)
 
 
 @pytest.mark.parametrize('route,operation', [('favorites', 'favorite_off'), ('inbox', 'workflow_done')])

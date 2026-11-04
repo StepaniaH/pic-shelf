@@ -217,6 +217,7 @@ export function renderLogin(view) {
 // ---------------------------------------------------------------- 首页
 
 export async function renderHome(view) {
+  view.classList.add("quiet-collection-page", "home-page");
   const [libs, recent] = await Promise.all([api("/libraries"), api("/images?limit=24&sort=newest")]);
   const source = new Source(t("最近添加"));
   source.items = recent.items;
@@ -229,12 +230,12 @@ export async function renderHome(view) {
       ${state.user.is_admin ? "" : `<p>${t("还没有可访问的图库，请联系管理员。")}</p>`}
       ${state.user.is_admin ? `<button class="btn primary" data-new-library>${t("添加图库")}</button>` : ""}</section>` : `
     <div class="lib-cards home-libraries">${libs.map(lib => `<article class="lib-card">
-      <a class="library-title" href="#/library/${lib.id}">
+      <a class="library-title" title="${escapeHtml(lib.name)}" href="#/library/${lib.id}">
         <span class="library-cover">${lib.cover_image_id ? `<img src="${mediaUrl("thumb", lib.cover_image_id)}" alt="" loading="lazy">` : ""}</span>
         <h3>${escapeHtml(lib.name)}</h3></a>
       <p class="library-count">${t("共 {v0} 张", {v0: lib.image_count})}</p>
     </article>`).join("")}</div>
-    <div class="section-head"><h2>${t("最近添加")}</h2><a href="#/search">${t("查看全部")} →</a></div>
+    <div class="section-head"><h2>${t("最近添加")}</h2><a class="btn home-view-all" href="#/search">${t("查看全部")} →</a></div>
     <div class="grid" id="grid">${recent.items.map(item => cardHtml(item, {showLibrary:libs.length > 1})).join("") || `<p class="empty">${t("暂无图片")}</p>`}</div>`}`;
   const grid = view.querySelector("#grid");
   const refresh = () => {
