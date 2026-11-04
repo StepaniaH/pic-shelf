@@ -135,12 +135,33 @@ export function attachBatchControls(view,source,grid,refresh) {
   const status = document.createElement("section"); status.dataset.batchStatus = ""; bar.after(status);
   bar.hidden = true;
   const toggle = view.querySelector("[data-selection-toggle]");
+  const selectionCount = bar.querySelector("[data-selection-count]");
+  let selectionBar, toggleAnchor;
+  if (view.classList.contains("images-page")) {
+    selectionBar = document.createElement("div");
+    selectionBar.className = "images-selection-bar";
+    selectionBar.setAttribute("role", "region");
+    selectionBar.setAttribute("aria-label", t("批量整理"));
+    selectionBar.hidden = true;
+    bar.querySelector("summary").textContent = t("批量整理");
+    selectionBar.appendChild(selectionCount);
+    view.querySelector(".page-head").after(selectionBar);
+    toggleAnchor = document.createComment("selection action position");
+    toggle.before(toggleAnchor);
+  }
   const showSelection = on => {
     bar.hidden = !on;
     bar.open = on;
     grid.classList.toggle("selecting", on);
     toggle.setAttribute("aria-expanded", String(on));
     toggle.textContent = t(on ? "完成选择" : "选择");
+    if (selectionBar) {
+      const focused = document.activeElement === toggle;
+      selectionBar.hidden = !on;
+      if (on) selectionBar.appendChild(toggle);
+      else toggleAnchor.after(toggle);
+      if (focused) toggle.focus({preventScroll:true});
+    }
   };
   toggle.onclick = () => {
     const on = bar.hidden;
@@ -154,7 +175,7 @@ export function attachBatchControls(view,source,grid,refresh) {
   const operation = bar.querySelector("[data-batch-operation]");
   const invalidate = () => {revision++;preview=null;requestKey=null;review.replaceChildren();};
   const update = () => {
-    bar.querySelector("[data-selection-count]").textContent = selection.allMatching
+    selectionCount.textContent = selection.allMatching
       ?t("已选全部 {n} 张",{n:source.total}):t("已选 {n} 张",{n:selection.ids.size});
     grid.querySelectorAll("[data-select-image]").forEach(input=>{input.checked=selection.allMatching || selection.ids.has(Number(input.dataset.selectImage));input.disabled=selection.allMatching;});
     const needsTarget = operation.value.startsWith("artist_") || operation.value.startsWith("album_");

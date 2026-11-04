@@ -449,6 +449,7 @@ export async function renderInbox(view, sort = "newest") {
 }
 
 export async function renderSearch(view, q, sort="newest") {
+  view.classList.add("images-page");
   const title = t(q ? "搜索结果" : "图片");
   const source = new Source(title, {title, q}, {q, sort});
   if (!await loadSource(view, source)) return;

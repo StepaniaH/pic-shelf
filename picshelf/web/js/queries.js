@@ -44,7 +44,7 @@ export async function attachSearchTools(view, source, rule = null, {open = false
     if (!section.isConnected) return;
     const revision = (revisions.get(view) || 0) + 1;
     revisions.set(view, revision);
-    const candidate = new Source(rule?.name || t(query ? "搜索结果" : "全部图片"), source.context, {q:query, sort:source.sort, filters:source.filters});
+    const candidate = new Source(rule?.name || t(query ? "搜索结果" : view.classList.contains("images-page") ? "图片" : "全部图片"), source.context, {q:query, sort:source.sort, filters:source.filters});
     candidate.display = {...source.display, density:view.querySelector("#density-select").value};
     if (!await loadSource(view, candidate) || !section.isConnected || revisions.get(view) !== revision) return;
     if (candidate.errors.length) { error.textContent = candidate.errors.join(" "); return; }

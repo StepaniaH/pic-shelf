@@ -930,6 +930,82 @@ def test_phone_navigation_closes_with_escape_and_restores_search_access(page, we
     expect(page.locator("#grid .card")).to_have_count(1)
 
 
+IMAGES_PAGE_AUDIT = r'''root => {
+  const visible=el=>el.checkVisibility({visibilityProperty:true,opacityProperty:true,contentVisibilityAuto:true});
+  const nodes=[root,...root.querySelectorAll('*')].filter(visible);
+  const css=el=>getComputedStyle(el);
+  const values=props=>[...new Set(nodes.flatMap(el=>props.map(prop=>parseFloat(css(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))].sort((a,b)=>a-b);
+  const transparent=color=>color==='transparent'||/^rgba\([^)]*,\s*0(?:\.0*)?\)$/.test(color);
+  const bordered=el=>['Top','Right','Bottom','Left'].some(side=>parseFloat(css(el)['border'+side+'Width'])>0&&css(el)['border'+side+'Style']!=='none'&&!transparent(css(el)['border'+side+'Color']));
+  const actions=nodes.filter(el=>el.matches('button,a.btn,input[type=submit],[role=button]'));
+  const bodyColor=css(document.body).backgroundColor;
+  const filled=actions.filter(el=>!transparent(css(el).backgroundColor)&&css(el).backgroundColor!==bodyColor);
+  const spacing=[...new Set(nodes.flatMap(el=>['marginTop','marginRight','marginBottom','marginLeft','paddingTop','paddingRight','paddingBottom','paddingLeft','rowGap','columnGap'].filter(prop=>!(el.matches('.grid.windowed')&&['paddingTop','paddingBottom'].includes(prop))).map(prop=>parseFloat(css(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))].sort((a,b)=>a-b);
+  const spacingOutliers=nodes.flatMap(el=>['marginTop','marginRight','marginBottom','marginLeft','paddingTop','paddingRight','paddingBottom','paddingLeft','rowGap','columnGap'].map(prop=>({element:el.tagName+'#'+el.id+'.'+el.className,property:prop,value:parseFloat(css(el)[prop])}))).filter(item=>Number.isFinite(item.value)&&item.value>0&&![8,24].includes(item.value));
+  return {fonts:values(['fontSize']),radii:values(['borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius']),spacing,spacingOutliers,
+    filled:filled.map(el=>({id:el.id,selection:el.hasAttribute('data-selection-toggle'),text:el.innerText})),
+    borderedButtons:actions.filter(bordered).map(el=>el.outerHTML),
+    borderedInputs:nodes.filter(el=>el.matches('input,select,textarea')&&bordered(el)).length,
+    framedPanels:nodes.filter(el=>el.matches('details,section,.form-card')&&bordered(el)).map(el=>el.className),
+    nonImageCards:nodes.filter(el=>el.matches('.card,.lib-card,.form-card')&&!el.matches('.card[data-id]')).length,
+    overflow:document.documentElement.scrollWidth>innerWidth};
+}'''
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    navigate_from_sidebar(page, '#/search')
+    content = page.locator('.images-page')
+    expect(content.locator('#grid .card').first).to_be_visible()
+    expect(content.locator('#slideshow-btn')).to_have_css('background-color', 'rgba(0, 0, 0, 0)')
+    expect(page.locator('#search-input')).to_have_css('border-width', '1px')
+    for selector in ('#sort-select', '#density-select'):
+        expect(content.locator(selector)).to_have_css('border-width', '0px')
+
+    def check_controls():
+        page.mouse.move(0, 0)
+        measured = content.evaluate(IMAGES_PAGE_AUDIT)
+        assert set(measured['fonts']) <= {12, 14, 16}, measured
+        assert set(measured['radii']) <= {4, 8}, measured
+        assert set(measured['spacing']) <= {8, 24}, measured
+        assert measured['filled'] == [], measured
+        assert measured['borderedButtons'] == [] and measured['framedPanels'] == [], measured
+        assert measured['nonImageCards'] == 0 and not measured['overflow'], measured
+
+    check_controls()
+    content.locator('.query-editor > summary').click()
+    expect(content.locator('[name=field]')).to_be_enabled()
+    check_controls()
+    content.locator('.query-syntax > summary').click()
+    check_controls()
+    content.locator('#density-select').select_option('compact')
+    content.locator('[data-selection-toggle]').click()
+    selection_bar = content.locator('.images-selection-bar')
+    expect(selection_bar).to_be_visible()
+    expect(selection_bar.locator('[data-selection-toggle]')).to_have_text('完成选择' if language == 'zh' else 'Done selecting')
+    content.locator('[data-select-image]').first.check()
+    expect(selection_bar.locator('[data-selection-count]')).to_have_text('已选 1 张' if language == 'zh' else '1 selected')
+    expect(content.locator('[data-batch-preview]')).to_be_visible()
+    check_controls()
+    selection_bar.locator('[data-selection-toggle]').click()
+    expect(selection_bar).to_be_hidden()
+    expect(content.locator('.collection-toolbar [data-selection-toggle]')).to_have_text('选择' if language == 'zh' else 'Select')
+    expect(content.locator('[data-select-image]:checked')).to_have_count(0)
+    check_controls()
+    # Route changes discard the pilot marker and restore the existing content styles.
+    for route in ('#/favorites', '#/inbox', '#/albums', '#/admin'):
+        navigate_from_sidebar(page, route)
+        expect(page.locator('#view .page-head h1')).to_be_visible()
+        expect(page.locator('.images-page')).to_have_count(0)
+        expect(page.locator('body')).to_have_css('font-size', '15px')
+    navigate_from_sidebar(page, '#/favorites')
+    expect(page.locator('#slideshow-btn')).to_have_css('border-width', '1px')
+
+
 @pytest.mark.parametrize('width', [390, 1440])
 @pytest.mark.parametrize('language', ['zh', 'en'])
 def test_shell_groups_tokens_and_logo_preserve_navigation(page, web_server, width, language):
