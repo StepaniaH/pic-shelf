@@ -1093,7 +1093,7 @@ def test_album_cards_keep_content_identity_and_quiet_tools(page, web_server, wid
     expect(card.locator('img')).to_have_count(1)
     expect(empty_card.locator('.empty-cover')).to_have_count(1)
     expect(card.locator('.album-caption strong')).to_have_text('Gallery')
-    expect(card.locator('.album-caption .muted')).to_have_text('共 1 张 · 手工' if language == 'zh' else '1 images · Manual')
+    expect(card.locator('.album-caption .muted')).to_have_text('共 1 张 · 手工' if language == 'zh' else '1 image · Manual')
     assert card.inner_text().count('Gallery') == 1
     expect(card.locator('.badge')).to_have_count(0)
     expect(card).to_have_css('border-width', '0px')

@@ -774,6 +774,7 @@ export const EN = {
   "按我的评分": "By my rating",
   "按平均分": "By average rating",
   "随机": "Random",
+  "共 1 张": "1 image",
   "没有图片": "No images",
   "还没有收藏的图片": "No favorite images yet.",
   "共 {v0} 张": "{v0} images",
