@@ -9,6 +9,10 @@ uv sync --locked --extra dev --extra browser --python 3.11
 .venv/bin/python -m playwright install chromium
 ```
 
+A git worktree needs its own `.venv`: run `uv sync` inside it. Do not symlink
+another checkout's `.venv` — its editable install points at that checkout, so
+tests and commands would run code from the wrong tree.
+
 Use a separate development data directory. Initialize it with
 `picshelf --data <directory> init --admin <name>` and pass the same directory to
 subsequent commands. `picshelf serve --reload` reloads the API during development.

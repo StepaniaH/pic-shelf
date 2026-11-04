@@ -23,16 +23,27 @@ remain distinguishable. Selection starts afresh when you open another collection
   focus through the grid; Home and End reach the first and last loaded image.
 - Click an image, or focus it and press Enter or Space. Left/right arrows move
   between images; `f` toggles favorites, `i` opens details and `z` changes sizing.
-- The details panel puts ratings, tags, artists and albums first. Expand comments,
-  notes, sources or file information when needed. **More actions** contains the
-  transparency grid and original download.
+  **Back** in the top-left — or Escape — returns to the grid.
+- The details panel is closed until you choose **Info**; **Hide info** (**Hide** on
+  narrow screens) closes it. It opens with one summary line — when the file entered
+  the library (UTC), its pixel size and its file size; times without a timezone show
+  — rather than a guess. The file name stays in the viewer's top bar and is not
+  repeated in the panel.
+- Every row in the panel carries its own label: **My rating** 0–10 (drag the slider
+  or use the arrow keys; the current value and **Clear rating** sit beside it, with
+  the average across users below when there is one), **Tags**, **Artists**,
+  **Albums** and the organization state. Rows with nothing recorded show only their
+  add action, such as **Add tags**, instead of an empty value. Comments and notes
+  keep their counts, and **File details** holds the path and low-level fields.
+  **More actions** contains the transparency grid and the original download.
 - Click **Select** to organize several images. Shift-click selects a range;
   scrolling and loading more images keep your selection. Preview the operation before applying it.
   **Done selecting** clears the selection.
 - **Slideshow** opens interval and order settings. **More settings** contains
   filters, image size, captions and reusable playback rules.
 
-Escape closes the current dialog and returns focus. Unsaved viewer input stays
+Escape — or **Back** in the viewer's top-left — closes the current dialog and returns
+focus. Unsaved viewer input stays
 with its image until you close the viewer; closing asks before discarding drafts.
 Failed saves keep your input. Retry a failed read, and check the current image
 before repeating a write whose result is uncertain.
