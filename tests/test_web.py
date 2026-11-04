@@ -2370,6 +2370,25 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-expanded', 'false')
     back = viewer.locator('#v-close')
     expect(back).to_have_text('返回' if language == 'zh' else 'Back')
+
+    def check_visible_topbar_labels(expanded):
+        # textContent includes responsive labels that are deliberately not rendered.
+        expect(back).to_have_text('返回' if language == 'zh' else 'Back', use_inner_text=True)
+        info = ('收起' if language == 'zh' else 'Hide') if page.viewport_size['width'] <= 700 else ('收起信息' if language == 'zh' else 'Hide info')
+        expect(viewer.locator('#v-panel')).to_have_text(
+            info if expanded else ('信息' if language == 'zh' else 'Info'), use_inner_text=True)
+        expect(viewer.locator('#v-panel')).to_have_accessible_name(
+            ('收起信息' if language == 'zh' else 'Hide info') if expanded else ('信息' if language == 'zh' else 'Info'))
+        favorite = viewer.locator('#v-fav')
+        expect(favorite).to_have_text('', use_inner_text=True)
+        selected = favorite.get_attribute('aria-pressed') == 'true'
+        expect(favorite).to_have_accessible_name(
+            ('★ 已收藏' if selected else '☆ 收藏') if language == 'zh' else ('★ Favorited' if selected else '☆ Favorite'))
+        more = viewer.locator('.viewer-more > summary')
+        expect(more).to_have_text('', use_inner_text=True)
+        expect(more).to_have_accessible_name('更多操作' if language == 'zh' else 'More actions')
+
+    check_visible_topbar_labels(False)
     expect(back).to_have_attribute('aria-keyshortcuts', 'Escape')
     expect(back).to_have_attribute('title', '返回 (Esc)' if language == 'zh' else 'Back (Esc)')
     toolbar = viewer.locator('.viewer-top')
@@ -2390,6 +2409,11 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
             assert toolbar_box['y'] + toolbar_box['height'] - bounds['y'] - bounds['height'] >= 6
             expect(control).to_have_css('border-color', 'rgba(0, 0, 0, 0)')
     show_viewer_info(page)
+    check_visible_topbar_labels(True)
+    # Crossing the breakpoint while open must replace the label, never concatenate it.
+    for resized_width in (700, 701, width):
+        page.set_viewport_size({'width': resized_width, 'height': 1000})
+        check_visible_topbar_labels(True)
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', '收起信息' if language == 'zh' else 'Hide info')
     expect(viewer.locator('[data-field="rating"]')).to_have_accessible_name('我的评分 0–10' if language == 'zh' else 'My rating 0–10')
     workflow = viewer.locator('[data-workflow]')
