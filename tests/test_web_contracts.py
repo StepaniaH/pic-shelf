@@ -489,7 +489,6 @@ const cases = [
  ['显示前 {n} 张', 'n', 'Showing the first {n} image', 'Showing the first {n} images'],
  ['（{n} 张）', 'n', ' ({n} image)', ' ({n} images)'],
  ['本次播放 {n} 张，已达到播放上限。', 'n', 'Playing {n} image, the playback limit.', 'Playing {n} images, the playback limit.'],
- ['本次从 {n} 张图片中随机抽取；共匹配 {total} 张。', 'n', 'This playback samples from {n} image out of {total} matches.', 'This playback samples from {n} images out of {total} matches.'],
  ['匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限', 'matched', 'Matched {matched} image; queued {total}. The 10000-image limit was reached.', 'Matched {matched} images; queued {total}. The 10000-image limit was reached.'],
 ];
 const format = (text, vars) => text.replace(/\{(\w+)\}/g, (_, key) => String(vars[key]));
@@ -503,11 +502,44 @@ for (const [key, countKey, one, many] of cases) {
  }
 }
 const counted = Object.entries(EN).filter(([, text]) => /\{\w+\} (?:images|albums)\b/.test(text)).map(([key]) => key).sort();
-assert.deepEqual(counted, cases.map(([key]) => key).sort());
+assert.deepEqual(counted, [...cases.map(([key]) => key), '本次从 {n} 张图片中随机抽取；共匹配 {total} 张。'].sort());
 setLocale('en');
 assert.equal(t('{v0} 张图片', {v0:1}) + ' · ' + t('{v0} 个专辑', {v0:2}), '1 image · 2 albums');
 assert.equal(t('{v0} 张图片', {v0:2}) + ' · ' + t('{v0} 个专辑', {v0:1}), '2 images · 1 album');
 assert.equal(t('将“{alias}”作为“{name}”的别名', {alias:'1 images', name:'2 images'}), 'Add “1 images” as an alias for “2 images”');
+'''
+    result = subprocess.run([node, "--input-type=module", "-e", script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
+def test_playback_image_and_match_counts_choose_forms_independently():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required for frontend module contracts")
+    module = (Path(__file__).parents[1] / "picshelf/web/js/i18n.js").as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {t, setLocale} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+const key = '本次从 {n} 张图片中随机抽取；共匹配 {total} 张。';
+const cases = [
+ [0, 0, '0 images out of 0 matches'],
+ [0, 1, '0 images out of 1 match'],
+ [0, 2, '0 images out of 2 matches'],
+ [1, 0, '1 image out of 0 matches'],
+ [1, 1, '1 image out of 1 match'],
+ [1, 2, '1 image out of 2 matches'],
+ [2, 0, '2 images out of 0 matches'],
+ [2, 1, '2 images out of 1 match'],
+ [2, 2, '2 images out of 2 matches'],
+];
+for (const [n, total, expected] of cases) {
+ setLocale('en');
+ assert.equal(t(key, {n, total}), `This playback samples from ${expected}.`);
+ setLocale('zh');
+ assert.equal(t(key, {n, total}), `本次从 ${n} 张图片中随机抽取；共匹配 ${total} 张。`);
+}
 '''
     result = subprocess.run([node, "--input-type=module", "-e", script, module],
                             capture_output=True, text=True, timeout=10)

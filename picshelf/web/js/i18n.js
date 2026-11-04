@@ -933,20 +933,20 @@ export const EN = {
   "取消关联": "Unlink",
 };
 
-// Counted English templates keep their own controlling variable and singular form.
-// Chinese always uses the original message id; callers never choose plural forms.
-const EN_SINGULAR = {
-  "共 {v0} 张": ["v0", "{v0} image"],
-  "{v0} 张图片": ["v0", "{v0} image"],
-  "{v0} 个专辑": ["v0", "{v0} album"],
-  "将修改 {n} 张图片": ["n", "Update {n} image"],
-  "已选择 {n} 张图片": ["n", "{n} image selected"],
-  "已选全部 {n} 张": ["n", "All {n} image selected"],
-  "显示前 {n} 张": ["n", "Showing the first {n} image"],
-  "（{n} 张）": ["n", " ({n} image)"],
-  "本次播放 {n} 张，已达到播放上限。": ["n", "Playing {n} image, the playback limit."],
-  "本次从 {n} 张图片中随机抽取；共匹配 {total} 张。": ["n", "This playback samples from {n} image out of {total} matches."],
-  "匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限": ["matched", "Matched {matched} image; queued {total}. The 10000-image limit was reached."],
+// Each counted noun names its controlling variable and its two English forms.
+// Apply forms before interpolation so user-provided names are never rewritten.
+const EN_COUNT_FORMS = {
+  "共 {v0} 张": [["v0", "images", "image"]],
+  "{v0} 张图片": [["v0", "images", "image"]],
+  "{v0} 个专辑": [["v0", "albums", "album"]],
+  "将修改 {n} 张图片": [["n", "images", "image"]],
+  "已选择 {n} 张图片": [["n", "images", "image"]],
+  "已选全部 {n} 张": [["n", "images", "image"]],
+  "显示前 {n} 张": [["n", "images", "image"]],
+  "（{n} 张）": [["n", "images", "image"]],
+  "本次播放 {n} 张，已达到播放上限。": [["n", "images", "image"]],
+  "本次从 {n} 张图片中随机抽取；共匹配 {total} 张。": [["n", "images", "image"], ["total", "matches", "match"]],
+  "匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限": [["matched", "images", "image"]],
 };
 
 const SUPPORTED = ["zh", "en"];
@@ -976,8 +976,11 @@ export function toggleLocale() {
 
 export function t(msgid, vars) {
   let s = locale === "zh" ? msgid : (EN[msgid] ?? msgid);
-  const singular = EN_SINGULAR[msgid];
-  if (locale === "en" && singular && vars?.[singular[0]] === 1) s = singular[1];
+  if (locale === "en") {
+    for (const [count, many, one] of EN_COUNT_FORMS[msgid] || []) {
+      if (vars?.[count] === 1) s = s.split(`{${count}} ${many}`).join(`{${count}} ${one}`);
+    }
+  }
   if (vars) {
     for (const k of Object.keys(vars)) {
       s = s.split(`{${k}}`).join(String(vars[k]));
