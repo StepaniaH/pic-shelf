@@ -786,6 +786,10 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 .viewer-modal .catalog-form { gap: var(--viewer-space-2); }
 .viewer-modal [data-remove] { color: var(--warn); }
 .viewer-modal .viewer-confirm-actions { display: flex; gap: var(--viewer-space-2); margin-top: var(--viewer-space-2); }
+.viewer-modal .viewer-shortcuts { display: grid; gap: var(--viewer-space-2); }
+.viewer-modal .viewer-shortcut { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--viewer-space-2); }
+.viewer-modal .viewer-shortcut :is(dt, dd) { margin: 0; }
+.viewer-modal .viewer-shortcut dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--viewer-space-2); }
 
 
 /* Reading panel: a compact summary and labeled property groups. */

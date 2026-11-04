@@ -2,6 +2,17 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "快捷键": "Keyboard shortcuts",
+    "关闭当前层级或返回图片列表": "Close the current layer or return to the image list",
+    "收藏或取消收藏": "Add or remove favorite",
+    "展开或收起信息": "Show or hide info",
+    "切换图片尺寸": "Change image sizing",
+    "空格": "Space",
+    "编辑控件聚焦时": "When an editing control has focus",
+    "评分滑轨聚焦时：方向键调分，Home/End 到最小/最大值": "Rating slider: arrows change the rating; Home/End select the minimum/maximum",
+    "标签或艺术家输入框中：添加输入的内容": "Tag or artist input: add the entered value",
+    "查看器的字母键和导航键不与 Ctrl、Command 或 Alt 组合使用；输入法组合输入时不触发。": "Viewer letter and navigation keys do not combine with Ctrl, Command or Alt, and do not run during IME composition.",
+    "编辑输入时，字母键和导航键不会触发查看器操作。Esc 先关闭当前菜单或弹窗。空格在按钮、链接或折叠标题上保留原有操作。": "While editing, letter and navigation keys do not trigger viewer actions. Esc closes the current menu or dialog first. Space keeps its normal action on buttons, links and disclosure headings.",
     "收起信息": "Hide info",
     "返回": "Back",
     "收起": "Hide",

@@ -1884,6 +1884,73 @@ def test_batch_undo_discards_a_grid_refresh_started_before_the_undo(page, tmp_pa
 
 @pytest.mark.parametrize('width', [390, 1440])
 @pytest.mark.parametrize('language', ['zh', 'en'])
+def test_viewer_shortcuts_help_matches_bindings_and_keeps_nested_focus(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    page.locator('#grid .card').first.click()
+    viewer = page.locator('.viewer-backdrop')
+    image = viewer.locator('.viewer-stage img')
+    expect(image).to_be_visible()
+    original = image.get_attribute('alt')
+    more = viewer.locator('.viewer-more > summary')
+    more.click()
+    viewer.locator('#v-shortcuts').click()
+    help_dialog = page.get_by_role('dialog', name='快捷键' if language == 'zh' else 'Keyboard shortcuts', exact=True)
+    expect(help_dialog).to_be_visible()
+    rows = page.evaluate('''async () => {
+      const {VIEWER_SHORTCUTS, VIEWER_CONTROL_SHORTCUTS, viewerShortcutKeyLabel} = await import('/js/viewer-shortcuts.js');
+      return [...VIEWER_SHORTCUTS, ...VIEWER_CONTROL_SHORTCUTS].map(shortcut => ({
+        id: shortcut.action || shortcut.context,
+        keys: shortcut.keys.map(viewerShortcutKeyLabel), label: shortcut.label()
+      }));
+    }''')
+    assert [row['id'] for row in rows] == ['previous', 'next', 'close', 'favorite', 'info', 'size', 'rating', 'add']
+    expect(help_dialog.locator('[data-shortcut]')).to_have_count(len(rows))
+    for row in rows:
+        displayed = help_dialog.locator(f'[data-shortcut="{row["id"]}"]')
+        expect(displayed.locator('kbd')).to_have_text(row['keys'])
+        expect(displayed.locator('dd')).to_have_text(row['label'])
+    assert help_dialog.locator('.modal').evaluate('el => el.scrollWidth <= el.clientWidth')
+    # Help is the top dialog: navigation keys must not change its underlying image.
+    page.keyboard.press('ArrowRight')
+    expect(image).to_have_attribute('alt', original)
+    page.keyboard.press('Escape')
+    expect(help_dialog).to_have_count(0)
+    expect(more).to_be_focused()
+    # Space on a disclosure activates it; Space on the viewer advances the image.
+    page.keyboard.press('Space')
+    expect(viewer.locator('.viewer-more')).to_have_attribute('open', '')
+    expect(image).to_have_attribute('alt', original)
+    page.keyboard.press('Escape')
+    viewer.focus()
+    page.keyboard.press('ArrowRight')
+    expect(image).not_to_have_attribute('alt', original)
+    page.keyboard.press('ArrowLeft')
+    expect(image).to_have_attribute('alt', original)
+    page.keyboard.press('Space')
+    expect(image).not_to_have_attribute('alt', original)
+    page.keyboard.press('ArrowLeft')
+    expect(image).to_have_attribute('alt', original)
+    favorite = viewer.locator('#v-fav')
+    was_favorite = favorite.get_attribute('aria-pressed')
+    viewer.focus()
+    page.keyboard.press('f')
+    expect(favorite).to_have_attribute('aria-pressed', 'false' if was_favorite == 'true' else 'true')
+    viewer.focus()
+    page.keyboard.press('i')
+    expect(viewer.locator('#viewer-details')).to_be_visible()
+    page.keyboard.press('i')
+    expect(viewer.locator('#viewer-details')).to_be_hidden()
+    stage_class = viewer.locator('.viewer-stage').get_attribute('class')
+    page.keyboard.press('z')
+    expect(viewer.locator('.viewer-stage')).not_to_have_attribute('class', stage_class)
+    page.keyboard.press('Escape')
+    expect(viewer).to_have_count(0)
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
 def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(page, web_server, width, language):
     from playwright.sync_api import expect
     page.set_viewport_size({'width': width, 'height': 1000})

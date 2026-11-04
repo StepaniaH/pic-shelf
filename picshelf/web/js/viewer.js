@@ -8,6 +8,7 @@ import {formatTimestamp} from "./format.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
 import {ViewerLoader, PreviewCache, decodeImage} from "./viewer-load.js";
 import {pickEntity, editAlbum} from "./catalog-ui.js";
+import {VIEWER_SHORTCUTS, VIEWER_CONTROL_SHORTCUTS, viewerShortcutForKey, viewerShortcutKeyLabel, viewerControlHasKey} from "./viewer-shortcuts.js";
 
 const SIZE_LABEL = { fit: t("适应"), fill: t("填满"), original: t("原图") };
 const SIZE_CYCLE = ["fit", "fill", "original"];
@@ -170,6 +171,7 @@ export function openViewer(source, index) {
           ${source.singleImage ? "" : `<button class="viewer-action" id="v-slideshow">${t("幻灯片")}</button>`}
           <button class="viewer-action" id="v-zoom">${t("尺寸：{value}", {value:SIZE_LABEL[zoom]})}</button>
           <button class="viewer-action" id="v-bg" aria-pressed="${transparent}">${t("透明背景")}</button>
+          <button class="viewer-action" id="v-shortcuts">${t("快捷键")}</button>
           ${detail ? `<a class="viewer-action" href="${mediaUrl("original", item.id)}?download=1">${t("下载原图")}</a>` : ""}
         </div></details>
       </div></header>
@@ -277,6 +279,16 @@ export function openViewer(source, index) {
     q("#v-close").addEventListener("click", close);
     q("#v-retry").onclick = () => show(current);
     q("#v-bg").onclick = () => { q(".viewer-more").open = false; transparent = !transparent; render(); };
+    q("#v-shortcuts").onclick = () => {
+      q(".viewer-more").open = false;
+      q(".viewer-more > summary").focus();
+      const shortcuts = VIEWER_SHORTCUTS.filter(shortcut => !shortcut.permission || can(shortcut.permission));
+      const controls = VIEWER_CONTROL_SHORTCUTS.filter(shortcut => q(shortcut.selector));
+      const rows = list => `<dl class="viewer-shortcuts">${list.map(shortcut =>
+        `<div class="viewer-shortcut" data-shortcut="${shortcut.action || shortcut.context}"><dt>${shortcut.keys.map(key => `<kbd>${escapeHtml(viewerShortcutKeyLabel(key))}</kbd>`).join(" ")}</dt><dd>${escapeHtml(shortcut.label())}</dd></div>`
+      ).join("")}</dl>`;
+      viewerModal({title: t("快捷键"), bodyHtml: `${rows(shortcuts)}${controls.length ? `<p><strong>${t("编辑控件聚焦时")}</strong></p>${rows(controls)}` : ""}<p class="muted">${t("编辑输入时，字母键和导航键不会触发查看器操作。Esc 先关闭当前菜单或弹窗。空格在按钮、链接或折叠标题上保留原有操作。")}</p><p class="muted">${t("查看器的字母键和导航键不与 Ctrl、Command 或 Alt 组合使用；输入法组合输入时不触发。")}</p>`});
+    };
     async function write(path, options, clear = []) {
       if (saving) throw new Error(t("正在保存…"));
       saving = true;
@@ -384,7 +396,7 @@ export function openViewer(source, index) {
       // The first click/Home at zero must set a real 0 even from an unrated state.
       rating.addEventListener("pointerup", () => saveRating(Number(rating.value)));
       rating.addEventListener("keyup", event => {
-        if (["Home", "End", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) saveRating(Number(rating.value));
+        if (viewerControlHasKey("rating", event.key)) saveRating(Number(rating.value));
       });
       q("#v-rating-clear").addEventListener("click", () => saveRating(null));
     }
@@ -411,7 +423,7 @@ export function openViewer(source, index) {
         } catch (e) { toast(e.message, "error"); }
       };
       q("#tag-add").addEventListener("click", addTag);
-      tagInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addTag(); } });
+      tagInput.addEventListener("keydown", (e) => { if (viewerControlHasKey("add", e.key) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addTag(); } });
     }
     backdrop.querySelectorAll("[data-untag]").forEach((btn) => btn.addEventListener("click", async () => {
       try {
@@ -449,7 +461,7 @@ export function openViewer(source, index) {
         } catch (e) { toast(e.message, "error"); }
       };
       q("#artist-add").addEventListener("click", addArtist);
-      artistInput.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addArtist(); } });
+      artistInput.addEventListener("keydown", (e) => { if (viewerControlHasKey("add", e.key) && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); addArtist(); } });
     }
     backdrop.querySelectorAll("[data-unartist]").forEach((btn) => btn.addEventListener("click", async () => {
       try {
@@ -546,13 +558,15 @@ export function openViewer(source, index) {
     if (!isTopDialog(backdrop) || e.isComposing || e.keyCode === 229 || e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === " " && e.target.closest("button, a, summary")) return;
     if (e.target?.closest("input, textarea, select, [contenteditable=true]")) return;
-    switch (e.key) {
-      case "ArrowRight": case " ": e.preventDefault(); show(current + 1); break;
-      case "ArrowLeft": e.preventDefault(); show(current - 1); break;
-      case "Escape": close(); break;
-      case "f": backdrop.querySelector("#v-fav")?.click(); break;
-      case "i": q_panel_toggle(); break;
-      case "z": backdrop.querySelector("#v-zoom")?.click(); break;
+    const shortcut = viewerShortcutForKey(e.key);
+    if (!shortcut || (shortcut.permission && !can(shortcut.permission))) return;
+    switch (shortcut.action) {
+      case "next": e.preventDefault(); show(current + 1); break;
+      case "previous": e.preventDefault(); show(current - 1); break;
+      case "close": close(); break;
+      case "favorite": backdrop.querySelector("#v-fav")?.click(); break;
+      case "info": q_panel_toggle(); break;
+      case "size": backdrop.querySelector("#v-zoom")?.click(); break;
       default: break;
     }
   }

@@ -21,8 +21,9 @@ remain distinguishable. Selection starts afresh when you open another collection
 - Scroll near the end to load the next page. If loading fails, use **Retry**;
   failed thumbnails have a separate **Retry thumbnail** button. Arrow keys move
   focus through the grid; Home and End reach the first and last loaded image.
-- Click an image, or focus it and press Enter or Space. Left/right arrows move
-  between images; `f` toggles favorites, `i` opens details and `z` changes sizing.
+- Click an image, or focus it and press Enter or Space. In the viewer, open
+  **More actions → Keyboard shortcuts** for the complete list of available keys
+  and their input-field restrictions.
   **Back** in the top-left — or Escape — returns to the grid.
 - Viewing the image is the primary action in the viewer. Its information-panel
   actions use unfilled text controls; the Escape shortcut stays in **Back**'s
