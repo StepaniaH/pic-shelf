@@ -158,9 +158,9 @@ export function openViewer(source, index) {
       : `${current + 1} / ${source.total ?? source.items.length}`;
     backdrop.dataset.infoOpen = String(panelOpen);
     backdrop.innerHTML = `<header class="viewer-top">
-      <button class="viewer-action" id="v-close" aria-label="${t("返回")} (Esc)" title="${t("返回")} (Esc)">
+      <button class="viewer-action" id="v-close" aria-label="${t("返回")}" title="${t("返回")} (Esc)" aria-keyshortcuts="Escape">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14"/></svg>
-        <span>${t("返回")}</span><kbd>Esc</kbd>
+        <span>${t("返回")}</span>
       </button>
       <div class="viewer-heading"><h1 class="title">${escapeHtml(item.filename)}</h1><span class="meta-count">${loaded}</span></div>
       <div class="viewer-actions">
@@ -187,8 +187,7 @@ export function openViewer(source, index) {
       }
     }
     for (const button of backdrop.querySelectorAll(".viewer-panel button")) {
-      button.className = button.matches('[data-workflow="done"]') ? "viewer-primary"
-        : button.className === "viewer-icon" ? "viewer-icon" : "viewer-action";
+      button.className = button.className === "viewer-icon" ? "viewer-icon" : "viewer-action";
     }
     if (!detail?.metadata?.tag_claims?.length) backdrop.querySelector('.viewer-panel [data-section="claims"] > p')?.remove();
     if (!detail?.metadata?.sources?.length) backdrop.querySelector('.viewer-panel [data-section="sources"] > p.muted')?.remove();

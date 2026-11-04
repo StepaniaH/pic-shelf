@@ -1883,22 +1883,30 @@ def test_batch_undo_discards_a_grid_refresh_started_before_the_undo(page, tmp_pa
 
 
 @pytest.mark.parametrize('width', [390, 1440])
-def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(page, web_server, width):
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(page, web_server, width, language):
     from playwright.sync_api import expect
     page.set_viewport_size({'width': width, 'height': 1000})
     page.add_init_script("localStorage.setItem('picshelf.panel', '1')")
-    sign_in(page, web_server)
+    sign_in(page, web_server, language)
     card = page.locator('#grid .card').first
     card.click()
     viewer = page.locator('.viewer-backdrop')
     expect(viewer.locator('.viewer-stage img')).to_be_visible()
     expect(viewer.locator('#viewer-details')).to_be_hidden()
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-expanded', 'false')
-    expect(viewer.locator('#v-close')).to_contain_text('Back')
-    expect(viewer.locator('#v-close')).to_contain_text('Esc')
+    back = viewer.locator('#v-close')
+    expect(back).to_have_text('返回' if language == 'zh' else 'Back')
+    expect(back).to_have_attribute('aria-keyshortcuts', 'Escape')
+    expect(back).to_have_attribute('title', '返回 (Esc)' if language == 'zh' else 'Back (Esc)')
     show_viewer_info(page)
-    expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', 'Hide info')
-    expect(viewer.locator('[data-field="rating"]')).to_have_accessible_name('My rating 0–10')
+    expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', '收起信息' if language == 'zh' else 'Hide info')
+    expect(viewer.locator('[data-field="rating"]')).to_have_accessible_name('我的评分 0–10' if language == 'zh' else 'My rating 0–10')
+    workflow = viewer.locator('[data-workflow]')
+    workflow.hover()
+    expect(workflow).to_have_css('background-color', 'rgba(0, 0, 0, 0)')
+    expect(workflow).to_have_css('border-width', '0px')
+    expect(workflow).to_have_css('box-shadow', 'none')
     rating_label_gap = viewer.locator('label[for="v-rating"]').evaluate('''label => {
       const text = document.createRange();
       text.selectNodeContents(label.firstChild);
@@ -1931,6 +1939,7 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
           pills: elements.filter(el=>el.matches('.pill,.chip,[class*="chip"]')).length,
           boxes: elements.filter(el=>['Top','Right','Bottom','Left'].filter(side=>parseFloat(getComputedStyle(el)['border'+side+'Width'])>0 && getComputedStyle(el)['border'+side+'Style']!=='none').length>=3).length,
           primaryActions: buttons.filter(el=>el.className==='viewer-primary').map(el=>el.getAttribute('data-workflow')),
+          solidButtons: buttons.filter(el=>!['transparent','rgba(0, 0, 0, 0)',getComputedStyle(scope).backgroundColor].includes(getComputedStyle(el).backgroundColor)).map(el=>el.outerHTML),
           tiny: elements.filter(el => el.matches('button,input,select,textarea,summary,a[href]'))
             .filter(el => {const r = el.getBoundingClientRect(); return r.height < 43.9 || r.width < 43.9;}).map(el => el.outerHTML)};
       };
@@ -1962,7 +1971,8 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     assert set(measured['spacing']) == {8,24}, measured
     assert content['headings'] == 0 and content['pills'] == 0, content
     assert content['boxes'] <= 6, content
-    assert len(content['primaryActions']) <= 1 and set(content['primaryActions']) <= {'done'}, content
+    assert content['primaryActions'] == [], content
+    assert content['solidButtons'] == [], content
     # A panel on a phone shares space with the image; it must not cover the stage.
     stage = viewer.locator('.viewer-stage').bounding_box()
     panel = viewer.locator('#viewer-details').bounding_box()

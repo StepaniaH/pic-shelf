@@ -24,6 +24,9 @@ remain distinguishable. Selection starts afresh when you open another collection
 - Click an image, or focus it and press Enter or Space. Left/right arrows move
   between images; `f` toggles favorites, `i` opens details and `z` changes sizing.
   **Back** in the top-left — or Escape — returns to the grid.
+- Viewing the image is the primary action in the viewer. Its information-panel
+  actions use unfilled text controls; the Escape shortcut stays in **Back**'s
+  tooltip rather than its visible label.
 - The details panel is closed until you choose **Info**; **Hide info** (**Hide** on
   narrow screens) closes it. It opens with one summary line — when the file entered
   the library (UTC), its pixel size and its file size; times without a timezone show

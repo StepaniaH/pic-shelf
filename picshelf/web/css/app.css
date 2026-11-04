@@ -798,8 +798,7 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 .viewer-backdrop .viewer-panel :is(.viewer-values, .viewer-rating, .viewer-rating-heading, .add-row, .workflow-row) { gap: var(--viewer-space-2); }
 .viewer-backdrop .viewer-panel :is(.viewer-rating-heading output, .kv, .comment, summary) { font-size: var(--viewer-text); font-weight: 400; }
 .viewer-backdrop .viewer-panel .workflow-row > span { color: var(--muted); font-size: var(--viewer-text); }
-.viewer-backdrop .viewer-panel :is(.viewer-action, .viewer-icon) { padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--muted); }
-.viewer-backdrop .viewer-panel .viewer-primary { font-size: var(--viewer-text); }
+.viewer-backdrop .viewer-panel :is(.viewer-action, .viewer-primary, .viewer-icon) { padding: 0; border: 0; background: transparent; box-shadow: none; color: var(--muted); }
 .viewer-backdrop .viewer-panel :is(input, select, textarea) { font-size: var(--viewer-text); border: 0; border-bottom: 1px solid var(--control-border); border-radius: 0; background: transparent; }
 .viewer-backdrop .viewer-panel :is(input, select, textarea):focus-visible { outline-color: var(--accent); }
 .viewer-backdrop .viewer-panel .comment { border: 0; padding: var(--viewer-space-2) 0; }
@@ -820,8 +819,8 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 .viewer-backdrop .viewer-panel .viewer-field-value > .viewer-editor { flex-basis: auto; margin: 0; }
 .viewer-backdrop .viewer-panel .viewer-field-value > .viewer-editor[open] { flex-basis: 100%; }
 .viewer-backdrop .viewer-panel .viewer-field-value [data-album] { color: var(--fg); }
+.viewer-backdrop .viewer-panel [data-workflow]:hover { box-shadow: none; }
 .viewer-backdrop .viewer-panel .viewer-tag { gap: var(--viewer-space-2); }
-.viewer-backdrop .viewer-panel .viewer-primary { padding: var(--viewer-space-2) var(--viewer-space-4); }
 .viewer-backdrop .viewer-panel :is(input, select, textarea) { margin: 0; }
 .viewer-backdrop .viewer-panel form { gap: var(--viewer-space-2); padding: 0; margin: 0; }
 .viewer-backdrop .viewer-panel form label { gap: var(--viewer-space-2); margin: 0; }
