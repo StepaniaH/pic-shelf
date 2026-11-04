@@ -696,8 +696,8 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 }
 :is(.viewer-backdrop, .viewer-modal) .viewer-top {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-  height: 48px; flex: 0 0 48px; align-items: center; overflow: visible;
-  gap: var(--viewer-space-3); padding: 2px var(--viewer-space-4);
+  min-height: 56px; flex: 0 0 auto; align-items: center; overflow: visible;
+  gap: var(--viewer-space-3); padding: 6px var(--viewer-space-4);
   background: var(--panel); border-bottom: 1px solid var(--border); z-index: 2;
 }
 :is(.viewer-backdrop, .viewer-modal) .viewer-heading { min-width: 0; display: flex; align-items: center; gap: var(--viewer-space-2); }
@@ -723,6 +723,8 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 :is(.viewer-backdrop, .viewer-modal) :is(.viewer-action, .viewer-primary, .viewer-icon):hover { background: var(--accent-soft); color: var(--fg); }
 :is(.viewer-backdrop, .viewer-modal) :is(.viewer-action, .viewer-icon)[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
 :is(.viewer-backdrop, .viewer-modal) :is(.viewer-action, .viewer-primary, .viewer-icon):disabled { opacity: .45; cursor: default; }
+.viewer-backdrop .viewer-top :is(.viewer-action, .viewer-icon) { border-color: transparent; background: transparent; }
+.viewer-backdrop .viewer-top :is(.viewer-action, .viewer-icon):hover { background: var(--accent-soft); }
 :is(.viewer-backdrop, .viewer-modal) #v-close { border-color: transparent; justify-content: flex-start; padding: var(--viewer-space-2); }
 :is(.viewer-backdrop, .viewer-modal) kbd { font: inherit; font-size: var(--viewer-text-xs); font-weight: 400; color: var(--muted); }
 :is(.viewer-backdrop, .viewer-modal) .viewer-more { position: relative; border: 0; padding: 0; }

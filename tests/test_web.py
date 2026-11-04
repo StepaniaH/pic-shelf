@@ -2032,8 +2032,9 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     expect(back).to_have_attribute('aria-keyshortcuts', 'Escape')
     expect(back).to_have_attribute('title', '返回 (Esc)' if language == 'zh' else 'Back (Esc)')
     toolbar = viewer.locator('.viewer-top')
-    assert toolbar.bounding_box()['height'] == pytest.approx(48, abs=2)
-    expect(toolbar).to_have_css('padding', '2px 24px')
+    toolbar_box = toolbar.bounding_box()
+    assert toolbar_box['height'] >= 56
+    expect(toolbar).to_have_css('padding', '6px 24px')
     title_box = toolbar.locator('.title').bounding_box()
     count_box = toolbar.locator('.meta-count').bounding_box()
     assert title_box['x'] + title_box['width'] <= count_box['x']
@@ -2042,7 +2043,11 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     assert toolbar.locator('.meta-count').evaluate('el => el.scrollWidth <= el.clientWidth')
     for control in toolbar.locator('button, summary').all():
         if control.is_visible():
-            assert control.bounding_box()['height'] == pytest.approx(44, abs=0.5)
+            bounds = control.bounding_box()
+            assert bounds['height'] == pytest.approx(44, abs=0.5)
+            assert bounds['y'] - toolbar_box['y'] >= 6
+            assert toolbar_box['y'] + toolbar_box['height'] - bounds['y'] - bounds['height'] >= 6
+            expect(control).to_have_css('border-color', 'rgba(0, 0, 0, 0)')
     show_viewer_info(page)
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', '收起信息' if language == 'zh' else 'Hide info')
     expect(viewer.locator('[data-field="rating"]')).to_have_accessible_name('我的评分 0–10' if language == 'zh' else 'My rating 0–10')
@@ -2102,7 +2107,7 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
         data = measured[name]
         assert set(data['fonts']) <= {12, 14, 16, 20}, data
         assert set(data['radii']) <= {4, 8, 12}, data
-        assert set(data['padding']) <= ({2, 4, 8, 12, 16, 24, 32} if name == 'chrome' else {4, 8, 12, 16, 24, 32}), data
+        assert set(data['padding']) <= ({4, 6, 8, 12, 16, 24, 32} if name == 'chrome' else {4, 8, 12, 16, 24, 32}), data
         assert len(data['gaps']) <= 5, data
         assert len(data['buttonPadding']) <= 2, data
         assert data['buttonFonts'] == ['14px'], data
