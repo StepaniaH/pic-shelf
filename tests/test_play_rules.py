@@ -156,12 +156,17 @@ def test_cli_rules_and_http_session_resume_share_state(collection):
     with TestClient(create_app(data.cfg),headers={'Origin':'http://testserver'}) as client:
         client.post('/api/v1/auth/login',json={'username':'reader','password':data.password})
         session=client.post(f"/api/v1/play/rules/{rule['id']}/start").json()
+        # A URL-safe token may start with a dash; exercise that case deterministically.
+        with db.open_db(data.cfg.db_path) as conn:
+            dash_token='-'+session['token']
+            conn.execute('UPDATE play_sessions SET token=? WHERE token=?',(dash_token,session['token']))
+        session['token']=dash_token
         url=f"/api/v1/play/sessions/{session['token']}"
         first=client.post(url+'/next',json={'request_key':'first','expected_version':0})
         again=client.post(url+'/next',json={'request_key':'first','expected_version':0})
         assert first.json()==again.json() and first.json()['image']['id']==data.images['n05']
         assert client.post(url+'/pause',json={'paused':True,'expected_version':first.json()['version']}).status_code==200
-    observed=cli(data.cfg,'play-sessions','show',session['token'],'--user','reader')
+    observed=cli(data.cfg,'play-sessions','show','--user','reader','--',session['token'])
     assert observed.returncode==0,observed.stderr
     assert json.loads(observed.stdout)['paused'] is True
 
