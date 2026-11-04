@@ -976,3 +976,15 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 .admin-page table.data { font-size: var(--admin-text); }
 .admin-page table.data :is(th, td) { padding: var(--content-space); }
 .admin-page .job-progress :is(p, pre) { font-size: var(--admin-text); }
+
+/* Mobile search prototype: either mode stays inside the same 48px bar. */
+#search-toggle, #search-close { display: none; }
+@media (max-width: 600px) {
+  #topbar #search-form { display: none; }
+  #topbar #search-toggle { display: inline-flex; margin-left: auto; }
+  #topbar #userbox { margin-left: 0; }
+  #topbar[data-search-open="true"] #search-form { display: flex; }
+  #topbar[data-search-open="true"] #search-close { display: inline-flex; }
+  #topbar[data-search-open="true"] :is(#nav-toggle, .mobile-brand, #userbox, #lang-btn, #search-toggle) { display: none; }
+}
+.signed-out #topbar :is(#search-toggle, #search-close) { display: none; }

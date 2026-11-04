@@ -8,8 +8,10 @@ import {renderBatchHistory} from "./batches.js";
 import {renderQueries, renderSavedQuery} from "./queries.js";
 import {renderPlayRules} from "./slideshow.js";
 import {openAppearance} from "./appearance.js";
+import {createSearchDisclosure} from "./mobile-search.js";
 
 export const state = { user: null, route: null, dispose: null };
+const searchDisclosure = createSearchDisclosure({enabled: () => Boolean(state.user)});
 
 const viewEl = () => document.querySelector("#view");
 
@@ -156,6 +158,7 @@ function renderUserBox() {
     adminLink.hidden = true;
     box.innerHTML = t("<a class=\"btn small\" href=\"#/login\">登录</a>");
   }
+  searchDisclosure.sync();
 }
 
 // 供其它模块在登录/登出后刷新顶栏
@@ -192,6 +195,7 @@ let routeVersion = 0;
 async function route() {
   const version = ++routeVersion;
   closeNavigation();
+  searchDisclosure.close({restoreFocus: false});
   state.dispose?.();
   state.dispose = null;
   const target = document.createElement("div");
@@ -282,12 +286,18 @@ document.addEventListener("click", event => {
 document.addEventListener("keydown", event => {
   if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey || document.body.classList.contains("dialog-open")) return;
   if (event.key === "Escape") {
+    if (searchDisclosure.isOpen) {
+      event.preventDefault();
+      searchDisclosure.close();
+      return;
+    }
     const menu = document.querySelector(".account-menu[open]");
     if (menu) { menu.open = false; menu.querySelector("summary").focus(); }
   }
   if (event.key === "/" && state.user && !event.target.closest("input, textarea, select, [contenteditable]")) {
     event.preventDefault();
-    document.querySelector("#search-input").focus();
+    closeNavigation();
+    searchDisclosure.open();
   }
 });
 
@@ -301,6 +311,7 @@ setAuthFailHandler(() => {
 document.querySelector("#search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const q = document.querySelector("#search-input").value.trim();
+  searchDisclosure.close();
   navigate("#/search?q=" + encodeURIComponent(q));
 });
 

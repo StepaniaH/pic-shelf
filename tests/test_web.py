@@ -930,6 +930,59 @@ def test_phone_navigation_closes_with_escape_and_restores_search_access(page, we
     expect(page.locator("#grid .card")).to_have_count(1)
 
 
+@pytest.mark.parametrize('width', [320, 390])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_mobile_search_disclosure_retains_query_focus_and_desktop_input(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 844})
+    sign_in(page, web_server, language)
+    bar, form = page.locator('#topbar'), page.locator('#search-form')
+    trigger, dismiss, query = page.locator('#search-toggle'), page.locator('#search-close'), page.locator('#search-input')
+    expect(trigger).to_be_visible()
+    expect(trigger).to_have_accessible_name('搜索图片' if language == 'zh' else 'Search images')
+    expect(trigger).to_have_attribute('aria-controls', 'search-form')
+    expect(form).to_be_hidden()
+    assert bar.bounding_box()['height'] == pytest.approx(48, abs=0.5)
+    trigger.click()
+    expect(trigger).to_have_attribute('aria-expanded', 'true')
+    expect(query).to_be_visible()
+    expect(query).to_be_focused()
+    expect(dismiss).to_have_accessible_name('收起搜索' if language == 'zh' else 'Close search')
+    expect(page.locator('#nav-toggle')).to_be_hidden()
+    expect(page.locator('#userbox')).to_be_hidden()
+    expect(page.locator('#lang-btn')).to_be_hidden()
+    query.fill('file:"image-000"')
+    original_url = page.url
+    query.press('Escape')
+    expect(form).to_be_hidden()
+    expect(trigger).to_be_focused()
+    assert page.url == original_url
+    expect(query).to_have_value('file:"image-000"')
+    page.keyboard.press('/')
+    expect(query).to_be_focused()
+    query.press('Enter')
+    expect(page.locator('.images-page #grid .card')).to_have_count(1)
+    expect(form).to_be_hidden()
+    expect(trigger).to_have_attribute('aria-expanded', 'false')
+    trigger.click()
+    expect(query).to_have_value('file:"image-000"')
+    dismiss.click()
+    expect(trigger).to_be_focused()
+    expect(page.locator('#nav-toggle')).to_be_visible()
+    expect(page.locator('#lang-btn')).to_be_visible()
+    page.set_viewport_size({'width': 1440, 'height': 1000})
+    expect(trigger).to_be_hidden()
+    expect(form).to_be_visible()
+    query.focus()
+    page.set_viewport_size({'width': width, 'height': 844})
+    expect(query).to_be_visible()
+    expect(query).to_be_focused()
+    query.press('Escape')
+    expect(form).to_be_hidden()
+    assert bar.bounding_box()['height'] == pytest.approx(48, abs=0.5)
+    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+
+
 COLLECTION_PAGE_AUDIT = r'''root => {
   const visible=el=>el.checkVisibility({visibilityProperty:true,opacityProperty:true,contentVisibilityAuto:true});
   const nodes=[root,...root.querySelectorAll('*')].filter(visible);
@@ -2253,6 +2306,8 @@ def test_multiple_libraries_batch_album_recovery_permissions_and_undo(page, tmp_
             navigate_from_sidebar(page, '#/home')
             expect(page.locator('.lib-card')).to_have_count(2)
 
+        if page.locator('#search-toggle').is_visible():
+            page.locator('#search-toggle').click()
         page.locator('#search-input').fill('tag:multi-review')
         page.locator('#search-input').press('Enter')
         expect(page.locator('#grid .card')).to_have_count(4)
@@ -2298,6 +2353,8 @@ def test_multiple_libraries_batch_album_recovery_permissions_and_undo(page, tmp_
 
         page.context.clear_cookies()
         login('reader')
+        if page.locator('#search-toggle').is_visible():
+            page.locator('#search-toggle').click()
         page.locator('#search-input').fill('tag:multi-review')
         page.locator('#search-input').press('Enter')
         expect(page.locator('#grid .card')).to_have_count(2)
