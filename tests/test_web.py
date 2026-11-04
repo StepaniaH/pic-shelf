@@ -1165,6 +1165,14 @@ def test_admin_text_navigation_connects_real_panels_and_library_actions(page, we
             expect(record).to_have_css('border-right-width', '0px')
             expect(record).to_have_css('border-radius', '0px')
             expect(record.locator('.library-record-actions')).to_have_css('justify-content', 'flex-end')
+            name_y = record.locator('.library-record-name').bounding_box()['y']
+            actions_y = record.locator('.library-record-actions').bounding_box()['y']
+            assert abs(name_y - actions_y) <= 4
+            assert all(abs(button.bounding_box()['y'] - name_y) <= 4
+                       for button in record.locator('.library-record-actions button').all())
+            expect(record.locator('.library-record-meta')).to_contain_text(
+                f'{library["image_count"]} 张图片 · {library["album_count"]} 个专辑' if language == 'zh'
+                else f'{library["image_count"]} images · {library["album_count"]} album')
             assert panel.evaluate("el=>Boolean(el.querySelector('.library-records').compareDocumentPosition(el.querySelector('[data-new-library]')) & Node.DOCUMENT_POSITION_FOLLOWING)")
             toggle = record.locator('[data-library-settings-toggle]')
             toggle.click()
@@ -1191,6 +1199,18 @@ def test_admin_text_navigation_connects_real_panels_and_library_actions(page, we
                 record.locator('[data-scan]').click()
             assert scan.value.status == 202
             expect(record.locator('[data-scan]')).to_be_enabled(timeout=10000)
+
+    # Crossed counts expose swapped quantities; zero must retain the English plural.
+    for images, albums in [(1, 2), (2, 1), (0, 0)]:
+        def counts_response(route):
+            route.fulfill(json=[dict(library, image_count=images, album_count=albums)])
+        page.route('**/api/v1/libraries', counts_response)
+        page.goto(web_server.url + f'/?counts={images}-{albums}#/admin?tab=libraries')
+        record = page.locator('.library-record')
+        expected = (f'{images} 张图片 · {albums} 个专辑' if language == 'zh' else
+                    f'{images} image{"" if images == 1 else "s"} · {albums} album{"" if albums == 1 else "s"}')
+        expect(record.locator('.library-record-meta')).to_contain_text(expected)
+        page.unroute('**/api/v1/libraries', counts_response)
 
 
 @pytest.mark.parametrize('width', [390, 1440])

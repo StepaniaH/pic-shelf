@@ -100,13 +100,13 @@ export async function renderLibraries(body, {add = false, mode = "managed"} = {}
     <div class="library-records">${libs.map((l) => `
       <article class="library-record" data-library-id="${l.id}">
         <div class="library-record-main">
-          <a id="library-name-${l.id}" class="library-record-name" href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
-          <p class="muted library-record-meta">${escapeHtml(l.root_path)} · ${t("图片 {v0} · 专辑 {v1}", {v0:l.image_count, v1:l.album_count})}</p>
+          <a id="library-name-${l.id}" class="library-record-name" title="${escapeHtml(l.name)}" href="#/library/${l.id}"><b>${escapeHtml(l.name)}</b></a>
+          <p class="muted library-record-meta">${escapeHtml(l.root_path)} · ${l.image_count === 1 ? t("1 张图片") : t("{v0} 张图片", {v0:l.image_count})} · ${l.album_count === 1 ? t("1 个专辑") : t("{v0} 个专辑", {v0:l.album_count})}</p>
         </div>
         <div class="library-record-actions">
           <button class="btn small" data-scan="${l.id}">${t("扫描更新")}</button>
-          ${l.mode !== "indexed" ? `<button class="btn small" data-import="${l.id}">${t("导入图片")}</button>` : ""}
-          <button id="library-settings-toggle-${l.id}" class="btn small" data-library-settings-toggle="${l.id}" aria-expanded="false" aria-controls="library-settings-${l.id}">${t("设置与权限")}</button>
+          ${l.mode !== "indexed" ? `<button class="btn small" data-import="${l.id}" aria-label="${t("导入图片")}" title="${t("导入图片")}"><span class="library-action-full" aria-hidden="true">${t("导入图片")}</span><span class="library-action-short" aria-hidden="true">${t("导入")}</span></button>` : ""}
+          <button id="library-settings-toggle-${l.id}" class="btn small" data-library-settings-toggle="${l.id}" aria-expanded="false" aria-controls="library-settings-${l.id}" aria-label="${t("设置与权限")}" title="${t("设置与权限")}"><span class="library-action-full" aria-hidden="true">${t("设置与权限")}</span><span class="library-action-short" aria-hidden="true">${t("设置")}</span></button>
         </div>
         <section id="library-settings-${l.id}" class="library-settings" data-library-settings aria-labelledby="library-name-${l.id} library-settings-toggle-${l.id}" hidden>
           <div class="form-row">
