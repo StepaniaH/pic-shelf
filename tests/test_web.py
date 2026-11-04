@@ -1898,6 +1898,13 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     expect(viewer.locator('#v-close')).to_contain_text('Esc')
     show_viewer_info(page)
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', 'Hide info')
+    expect(viewer.locator('[data-field="rating"]')).to_have_accessible_name('My rating 0–10')
+    rating_label_gap = viewer.locator('label[for="v-rating"]').evaluate('''label => {
+      const text = document.createRange();
+      text.selectNodeContents(label.firstChild);
+      return label.querySelector('.viewer-caption').getBoundingClientRect().left - text.getBoundingClientRect().right;
+    }''')
+    assert rating_label_gap == pytest.approx(4, abs=0.5)
     # Closed details can retain layout rectangles; assert actual visibility instead.
     for field in viewer.locator('#viewer-details input:not([type=range]), #viewer-details textarea, #viewer-details select').all():
         expect(field).to_be_hidden()
@@ -1928,7 +1935,8 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
             .filter(el => {const r = el.getBoundingClientRect(); return r.height < 43.9 || r.width < 43.9;}).map(el => el.outerHTML)};
       };
       const fields=[...panel.querySelectorAll('.viewer-field')];
-      const spacing=[...new Set([panel,...panel.querySelectorAll('*')].filter(el=>el.getClientRects().length).flatMap(el=>['marginTop','marginRight','marginBottom','marginLeft','paddingTop','paddingRight','paddingBottom','paddingLeft','rowGap','columnGap'].map(prop=>parseFloat(getComputedStyle(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))];
+      // Labels have a compact inline gap; property rows and groups retain 8/24 spacing.
+      const spacing=[...new Set([panel,...panel.querySelectorAll('*')].filter(el=>el.getClientRects().length&&!el.matches('.viewer-field-label')).flatMap(el=>['marginTop','marginRight','marginBottom','marginLeft','paddingTop','paddingRight','paddingBottom','paddingLeft','rowGap','columnGap'].map(prop=>parseFloat(getComputedStyle(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))];
       const chrome=measure(root,true), max=chrome.maxFont;
       const title=root.querySelector('.viewer-top .viewer-heading h1.title');
       const allMax=[root,...root.querySelectorAll('*')].filter(el=>el.getClientRects().length&&parseFloat(getComputedStyle(el).fontSize)===max);

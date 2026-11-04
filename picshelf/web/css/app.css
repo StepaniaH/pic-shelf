@@ -812,7 +812,7 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 .viewer-backdrop .viewer-panel { padding: var(--viewer-space-4); }
 .viewer-backdrop .viewer-panel :is(.viewer-group, .viewer-file-fields) { display: grid; gap: var(--viewer-space-2); }
 .viewer-backdrop .viewer-panel .viewer-field { display: grid; grid-template-columns: 4rem minmax(0, 1fr); column-gap: var(--viewer-space-2); align-items: start; }
-.viewer-backdrop .viewer-panel .viewer-field-label { display: flex; align-items: center; min-height: 44px; margin: 0; font-size: var(--viewer-text-xs); color: var(--muted); white-space: nowrap; }
+.viewer-backdrop .viewer-panel .viewer-field-label { display: flex; align-items: center; gap: var(--viewer-space-1); min-height: 44px; margin: 0; font-size: var(--viewer-text-xs); color: var(--muted); white-space: nowrap; }
 .viewer-backdrop .viewer-panel .viewer-field-value { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; min-height: 44px; gap: var(--viewer-space-2); font-size: var(--viewer-text); }
 .viewer-backdrop .viewer-panel .viewer-rating-heading { grid-template-columns: max-content minmax(0, 1fr); }
 .viewer-backdrop .viewer-panel .viewer-rating-heading output { margin: 0; }
