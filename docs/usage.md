@@ -5,9 +5,11 @@ and thumbnails in a separate data directory.
 
 ## Web browsing
 
-**Library** shows your libraries and recently added images. **All images**,
-**Favorites** and **Inbox** open image grids. Albums, artists and tags provide
-other ways to browse. Use the side navigation on desktop or the menu button on a phone.
+The sidebar groups pages into **Browse** (**Images**, **Favorites**, **Albums**),
+**Organize** (**Inbox**, **Tags**, **Artists**) and **Settings** (**Saved queries**,
+**Playback rules**, **Batch history** and **Admin**). **Library** has no menu item:
+use the **Pic Shelf** logo in the top-left to return to it — it lists your libraries
+and recently added images. Use the side navigation on desktop or the menu button on a phone.
 Mixed-library grids show library names below filenames so identical filenames
 remain distinguishable. Selection starts afresh when you open another collection.
 
@@ -64,7 +66,7 @@ Switching still checks current access. Original sizing and Download fetch the
 original file. Reduced-data browser settings disable preloading. Albums, artists
 and tags support name search and pagination.
 Account actions are under your name in the top bar; administrative tools are in
-**Admin**, starting with library setup.
+**Admin**, under **Settings** — start with library setup.
 
 ## Appearance
 
