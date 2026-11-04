@@ -1015,16 +1015,17 @@ def test_quiet_collections_preserve_membership_preview_and_undo(page, web_server
     sign_in(page, web_server, language)
     base = web_server.url + '/api/v1'
     headers = {'Origin': web_server.url}
-    initial = page.request.get(base + '/images?limit=1').json()['items'][0]
-    added_favorite = route == 'favorites' and not initial['favorite']
-    if added_favorite:
-        assert page.request.post(f"{base}/images/{initial['id']}/favorite", headers=headers, data={}).ok
+    candidates = page.request.get(base + '/images?limit=2').json()['items']
+    added_favorites = [item['id'] for item in candidates if route == 'favorites' and not item['favorite']]
+    for image_id in added_favorites:
+        assert page.request.post(f'{base}/images/{image_id}/favorite', headers=headers, data={}).ok
     try:
         navigate_from_sidebar(page, '#/' + route)
         content = page.locator('.quiet-collection-page')
         expect(content.locator('#grid .card').first).to_be_visible()
         expect(content.locator('.query-editor')).to_have_count(0)
         count = content.locator('#count').inner_text()
+        loaded_count = content.locator('#grid .card').count()
         image_id = int(content.locator('[data-select-image]').first.get_attribute('data-select-image'))
         member = content.locator(f'.card[data-id="{image_id}"]')
 
@@ -1061,13 +1062,14 @@ def test_quiet_collections_preserve_membership_preview_and_undo(page, web_server
         expect(content.locator('[data-batch-status]')).to_contain_text('已撤销' if language == 'zh' else 'Undone')
         expect(member).to_have_count(1)
         expect(content.locator('#count')).to_have_text(count)
+        expect(content.locator('#grid .card')).to_have_count(loaded_count)
         check_style()
         selection_bar.locator('[data-selection-toggle]').click()
         expect(selection_bar).to_be_hidden()
         expect(content.locator('[data-select-image]:checked')).to_have_count(0)
     finally:
-        if added_favorite:
-            assert page.request.post(f"{base}/images/{initial['id']}/favorite", headers=headers, data={}).ok
+        for image_id in added_favorites:
+            assert page.request.post(f'{base}/images/{image_id}/favorite', headers=headers, data={}).ok
 
 
 @pytest.mark.parametrize('width', [390, 1440])

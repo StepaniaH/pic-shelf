@@ -429,3 +429,42 @@ assert.equal(source.items[0].my_rating, 8);
     result = subprocess.run([node, '--input-type=module', '-e', script, module, late_result],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_refresh_keeps_loaded_range_when_membership_shrinks_then_returns():
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node.js is required for gallery contracts')
+    module = (Path(__file__).parents[1] / 'picshelf/web/js/source.js').as_uri()
+    script = r'''
+globalThis.localStorage = {getItem: () => 'en'};
+const {Source} = await import(process.argv[1]);
+const {strict: assert} = await import('node:assert');
+let members = [1,2,3,4,5,6,7,8];
+const requests = [];
+globalThis.fetch = async url => {
+  const p = new URL(url, 'http://example.test').searchParams;
+  const offset = Number(p.get('offset')), limit = Number(p.get('limit'));
+  requests.push({offset, limit, workflow:p.get('workflow')});
+  return new Response(JSON.stringify({items:members.slice(offset, offset+limit).map(id=>({id})), total:members.length, errors:[]}));
+};
+const source = new Source('Inbox', {}, {filters:{workflow:'inbox'}});
+await source.load(true, {limit:8});
+members = members.slice(0,7);
+await source.refresh({afterWrite:true});
+assert.equal(source.items.length, 7);
+members.push(8);
+await source.refresh({afterWrite:true});
+assert.deepEqual(source.items.map(item=>item.id), members);
+assert.equal(source.loadedAll, true);
+assert.equal(requests.at(-1).limit, 8);
+assert.equal(requests.at(-1).workflow, 'inbox');
+// An explicit new load starts a new range, such as changing the sort.
+await source.load(true, {limit:3});
+await source.refresh();
+assert.deepEqual(source.items.map(item=>item.id), [1,2,3]);
+assert.equal(requests.at(-1).limit, 3);
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', script, module],
+                            capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr

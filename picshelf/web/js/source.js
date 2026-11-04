@@ -9,6 +9,7 @@ export class Source {
     this.total = 0;
     this.errors = [];
     this.nextOffset = 0;
+    this.loadedExtent = 0;
     this.exhausted = false;
     this.revision = 0;
     this.pending = null;
@@ -48,6 +49,7 @@ export class Source {
       }
     }
     this.nextOffset = offset + result.items.length;
+    this.loadedExtent = Math.max(reset ? 0 : this.loadedExtent, this.nextOffset);
     this.exhausted = result.items.length === 0 || this.errors.length > 0;
     return result;
   }
@@ -71,7 +73,9 @@ export class Source {
     this.refreshSource?.cancel();
     this.controller?.abort();
     this.pending = null;
-    const revision = ++this.revision, count = this.nextOffset || 120;
+    // Removing members must not shorten the range restored by a later undo.
+    const extent = Math.max(this.nextOffset, this.loadedExtent);
+    const revision = ++this.revision, count = extent || 120;
     const fresh = this.refreshSource = new Source(this.title, this.context, this);
     fresh.ruleErrors = this.ruleErrors;
     // Stage every page before replacing a long browsing range. A failed refresh
@@ -82,6 +86,7 @@ export class Source {
         result = await fresh.load(false, {limit:Math.min(10000, count - fresh.nextOffset)});
       if (!result || revision !== this.revision) return null;
       for (const key of ["items", "total", "errors", "nextOffset", "exhausted"]) this[key] = fresh[key];
+      this.loadedExtent = Math.max(extent, fresh.nextOffset);
       return result;
     })().finally(() => {
       if (this.refreshing === pending) { this.refreshing = null; this.refreshSource = null; }
