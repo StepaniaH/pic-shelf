@@ -1,6 +1,7 @@
 """Terminal journeys with independent metadata outcomes and real key input."""
 import asyncio
 import os
+import sys
 import time
 
 import pytest
@@ -142,7 +143,7 @@ def test_real_pty_exit_restores_terminal_and_keeps_saved_rating(tmp_path,size,ex
     master,slave = pty.openpty()
     fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',size[1],size[0],0,0))
     before = termios.tcgetattr(slave)
-    command = [str(Path('.venv/bin/picshelf').resolve()),'--data',str(catalog.cfg.data_dir),'tui']
+    command = [sys.executable,'-m','picshelf','--data',str(catalog.cfg.data_dir),'tui']
     process = subprocess.Popen(command,stdin=slave,stdout=slave,stderr=slave,
                                env={**os.environ,'TERM':'xterm-256color','NO_COLOR':'1'},start_new_session=True)
     output = bytearray()
