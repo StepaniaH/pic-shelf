@@ -1,6 +1,6 @@
 # Batch organization and undo
 
-Click **Select** above an image grid, then check the images to edit. Selections persist while loading more images or changing the sort. **Done selecting** clears them. **Select loaded images** adds the images already shown. **Select all results** uses the current server query; its membership is fixed when you request a preview. Newly indexed images never join an existing preview or retry.
+Click **Select** above an image grid, then tick the checkboxes on the images to edit. Shift-click a checkbox to select a range; clicking the image itself still opens the viewer. Selections persist while loading more images or changing the sort. On **Images**, **Favorites**, and **Inbox**, a selection bar under the heading shows the selected count and **Done selecting**. That action clears the selection and leaves selection mode. **Select loaded images** adds the images already shown. **Select all results** uses the current server query; its membership is fixed when you request a preview. Newly indexed images never join an existing preview or retry.
 
 **Preview changes** shows the operation, image count and sample paths. Changing the operation or selection invalidates that preview. **Confirm changes** applies it. **Batch history** includes the complete image list, results, pending work and undo conflicts. The **Inbox** view shows images you have not marked as done.
 

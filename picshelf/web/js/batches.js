@@ -137,9 +137,9 @@ export function attachBatchControls(view,source,grid,refresh) {
   const toggle = view.querySelector("[data-selection-toggle]");
   const selectionCount = bar.querySelector("[data-selection-count]");
   let selectionBar, toggleAnchor;
-  if (view.classList.contains("images-page")) {
+  if (view.classList.contains("quiet-collection-page")) {
     selectionBar = document.createElement("div");
-    selectionBar.className = "images-selection-bar";
+    selectionBar.className = "collection-selection-bar";
     selectionBar.setAttribute("role", "region");
     selectionBar.setAttribute("aria-label", t("批量整理"));
     selectionBar.hidden = true;

@@ -436,6 +436,7 @@ export async function renderTag(view, name, sort = "newest") {
 // ---------------------------------------------------------------- 收藏 / 搜索 / 库
 
 export async function renderFavorites(view, sort = "newest") {
+  view.classList.add("quiet-collection-page");
   const source = new Source(t("我的收藏"), { favorites: true, title: t("我的收藏") },
     { sort, filters: { favorites: "true" } });
   if (!await loadSource(view, source)) return;
@@ -443,13 +444,14 @@ export async function renderFavorites(view, sort = "newest") {
 }
 
 export async function renderInbox(view, sort = "newest") {
+  view.classList.add("quiet-collection-page");
   const source=new Source(t("待整理"),{title:t("待整理")},{sort,filters:{workflow:"inbox"}});
   if (!await loadSource(view, source)) return;
   renderGridInto(view,source);
 }
 
 export async function renderSearch(view, q, sort="newest") {
-  view.classList.add("images-page");
+  view.classList.add("images-page", "quiet-collection-page");
   const title = t(q ? "搜索结果" : "图片");
   const source = new Source(title, {title, q}, {q, sort});
   if (!await loadSource(view, source)) return;

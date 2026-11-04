@@ -930,7 +930,7 @@ def test_phone_navigation_closes_with_escape_and_restores_search_access(page, we
     expect(page.locator("#grid .card")).to_have_count(1)
 
 
-IMAGES_PAGE_AUDIT = r'''root => {
+COLLECTION_PAGE_AUDIT = r'''root => {
   const visible=el=>el.checkVisibility({visibilityProperty:true,opacityProperty:true,contentVisibilityAuto:true});
   const nodes=[root,...root.querySelectorAll('*')].filter(visible);
   const css=el=>getComputedStyle(el);
@@ -968,7 +968,7 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
 
     def check_controls():
         page.mouse.move(0, 0)
-        measured = content.evaluate(IMAGES_PAGE_AUDIT)
+        measured = content.evaluate(COLLECTION_PAGE_AUDIT)
         assert set(measured['fonts']) <= {12, 14, 16}, measured
         assert set(measured['radii']) <= {4, 8}, measured
         assert set(measured['spacing']) <= {8, 24}, measured
@@ -984,7 +984,7 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
     check_controls()
     content.locator('#density-select').select_option('compact')
     content.locator('[data-selection-toggle]').click()
-    selection_bar = content.locator('.images-selection-bar')
+    selection_bar = content.locator('.collection-selection-bar')
     expect(selection_bar).to_be_visible()
     expect(selection_bar.locator('[data-selection-toggle]')).to_have_text('完成选择' if language == 'zh' else 'Done selecting')
     content.locator('[data-select-image]').first.check()
@@ -997,13 +997,77 @@ def test_images_page_controls_and_selection_bar_leave_other_pages_alone(page, we
     expect(content.locator('[data-select-image]:checked')).to_have_count(0)
     check_controls()
     # Route changes discard the pilot marker and restore the existing content styles.
-    for route in ('#/favorites', '#/inbox', '#/albums', '#/admin'):
+    for route in ('#/albums', '#/admin', '#/tags'):
         navigate_from_sidebar(page, route)
         expect(page.locator('#view .page-head h1')).to_be_visible()
-        expect(page.locator('.images-page')).to_have_count(0)
+        expect(page.locator('.quiet-collection-page')).to_have_count(0)
         expect(page.locator('body')).to_have_css('font-size', '15px')
-    navigate_from_sidebar(page, '#/favorites')
-    expect(page.locator('#slideshow-btn')).to_have_css('border-width', '1px')
+    navigate_from_sidebar(page, '#/albums')
+    expect(page.locator('[data-new-album]')).to_have_css('border-width', '1px')
+
+
+@pytest.mark.parametrize('route,operation', [('favorites', 'favorite_off'), ('inbox', 'workflow_done')])
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_quiet_collections_preserve_membership_preview_and_undo(page, web_server, route, operation, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    base = web_server.url + '/api/v1'
+    headers = {'Origin': web_server.url}
+    initial = page.request.get(base + '/images?limit=1').json()['items'][0]
+    added_favorite = route == 'favorites' and not initial['favorite']
+    if added_favorite:
+        assert page.request.post(f"{base}/images/{initial['id']}/favorite", headers=headers, data={}).ok
+    try:
+        navigate_from_sidebar(page, '#/' + route)
+        content = page.locator('.quiet-collection-page')
+        expect(content.locator('#grid .card').first).to_be_visible()
+        expect(content.locator('.query-editor')).to_have_count(0)
+        count = content.locator('#count').inner_text()
+        image_id = int(content.locator('[data-select-image]').first.get_attribute('data-select-image'))
+        member = content.locator(f'.card[data-id="{image_id}"]')
+
+        def check_style():
+            page.mouse.move(0, 0)
+            measured = content.evaluate(COLLECTION_PAGE_AUDIT)
+            assert set(measured['fonts']) <= {12, 14, 16}, measured
+            assert set(measured['radii']) <= {4, 8}, measured
+            assert set(measured['spacing']) <= {8, 24}, measured
+            assert measured['filled'] == [] and measured['borderedButtons'] == [], measured
+            assert measured['framedPanels'] == [] and measured['nonImageCards'] == 0, measured
+            assert not measured['overflow'], measured
+            for selector in ('#sort-select', '#density-select'):
+                expect(content.locator(selector)).to_have_css('border-width', '0px')
+
+        check_style()
+        content.locator('[data-selection-toggle]').click()
+        selection_bar = content.locator('.collection-selection-bar')
+        expect(selection_bar).to_be_visible()
+        member.locator('[data-select-image]').check()
+        expect(selection_bar.locator('[data-selection-count]')).to_have_text('已选 1 张' if language == 'zh' else '1 selected')
+        content.locator('[data-batch-operation]').select_option(operation)
+        content.locator('[data-batch-preview]').click()
+        expect(content.locator('[data-batch-review]')).to_contain_text('将修改 1 张图片' if language == 'zh' else 'Update 1 images')
+        # Preview must preserve membership; only confirmation writes the change.
+        expect(member).to_have_count(1)
+        check_style()
+        content.locator('[data-batch-apply]').click()
+        expect(content.locator('[data-batch-status]')).to_contain_text('已修改 1' if language == 'zh' else 'changed 1')
+        expect(member).to_have_count(0)
+        check_style()
+        content.locator('[data-batch-undo]').click()
+        page.locator('[data-yes]').click()
+        expect(content.locator('[data-batch-status]')).to_contain_text('已撤销' if language == 'zh' else 'Undone')
+        expect(member).to_have_count(1)
+        expect(content.locator('#count')).to_have_text(count)
+        check_style()
+        selection_bar.locator('[data-selection-toggle]').click()
+        expect(selection_bar).to_be_hidden()
+        expect(content.locator('[data-select-image]:checked')).to_have_count(0)
+    finally:
+        if added_favorite:
+            assert page.request.post(f"{base}/images/{initial['id']}/favorite", headers=headers, data={}).ok
 
 
 @pytest.mark.parametrize('width', [390, 1440])
