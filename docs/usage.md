@@ -42,9 +42,11 @@ remain distinguishable. Selection starts afresh when you open another collection
   add action, such as **Add tags**, instead of an empty value. Comments and notes
   keep their counts, and **File details** holds the path and low-level fields.
   **More actions** contains the transparency grid and the original download.
-- Click **Select** to organize several images. Shift-click selects a range;
-  scrolling and loading more images keep your selection. Preview the operation before applying it.
-  **Done selecting** clears the selection.
+- On the **Images** page, choosing **Select** opens a selection bar under the heading
+  showing how many images are selected; **Done selecting** leaves selection mode and
+  clears the selection. Shift-click selects a range, and scrolling or loading more
+  images keeps your selection. Preview the operation before applying it. The selection
+  bar appears on this page only.
 - **Slideshow** opens interval and order settings. **More settings** contains
   filters, image size, captions and reusable playback rules.
 
