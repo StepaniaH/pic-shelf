@@ -1944,6 +1944,7 @@ def test_viewer_pilot_rating_keeps_all_values_zero_clear_and_keyboard_focus(page
     image_id = card.get_attribute('data-id')
     card.click()
     show_viewer_info(page)
+    expect(page.locator('label[for="v-rating"]')).to_have_text('My rating 0–10')
     clear = page.locator('#v-rating-clear')
     if clear.is_enabled():
         clear.click()
@@ -1952,16 +1953,17 @@ def test_viewer_pilot_rating_keeps_all_values_zero_clear_and_keyboard_focus(page
     for value in range(11):
         rate_viewer(page, value)
         assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == value
-    # The printed values themselves are direct actions too, with real pointer and keyboard input.
-    for value in range(11):
-        button = page.locator(f'#v-rate-{value}')
-        button.click()
-        expect(button).to_have_attribute('aria-pressed', 'true')
-        expect(page.locator('#v-rating')).to_have_value(str(value))
-        expect(button).to_be_focused()
+    # A single click at 70% selects 7; each arrow press then persists its exact next value.
+    expect(page.locator('.viewer-rating-scale')).to_have_count(0)
+    rate_viewer(page, 7)
+    slider = page.locator('#v-rating')
+    assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == 7
+    for value in (8, 9):
+        slider.press('ArrowRight')
+        expect(slider).to_have_value(str(value))
+        expect(slider).to_be_enabled()
+        expect(slider).to_be_focused()
         assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == value
-    page.locator('#v-rate-7').press('Enter')
-    expect(page.locator('#v-rate-7')).to_have_attribute('aria-pressed', 'true')
     clear.click()
     expect(clear).to_be_disabled()
     assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == -1
