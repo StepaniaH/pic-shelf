@@ -219,7 +219,7 @@ export function openViewer(source, index) {
     return `<div class="viewer-panel-heading"><h2>${t("信息")}</h2><p>${escapeHtml(d.filename)}</p></div>` + workflowHtml(d) + `
       <section class="viewer-rating"><div class="viewer-rating-heading"><label for="v-rating">${t("我的评分")}</label><output id="v-rating-value" for="v-rating">${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}</output>
         ${can("rate") ? `<button class="viewer-action" id="v-rating-clear" ${d.my_rating == null || d.my_rating < 0 ? "disabled" : ""}>${t("清除评分")}</button>` : ""}</div>
-        ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}"><div class="viewer-rating-scale" aria-hidden="true">${Array.from({length:11}, (_,value) => `<span>${value}</span>`).join("")}</div>` : ""}
+        ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}"><div class="viewer-rating-scale">${Array.from({length:11}, (_,value) => `<button class="viewer-action" id="v-rate-${value}" data-rate="${value}" aria-label="${t("{n} 分", {n:value})}" aria-pressed="${d.my_rating === value}">${value}</button>`).join("")}</div>` : ""}
         <span class="viewer-caption">${t("平均 {score}", {score:d.avg_rating ?? "—"})}</span>
       </section>
       <section><h3>${t("标签")}</h3><div class="viewer-values">${chips(d.tags || [], tag =>
@@ -338,7 +338,9 @@ export function openViewer(source, index) {
     const rating = q("#v-rating");
     async function saveRating(v) {
       if (saving || (detail?.my_rating >= 0 ? detail.my_rating : null) === v) return;
-      const restoreRatingFocus = document.activeElement === rating;
+      const activeRating = document.activeElement;
+      const restoreRatingFocus = activeRating === rating ? "#v-rating"
+        : activeRating?.matches("[data-rate]") ? `#${activeRating.id}` : null;
       try {
         const r = await write(`/images/${item.id}/rating`, { method: "POST", body: { value: v } });
         item.my_rating = r.my_rating;
@@ -348,7 +350,7 @@ export function openViewer(source, index) {
         detail.avg_rating = r.avg_rating;
         detail.rating_count = r.rating_count;
         render();
-        if (restoreRatingFocus && isTopDialog(backdrop)) q("#v-rating")?.focus({preventScroll:true});
+        if (restoreRatingFocus && isTopDialog(backdrop)) q(restoreRatingFocus)?.focus({preventScroll:true});
       } catch (e) {
         if (rating?.isConnected) {
           rating.value = String(detail?.my_rating ?? 0);
@@ -371,6 +373,9 @@ export function openViewer(source, index) {
       rating.addEventListener("keyup", event => {
         if (["Home", "End", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) saveRating(Number(rating.value));
       });
+      for (const button of backdrop.querySelectorAll("[data-rate]")) {
+        button.addEventListener("click", () => saveRating(Number(button.dataset.rate)));
+      }
       q("#v-rating-clear").addEventListener("click", () => saveRating(null));
     }
 

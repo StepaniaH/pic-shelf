@@ -741,7 +741,8 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 :is(.viewer-backdrop, .viewer-modal) .viewer-rating-heading output { margin-left: auto; font-size: var(--viewer-text-lg); }
 :is(.viewer-backdrop, .viewer-modal) #v-rating-clear { border-color: transparent; color: var(--muted); }
 :is(.viewer-backdrop, .viewer-modal) #v-rating { display: block; width: 100%; padding: 0; border: 0; background: transparent; accent-color: var(--accent); cursor: pointer; }
-:is(.viewer-backdrop, .viewer-modal) .viewer-rating-scale { display: flex; justify-content: space-between; font-size: var(--viewer-text-xs); color: var(--muted); }
+:is(.viewer-backdrop, .viewer-modal) .viewer-rating-scale { display: grid; grid-template-columns: repeat(6, minmax(44px, 1fr)); gap: var(--viewer-space-1); }
+:is(.viewer-backdrop, .viewer-modal) .viewer-rating-scale button { padding: var(--viewer-space-2); border-color: transparent; }
 :is(.viewer-backdrop, .viewer-modal) .viewer-info-compact { display: none; }
 :is(.viewer-backdrop, .viewer-modal) .viewer-rating .viewer-caption { flex-basis: 100%; }
 :is(.viewer-backdrop, .viewer-modal) .viewer-values { display: flex; flex-wrap: wrap; align-items: center; gap: var(--viewer-space-2); }

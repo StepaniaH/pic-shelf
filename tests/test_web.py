@@ -1952,6 +1952,16 @@ def test_viewer_pilot_rating_keeps_all_values_zero_clear_and_keyboard_focus(page
     for value in range(11):
         rate_viewer(page, value)
         assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == value
+    # The printed values themselves are direct actions too, with real pointer and keyboard input.
+    for value in range(11):
+        button = page.locator(f'#v-rate-{value}')
+        button.click()
+        expect(button).to_have_attribute('aria-pressed', 'true')
+        expect(page.locator('#v-rating')).to_have_value(str(value))
+        expect(button).to_be_focused()
+        assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == value
+    page.locator('#v-rate-7').press('Enter')
+    expect(page.locator('#v-rate-7')).to_have_attribute('aria-pressed', 'true')
     clear.click()
     expect(clear).to_be_disabled()
     assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == -1
