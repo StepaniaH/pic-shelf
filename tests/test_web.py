@@ -1239,7 +1239,7 @@ def test_quiet_collections_preserve_membership_preview_and_undo(page, web_server
         expect(selection_bar.locator('[data-selection-count]')).to_have_text('已选 1 张' if language == 'zh' else '1 selected')
         content.locator('[data-batch-operation]').select_option(operation)
         content.locator('[data-batch-preview]').click()
-        expect(content.locator('[data-batch-review]')).to_contain_text('将修改 1 张图片' if language == 'zh' else 'Update 1 images')
+        expect(content.locator('[data-batch-review]')).to_contain_text('将修改 1 张图片' if language == 'zh' else 'Update 1 image')
         # Preview must preserve membership; only confirmation writes the change.
         expect(member).to_have_count(1)
         check_style()
@@ -2711,3 +2711,57 @@ def test_viewer_empty_fields_keep_labels_and_add_actions_without_placeholders(pa
     expect(viewer.locator('#viewer-summary')).to_contain_text('UTC')
     expect(viewer.locator('#viewer-identity')).to_have_count(0)
     page.locator('#v-close').click()
+
+
+@pytest.mark.parametrize('language', ['zh', 'en'])
+@pytest.mark.parametrize('count', [1, 2])
+def test_counted_image_text_is_consistent_across_pages_and_batch_states(page, tmp_path, language, count):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    password = secrets.token_urlsafe(24)
+    folder = tmp_path / 'images'
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        uid = auth.create_user(conn, 'browser-test', password, is_admin=True)
+        for n in range(count):
+            make_image(folder / f'image-{n}.png', (30 + n * 60, 90, 140), size=(60, 40))
+        library = libsvc.create_library(conn, 'Gallery', str(folder))
+        indexer.scan_library(conn, cfg, library)
+        ids = [row[0] for row in conn.execute('SELECT id FROM images')]
+        artist = ops.create_artist(conn, 'Studio')
+        for iid in ids:
+            ops.add_tags(conn, iid, ['Primary', 'Merge source'], uid)
+            ops.link_artist(conn, iid, artist['id'])
+        album = ops.create_album(conn, 'Manual', library)
+        ops.album_add_images(conn, album['id'], ids)
+    expected = f'共 {count} 张' if language == 'zh' else f'{count} image' + ('s' if count != 1 else '')
+    with http_server(cfg) as client:
+        live = WebServer(str(client.base_url), password, folder, folder)
+        sign_in(page, live, language)
+        expect(page.locator('.home-page .page-head .count')).to_have_text(expected)
+        expect(page.locator('.home-page .library-count')).to_have_text(expected)
+        navigate_from_sidebar(page, '#/albums')
+        expect(page.locator(f'.card[href="#/album/{album["id"]}"] .album-caption .muted')).to_have_text(expected + (' · 手工' if language == 'zh' else ' · Manual'))
+        navigate_from_sidebar(page, '#/artists')
+        expect(page.locator('.entity-row .muted')).to_have_text(expected)
+        navigate_from_sidebar(page, '#/tags')
+        expect(page.locator('.entity-row .muted')).to_have_text([expected, expected])
+        primary = page.locator('.entity-row').filter(has=page.locator('a[href="#/tag/Primary"]'))
+        primary.locator('[data-edit-tag]').click()
+        page.locator('[data-alias] [name=alias]').fill('Merge source')
+        page.locator('[data-alias] button').click()
+        expect(page.locator('[data-review] p')).to_have_text(('将“Merge source”作为“Primary”的别名' if language == 'zh' else 'Add “Merge source” as an alias for “Primary”') + ' · ' + expected)
+        page.locator('.modal [data-close]').click()
+        page.locator('a[href="#/tag/Primary"]').click()
+        expect(page.locator('#view #count')).to_have_text(expected)
+        expect(page.locator('#grid .card')).to_have_count(count)
+        page.locator('[data-selection-toggle]').click()
+        page.locator('[data-select-loaded]').click()
+        page.locator('[data-batch-operation]').select_option('favorite_on')
+        page.locator('[data-batch-preview]').click()
+        preview = f'将修改 {count} 张图片' if language == 'zh' else 'Update ' + expected
+        expect(page.locator('[data-batch-review]')).to_contain_text(preview)
+        page.locator('[data-batch-apply]').click()
+        status = page.locator('[data-batch-status] [role=status]:not([data-status-error])')
+        expect(status).to_have_text(('已完成' if language == 'zh' else 'Completed') + ' · ' + expected + ' · ' + (f'已修改 {count}' if language == 'zh' else f'changed {count}'))

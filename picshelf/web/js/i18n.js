@@ -1,6 +1,6 @@
 // Bilingual (Chinese/English) UI catalog.
 // Convention: the Chinese template is the message id; EN maps it to English.
-// Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
+// Usage: t("共 {v0} 张", { v0: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
     "收起搜索": "Close search",
     "整理": "Organize",
@@ -775,7 +775,6 @@ export const EN = {
   "按我的评分": "By my rating",
   "按平均分": "By average rating",
   "随机": "Random",
-  "共 1 张": "1 image",
   "没有图片": "No images",
   "还没有收藏的图片": "No favorite images yet.",
   "共 {v0} 张": "{v0} images",
@@ -882,10 +881,7 @@ export const EN = {
   "出错了": "Something went wrong",
   "未登录": "Not signed in",
   "请求失败": "Request failed",
-  "图片 {v0} · 专辑 {v1}": "Images {v0} · Albums {v1}",
-  "1 张图片": "1 image",
   "{v0} 张图片": "{v0} images",
-  "1 个专辑": "1 album",
   "{v0} 个专辑": "{v0} albums",
   "浏览": "Browse",
   "还没有库。管理员可在「管理 → 库」中注册目录。": "No libraries yet. An admin can register one under Admin → Libraries.",
@@ -937,6 +933,22 @@ export const EN = {
   "取消关联": "Unlink",
 };
 
+// Counted English templates keep their own controlling variable and singular form.
+// Chinese always uses the original message id; callers never choose plural forms.
+const EN_SINGULAR = {
+  "共 {v0} 张": ["v0", "{v0} image"],
+  "{v0} 张图片": ["v0", "{v0} image"],
+  "{v0} 个专辑": ["v0", "{v0} album"],
+  "将修改 {n} 张图片": ["n", "Update {n} image"],
+  "已选择 {n} 张图片": ["n", "{n} image selected"],
+  "已选全部 {n} 张": ["n", "All {n} image selected"],
+  "显示前 {n} 张": ["n", "Showing the first {n} image"],
+  "（{n} 张）": ["n", " ({n} image)"],
+  "本次播放 {n} 张，已达到播放上限。": ["n", "Playing {n} image, the playback limit."],
+  "本次从 {n} 张图片中随机抽取；共匹配 {total} 张。": ["n", "This playback samples from {n} image out of {total} matches."],
+  "匹配 {matched} 张，实际队列 {total} 张；达到 10000 张上限": ["matched", "Matched {matched} image; queued {total}. The 10000-image limit was reached."],
+};
+
 const SUPPORTED = ["zh", "en"];
 
 function detect() {
@@ -964,6 +976,8 @@ export function toggleLocale() {
 
 export function t(msgid, vars) {
   let s = locale === "zh" ? msgid : (EN[msgid] ?? msgid);
+  const singular = EN_SINGULAR[msgid];
+  if (locale === "en" && singular && vars?.[singular[0]] === 1) s = singular[1];
   if (vars) {
     for (const k of Object.keys(vars)) {
       s = s.split(`{${k}}`).join(String(vars[k]));

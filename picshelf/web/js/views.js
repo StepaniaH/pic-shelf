@@ -294,7 +294,7 @@ export async function renderAlbums(view, params) {
       if (requested !== revision || !view.isConnected) return;
       if (reset) { grid.replaceChildren(); offset = 0; }
       grid.insertAdjacentHTML("beforeend", values.slice(0, 100).map(album => {
-        const count = album.image_count === 1 ? t("共 1 张") : t("共 {v0} 张", {v0:album.image_count});
+        const count = t("共 {v0} 张", {v0:album.image_count});
         const summary = `${count} · ${t(album.kind === "manual" ? "手工" : "文件夹")}`;
         const label = [album.name, album.library_name !== album.name ? album.library_name : "", summary].filter(Boolean).join(" · ");
         return `<a class="card" href="#/album/${album.id}" aria-label="${escapeHtml(label)}" title="${escapeHtml(album.library_name || album.name)}">
