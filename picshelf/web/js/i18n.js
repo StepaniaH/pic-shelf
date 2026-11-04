@@ -2,6 +2,9 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "收起信息": "Hide info",
+    "返回": "Back",
+    "收起": "Hide",
     '外观': 'Appearance',
     '明暗模式': 'Color mode',
     '跟随系统': 'System',

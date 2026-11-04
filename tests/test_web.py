@@ -103,6 +103,37 @@ def navigate_from_sidebar(page, href):
     page.locator(f'#nav a[href="{href}"]').click()
 
 
+def show_viewer_info(page):
+    viewer = page.locator(".viewer-backdrop").last
+    if viewer.locator("#viewer-details").is_hidden():
+        viewer.locator("#v-panel").click()
+    return viewer
+
+
+def viewer_editor(page, name):
+    viewer = show_viewer_info(page)
+    editor = viewer.locator(f'[data-section="{name}"]')
+    if editor.get_attribute("open") is None:
+        editor.locator("summary").click()
+    return viewer
+
+
+def viewer_more(page):
+    viewer = page.locator(".viewer-backdrop").last
+    if viewer.locator(".viewer-more").get_attribute("open") is None:
+        viewer.locator(".viewer-more > summary").click()
+    return viewer
+
+
+def rate_viewer(page, value):
+    from playwright.sync_api import expect
+    slider = show_viewer_info(page).locator("#v-rating")
+    box = slider.bounding_box()
+    slider.click(position={"x":8 + (box["width"] - 16) * int(value) / 10, "y":box["height"] / 2})
+    expect(slider).to_have_value(str(value))
+    expect(page.locator("#v-rating-clear")).to_be_enabled()
+
+
 def test_group_editor_changes_only_the_selected_membership(page, web_server):
     from playwright.sync_api import expect
     sign_in(page, web_server)
@@ -163,7 +194,7 @@ def test_random_viewer_stops_at_sample_boundary(page, web_server):
     name = cards.last.locator('.fname').text_content()
     cards.last.click()
     expect(page.locator('.viewer-stage img')).to_have_attribute('alt', name)
-    expect(page.locator('.nav-btn.next')).to_be_disabled()
+    expect(page.locator('#v-next')).to_be_disabled()
     expect(page.locator('.meta-count')).to_contain_text('Sample 120')
     page.keyboard.press('ArrowRight')
     page.keyboard.press('ArrowRight')
@@ -254,10 +285,10 @@ def test_viewer_organization_and_provenance_keep_literal_text(page, web_server):
     page.locator('.lib-card a[href="#/library/1"]').click()
     page.locator("#grid .card").first.click()
     expect(page.locator("[data-workflow]")).to_have_attribute("data-workflow", "done")
-    page.locator("[data-workflow]").click()
+    show_viewer_info(page).locator("[data-workflow]").click()
     expect(page.locator("[data-workflow]")).to_have_attribute("data-workflow", "inbox")
     note = '<img src=x onerror="window.unexpectedMetadataScript=true">'
-    page.locator('[data-section="sources"] > summary').click()
+    show_viewer_info(page).locator('[data-section="sources"] > summary').click()
     form = page.locator("[data-source-form]")
     form.locator('[name="note"]').fill(note)
     form.locator('[name="collected_at"]').fill("2026-10-10T21:35:00+08:00")
@@ -291,12 +322,11 @@ def test_gallery_viewer_and_nested_dialogs(page, web_server, language, width):
     page.locator("#more-btn").scroll_into_view_if_needed()
     expect(page.locator("#grid .card")).to_have_count(125)
     page.locator("#grid .card").first.click()
-    if width < 900:
-        page.locator("#v-panel").click()
+    show_viewer_info(page)
     expect(page.locator("[data-untag]")).to_have_count(1)
-    page.locator("#tag-input").fill("色彩")
+    viewer_editor(page, "tag-editor").locator("#tag-input").fill("色彩")
     expect(page.locator('#tag-dl option[value="色彩:蓝色"]')).to_have_count(1)
-    page.locator("#tag-input").fill("Browser test")
+    viewer_editor(page, "tag-editor").locator("#tag-input").fill("Browser test")
     page.locator("#tag-add").click()
     expect(page.locator('[data-untag="Browser test"]')).to_be_visible()
     page.locator('[data-untag="Browser test"]').click()
@@ -304,24 +334,24 @@ def test_gallery_viewer_and_nested_dialogs(page, web_server, language, width):
     if destination:
         page.screenshot(path=str(output / f"viewer-{language}-{width}.png"))
     # Zero is a rating, distinct from clearing a rating.
-    page.locator('[data-rate="0"]').click()
-    expect(page.locator('[data-rate="0"]')).to_have_class("rate-btn on")
-    page.locator('[data-rate="clear"]').click()
-    expect(page.locator(".rate-btn.on")).to_have_count(0)
-    page.locator("#v-zoom").click()
-    page.locator("#v-zoom").click()
+    rate_viewer(page, 0)
+    expect(page.locator("#v-rating")).to_have_value("0")
+    page.locator("#v-rating-clear").click()
+    expect(page.locator("#v-rating-clear")).to_be_disabled()
+    viewer_more(page).locator("#v-zoom").click()
+    viewer_more(page).locator("#v-zoom").click()
     expect(page.locator(".viewer-stage img")).to_have_attribute("src", re.compile("/media/original/"))
-    page.locator('[data-section="comments"] > summary').click()
+    show_viewer_info(page).locator('[data-section="comments"] > summary').click()
     page.locator("[data-del-comment]").click()
     expect(page.locator(".modal-backdrop")).to_be_visible()
     page.keyboard.press("Escape")
     expect(page.locator(".modal-backdrop")).to_have_count(0)
     expect(page.locator(".viewer-backdrop")).to_be_visible()
     expect(page.locator("[data-del-comment]")).to_have_count(1)
-    page.locator("#v-slideshow").click()
+    viewer_more(page).locator("#v-slideshow").click()
     page.locator(".modal-body [data-close]").click()
     expect(page.locator(".modal-backdrop")).to_have_count(0)
-    page.locator("#v-slideshow").click()
+    viewer_more(page).locator("#v-slideshow").click()
     page.locator(".play-advanced > summary").click()
     page.locator("#ss-size").select_option("original")
     page.locator("#ss-start").click()
@@ -510,11 +540,13 @@ def test_album_organizing_create_edit_cover_remove_and_undo(page,tmp_path):
         expect(page.locator("#view h1")).to_contain_text("Weekend picks")
         expect(page.locator(".album-description")).to_have_text("Two favorites from the trip.")
         page.locator("#grid .card").first.click()
-        page.locator(f'[data-album="{album_id}"]').click()
+        show_viewer_info(page).locator(f'[data-album="{album_id}"]').click()
         page.locator("[data-cover]").click()
         expect(page.locator(".modal-backdrop")).to_have_count(0)
-        page.locator(f'[data-album="{album_id}"]').click()
-        page.locator("[data-remove]").click(); page.locator("[data-yes]").click()
+        show_viewer_info(page).locator(f'[data-album="{album_id}"]').click()
+        page.locator("[data-remove]").click()
+        expect(page.locator(".modal-backdrop")).to_have_count(1)
+        page.locator("[data-yes]").click()
         expect(page.locator(f'[data-album="{album_id}"]')).to_have_count(0)
         page.locator("#v-close").click()
         expect(page.locator("#grid .card")).to_have_count(1)
@@ -819,19 +851,19 @@ def test_viewer_failed_pixels_and_saves_keep_context_and_inputs(page, web_server
     expect(page.locator(".viewer-status")).to_contain_text("could not be displayed")
     expect(page.locator(".viewer-stage img")).to_have_count(0)
     expect(page.locator(".viewer-panel .kv")).to_have_count(0)
-    page.locator(".nav-btn.next").click()
+    page.locator("#v-next").click()
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", second_name)
     expect(page.locator(".viewer-panel .kv")).to_contain_text(second_name)
     page.unroute(f"**/media/preview/{first}?*")
     draft = "A comment to keep through a failed save"
-    page.locator('[data-section="comments"] > summary').click()
+    show_viewer_info(page).locator('[data-section="comments"] > summary').click()
     page.locator("#comment-input").fill(draft)
     page.route("**/images/*/comments", lambda route: route.abort("internetdisconnected"))
     page.locator("#comment-add").click()
     expect(page.locator(".viewer-status")).to_contain_text("unconfirmed")
     expect(page.locator("#comment-input")).to_have_value(draft)
     page.unroute("**/images/*/comments")
-    page.locator("[data-rate='0']").click()
+    rate_viewer(page, 0)
     expect(page.locator("#comment-input")).to_have_value(draft)
     page.locator("#v-close").click()
     expect(page.locator(".modal-body [data-no]")).to_be_focused()
@@ -859,11 +891,11 @@ def test_viewer_range_scroll_focus_and_ime_preserve_browsing(page, web_server):
     requests = []
     page.on("request", lambda request: requests.append(request.url))
     card.locator("img").click()
-    page.locator("#tag-input").fill("中文输入")
+    viewer_editor(page, "tag-editor").locator("#tag-input").fill("中文输入")
     page.locator("#tag-input").evaluate("el => el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter',isComposing:true,bubbles:true}))")
     expect(page.locator("#tag-input")).to_have_value("中文输入")
     expect(page.locator("[data-untag='中文输入']")).to_have_count(0)
-    page.locator("#tag-input").fill("")
+    viewer_editor(page, "tag-editor").locator("#tag-input").fill("")
     page.keyboard.press("Tab")
     assert page.evaluate("document.querySelector('.viewer-backdrop').contains(document.activeElement)")
     page.keyboard.press("Escape")
@@ -886,6 +918,7 @@ def test_phone_navigation_closes_with_escape_and_restores_search_access(page, we
     page.locator('#nav a[href="#/favorites"]').click()
     expect(page.locator("#nav-toggle")).to_have_attribute("aria-expanded", "false")
     expect(page.locator("#sidebar")).to_be_hidden()
+    expect(page.locator("#view .page-head h1")).to_have_text("My favorites")
     page.keyboard.press("/")
     expect(page.locator("#search-input")).to_be_focused()
     page.locator("#search-input").fill("image-000")
@@ -902,12 +935,12 @@ def test_viewer_actions_stay_reachable_and_escape_closes_the_menu_first(page, we
     expect(page.locator(".viewer-stage img")).to_be_visible()
     more = page.locator(".viewer-more > summary")
     if width <= 390:
-        assert page.locator("#v-close").bounding_box()["y"] < more.bounding_box()["y"]
+        assert page.locator("#v-close").bounding_box()["x"] < more.bounding_box()["x"]
     more.click()
     page.locator("#v-bg").click()
     expect(page.locator(".viewer-stage")).to_have_class(re.compile("checkerboard"))
     more.click()
-    menu = page.locator(".viewer-more .account-actions").bounding_box()
+    menu = page.locator(".viewer-more .viewer-menu").bounding_box()
     assert 0 <= menu["x"] and menu["x"] + menu["width"] <= width
     page.keyboard.press("Escape")
     expect(page.locator(".viewer-backdrop")).to_be_visible()
@@ -925,7 +958,7 @@ def test_direct_link_opens_an_image_beyond_the_first_page(page, web_server):
     page.goto(web_server.url + "/#/view/1")
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", "image-000.png")
     assert len([url for url in requests if "/api/v1/images?" in url]) == 1
-    expect(page.locator(".nav-btn.next")).to_be_disabled()
+    expect(page.locator("#v-next")).to_be_disabled()
     expect(page.locator("#v-slideshow")).to_have_count(0)
     page.locator("#v-close").click()
     expect(page.locator("#view h1")).to_have_text("All images")
@@ -1151,7 +1184,7 @@ def test_viewer_playback_starts_here_and_browse_sort_survives_reload(page, web_s
     card = page.locator('#grid .card').nth(7)
     card.click()
     expect(page.locator('.viewer-stage img')).to_have_attribute('alt', 'image-007.png')
-    page.locator('#v-slideshow').click()
+    viewer_more(page).locator("#v-slideshow").click()
     expect(page.locator('#ss-from-current')).to_be_checked()
     expect(page.locator('#ss-sort')).to_have_value('path')
     page.locator('#ss-interval').fill('0')
@@ -1264,7 +1297,7 @@ def test_excluded_playback_start_keeps_settings_and_can_start_from_queue_head(pa
     sign_in(page, web_server)
     page.goto(web_server.url + '/#/library/1?sort=path')
     page.locator('#grid .card').nth(7).click()
-    page.locator('#v-slideshow').click()
+    viewer_more(page).locator("#v-slideshow").click()
     page.locator('#ss-interval').fill('0')
     page.locator('.play-advanced > summary').click()
     page.locator('#ss-count').fill('2')
@@ -1495,7 +1528,7 @@ def test_gallery_keeps_focus_and_thumbnail_after_rating_and_moves_focus_after_re
         page.wait_for_function('image => image.complete && image.naturalWidth > 0', arg=thumbnail)
         requests = []
         page.on('request', lambda request: requests.append(request.url))
-        first.click(); page.locator(f'[data-rate="{rating}"]').click()
+        first.click(); rate_viewer(page, rating)
         with page.expect_response(re.compile(r'/api/v1/images\?')):
             page.locator('#v-close').click()
         expect(first.locator('.rated')).to_have_text(rating)
@@ -1516,15 +1549,15 @@ def test_expired_session_releases_dialogs_and_allows_sign_in(page, web_server, a
     page.locator('#grid .card').first.click()
     expect(page.locator('.viewer-stage img')).to_be_visible()
     if action != 'slideshow':
-        page.locator('#tag-input').fill('Unsubmitted draft')
+        viewer_editor(page, "tag-editor").locator("#tag-input").fill('Unsubmitted draft')
     if action in ('nested_playback', 'slideshow'):
-        page.locator('#v-slideshow').click()
+        viewer_more(page).locator("#v-slideshow").click()
         page.locator('#ss-interval').fill('0')
     if action == 'slideshow':
         page.locator('#ss-start').click()
         expect(page.locator('#ss-img')).to_be_visible()
     page.context.clear_cookies()
-    page.locator({'viewer':'.viewer-backdrop .nav-btn.next', 'save':'#tag-add',
+    page.locator({'viewer':'.viewer-backdrop #v-next', 'save':'#tag-add',
                   'nested_playback':'#ss-start', 'slideshow':'#ss-next'}[action]).click()
     expect(page.locator('#login-form')).to_be_visible()
     expect(page.get_by_role('dialog')).to_have_count(0)
@@ -1847,3 +1880,88 @@ def test_batch_undo_discards_a_grid_refresh_started_before_the_undo(page, tmp_pa
         page.reload()
         expect(page.locator('#grid .card')).to_have_count(12)
         expect(page.locator('#grid .badge.fav')).to_have_count(0)
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(page, web_server, width):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    page.add_init_script("localStorage.setItem('picshelf.panel', '1')")
+    sign_in(page, web_server)
+    card = page.locator('#grid .card').first
+    card.click()
+    viewer = page.locator('.viewer-backdrop')
+    expect(viewer.locator('.viewer-stage img')).to_be_visible()
+    expect(viewer.locator('#viewer-details')).to_be_hidden()
+    expect(viewer.locator('#v-panel')).to_have_attribute('aria-expanded', 'false')
+    expect(viewer.locator('#v-close')).to_contain_text('Back')
+    expect(viewer.locator('#v-close')).to_contain_text('Esc')
+    show_viewer_info(page)
+    expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', 'Hide info')
+    # Count the actual panel, including every editor and menu, rather than a quiet collapsed shell.
+    viewer.locator('details').evaluate_all('elements => elements.forEach(el => el.open = true)')
+    measured = viewer.evaluate('''root => {
+      const panel = root.querySelector('#viewer-details');
+      const measure = (scope, excludePanel = false) => {
+        const elements = [scope, ...scope.querySelectorAll('*')].filter(el => el.getClientRects().length &&
+          getComputedStyle(el).visibility !== 'hidden' && (!excludePanel || !panel.contains(el)));
+        const values = props => [...new Set(elements.flatMap(el => props.map(prop => parseFloat(getComputedStyle(el)[prop]))).filter(n => Number.isFinite(n) && n > 0))];
+        const buttons = elements.filter(el => el.tagName === 'BUTTON');
+        return {fonts: values(['fontSize']), radii: values(['borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius']),
+          padding: values(['paddingTop','paddingRight','paddingBottom','paddingLeft']), gaps: values(['rowGap','columnGap']),
+          buttonPadding: [...new Set(buttons.map(el => getComputedStyle(el).padding))], buttonFonts: [...new Set(buttons.map(el => getComputedStyle(el).fontSize))],
+          roles: [...new Set(buttons.map(el => el.className))], tiny: elements.filter(el => el.matches('button,input,select,textarea,summary,a[href]'))
+            .filter(el => {const r = el.getBoundingClientRect(); return r.height < 43.9 || r.width < 43.9;}).map(el => el.outerHTML)};
+      };
+      return {chrome: measure(root, true), panel: measure(panel), overflow: root.scrollWidth > root.clientWidth};
+    }''')
+    assert not measured['overflow']
+    for name in ('chrome', 'panel'):
+        data = measured[name]
+        assert set(data['fonts']) <= {12, 14, 16, 20}, data
+        assert set(data['radii']) <= {4, 8, 12}, data
+        assert set(data['padding']) <= {4, 8, 12, 16, 24, 32}, data
+        assert len(data['gaps']) <= 5, data
+        assert len(data['buttonPadding']) <= 2, data
+        assert data['buttonFonts'] == ['14px'], data
+        assert set(data['roles']) <= {'viewer-action', 'viewer-primary', 'viewer-icon'}, data
+        assert not data['tiny'], data
+    # A panel on a phone shares space with the image; it must not cover the stage.
+    stage = viewer.locator('.viewer-stage').bounding_box()
+    panel = viewer.locator('#viewer-details').bounding_box()
+    if width == 390:
+        assert panel['y'] >= stage['y'] + stage['height'] - 1
+    viewer.locator('.viewer-more > summary').click()
+    viewer.locator('#v-close').click()
+    expect(viewer).to_have_count(0)
+    expect(card).to_be_focused()
+
+
+def test_viewer_pilot_rating_keeps_all_values_zero_clear_and_keyboard_focus(page, web_server):
+    from playwright.sync_api import expect
+    sign_in(page, web_server)
+    card = page.locator('#grid .card').first
+    image_id = card.get_attribute('data-id')
+    card.click()
+    show_viewer_info(page)
+    clear = page.locator('#v-rating-clear')
+    if clear.is_enabled():
+        clear.click()
+        expect(clear).to_be_disabled()
+    # Each value remains a single pointer action, including zero from an unrated state.
+    for value in range(11):
+        rate_viewer(page, value)
+        assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == value
+    clear.click()
+    expect(clear).to_be_disabled()
+    assert page.request.get(web_server.url + f'/api/v1/images/{image_id}').json()['my_rating'] == -1
+    slider = page.locator('#v-rating')
+    expect(slider).to_be_enabled()
+    expect(slider).to_have_attribute('aria-valuetext', 'Not rated')
+    slider.press('Home')
+    expect(clear).to_be_enabled()
+    expect(slider).to_have_value('0')
+    expect(slider).to_be_focused()
+    page.locator('#v-close').click()
+    expect(page.locator('.modal-backdrop')).to_have_count(0)
+    expect(card).to_be_focused()

@@ -63,8 +63,9 @@ def test_fresh_cli_http_and_tui_collection_survives_migration_and_restore(tmp_pa
     rule=json.loads(run('play-rules','save','Watch organized','--spec',json.dumps({'query':'tag:organized','source':{'library_id':listed['items'][0]['library_id']},'order':'sequential'})))
     session=json.loads(run('play-rules','start',rule['id']))
     assert session['total']==1
-    run('play-sessions','control',session['token'],'pause')
-    assert json.loads(run('play-sessions','show',session['token']))['paused']
+    # Opaque tokens may begin with '-', so terminate option parsing explicitly.
+    run('play-sessions','control','--',session['token'],'pause')
+    assert json.loads(run('play-sessions','show','--',session['token']))['paused']
     (root/'renamed').mkdir();(root/'01 zero.png').rename(root/'renamed/first.png')
     run('scan','collection','--json')
     assert json.loads(run('show',zero,'--json'))['rel_path']=='renamed/first.png'

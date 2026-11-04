@@ -7,7 +7,7 @@ import {metadataHtml, workflowHtml, bindMetadata} from "./metadata.js";
 import {formatTimestamp} from "./format.js";
 import { activateDialog, isTopDialog } from "./dialog.js";
 import {ViewerLoader, PreviewCache, decodeImage} from "./viewer-load.js";
-import {pickEntity} from "./catalog-ui.js";
+import {pickEntity, editAlbum} from "./catalog-ui.js";
 
 const SIZE_LABEL = { fit: t("适应"), fill: t("填满"), original: t("原图") };
 const SIZE_CYCLE = ["fit", "fill", "original"];
@@ -17,7 +17,7 @@ export function openViewer(source, index) {
   const preference = (key, fallback) => { try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; } };
   let zoom = preference("picshelf.zoom", "fit");
   if (!SIZE_LABEL[zoom]) zoom = "fit";
-  let panelOpen = preference("picshelf.panel", matchMedia("(max-width: 900px)").matches ? "0" : "1") !== "0";
+  let panelOpen = false;
   const sections = new Set();
   let detail = null;
   let closed = false;
@@ -49,10 +49,19 @@ export function openViewer(source, index) {
     if (menu && !menu.contains(event.target)) menu.open = false;
   });
 
+  function viewerModal(options) {
+    const modal = showModal(options);
+    modal.el.classList.add("viewer-modal");
+    for (const button of modal.el.querySelectorAll("button")) {
+      button.className = button.hasAttribute("data-close") ? "viewer-icon"
+        : button.hasAttribute("data-yes") ? "viewer-primary" : "viewer-action";
+    }
+    return modal;
+  }
+
   const savePrefs = () => {
     try {
       localStorage.setItem("picshelf.zoom", zoom);
-      localStorage.setItem("picshelf.panel", panelOpen ? "1" : "0");
     } catch { /* Preferences are optional. */ }
   };
 
@@ -63,7 +72,7 @@ export function openViewer(source, index) {
       else sections.delete(section.dataset.section);
     }
     const values = {};
-    for (const input of backdrop.querySelectorAll(".viewer-panel input, .viewer-panel textarea, .viewer-panel select")) {
+    for (const input of backdrop.querySelectorAll(".viewer-panel :is(input, textarea, select):not([data-autosave])")) {
       const key = input.id ? `#${input.id}` : input.name ? `[name="${input.name}"]` : null;
       if (key && input.value) values[key] = input.value;
     }
@@ -137,33 +146,46 @@ export function openViewer(source, index) {
   function render() {
     if (closed) return;
     captureDrafts();
+    const menuOpen = !!backdrop.querySelector(".viewer-more")?.open;
     const active = backdrop.contains(document.activeElement) ? document.activeElement : null;
     const focusKey = active?.id ? `#${CSS.escape(active.id)}` : active?.name ? `[name="${CSS.escape(active.name)}"]`
-      : active?.dataset.rate ? `[data-rate="${active.dataset.rate}"]` : null;
+      : active?.matches(".viewer-more > summary") ? ".viewer-more > summary" : null;
     const item = source.items[current];
     if (!item) return;
     const panelScroll = renderedId === item.id ? backdrop.querySelector(".viewer-panel")?.scrollTop || 0 : 0;
     const loaded = source.sort === "random"
       ? t("本次抽样 {n} / 匹配 {total}", {n: source.items.length, total: source.total})
       : `${current + 1} / ${source.total ?? source.items.length}`;
-    backdrop.innerHTML = `<div class="viewer-top">
-      <span class="title">${escapeHtml(item.filename)}</span><span class="muted meta-count">${loaded}</span>
+    backdrop.dataset.infoOpen = String(panelOpen);
+    backdrop.innerHTML = `<header class="viewer-top">
+      <button class="viewer-action" id="v-close" aria-label="${t("返回")} (Esc)" title="${t("返回")} (Esc)">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 5-7 7 7 7M5 12h14"/></svg>
+        <span>${t("返回")}</span><kbd>Esc</kbd>
+      </button>
+      <div class="viewer-heading"><h1 class="title">${escapeHtml(item.filename)}</h1><span class="meta-count">${loaded}</span></div>
       <div class="viewer-actions">
-        ${source.singleImage ? "" : `<button class="btn small" id="v-slideshow">${t("幻灯片")}</button>`}
-        <button class="btn small" id="v-zoom">${t("尺寸：{value}", {value:SIZE_LABEL[zoom]})}</button>
-        ${can("rate") ? `<button class="btn small" id="v-fav" aria-pressed="${!!item.favorite}" ${!detail ? "disabled" : ""}>${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}</button>` : ""}
-        <button class="btn small" id="v-panel" aria-expanded="${panelOpen}" aria-controls="viewer-details">${t("信息")}</button>
-        <details class="viewer-more"><summary class="btn small" aria-label="${t("更多操作")}">•••</summary><div class="account-actions">
-          <button class="btn small" id="v-bg" aria-pressed="${transparent}">${t("透明背景")}</button>
-          ${detail ? `<a class="btn small" href="${mediaUrl("original", item.id)}?download=1">${t("下载原图")}</a>` : ""}
+        ${can("rate") ? `<button class="viewer-icon" id="v-fav" aria-label="${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}" title="${item.favorite ? t("★ 已收藏") : t("☆ 收藏")}" aria-pressed="${!!item.favorite}" ${!detail ? "disabled" : ""}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3l-5.6 2.9 1.1-6.2L3 9.6l6.2-.9Z"/></svg></button>` : ""}
+        <button class="viewer-action" id="v-panel" aria-label="${panelOpen ? t("收起信息") : t("信息")}" aria-expanded="${panelOpen}" aria-controls="viewer-details"><span class="viewer-info-full">${panelOpen ? t("收起信息") : t("信息")}</span><span class="viewer-info-compact">${panelOpen ? t("收起") : t("信息")}</span></button>
+        <details class="viewer-more"><summary class="viewer-icon" aria-label="${t("更多操作")}" title="${t("更多操作")}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></summary><div class="viewer-menu">
+          ${source.singleImage ? "" : `<button class="viewer-action" id="v-slideshow">${t("幻灯片")}</button>`}
+          <button class="viewer-action" id="v-zoom">${t("尺寸：{value}", {value:SIZE_LABEL[zoom]})}</button>
+          <button class="viewer-action" id="v-bg" aria-pressed="${transparent}">${t("透明背景")}</button>
+          ${detail ? `<a class="viewer-action" href="${mediaUrl("original", item.id)}?download=1">${t("下载原图")}</a>` : ""}
         </div></details>
-      </div><button class="icon-btn" id="v-close" aria-label="${t("关闭")}" title="${t("关闭")}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
+      </div></header>
       <p class="viewer-status" role="status" ${status ? "" : "hidden"}>${escapeHtml(status)}</p>
-      <button class="btn" id="v-retry" hidden>${t("重试")}</button>
+      <button class="viewer-action" id="v-retry" hidden>${t("重试")}</button>
       <div class="viewer-body"><div class="viewer-stage size-${zoom} ${transparent ? "checkerboard" : ""}">
-        <button class="nav-btn prev" aria-label="${t("上一张")}" ${current === 0 ? "disabled" : ""}>‹</button>
-        <button class="nav-btn next" aria-label="${t("下一张")}" ${source.loadedAll && current >= source.items.length - 1 ? "disabled" : ""}>›</button>
-      </div><aside id="viewer-details" class="viewer-panel" ${panelOpen ? "" : "hidden"}>${detail ? panelHtml(item) : ""}</aside></div>`;
+        <button class="viewer-icon" id="v-prev" aria-label="${t("上一张")}" ${current === 0 ? "disabled" : ""}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg></button>
+        <button class="viewer-icon" id="v-next" aria-label="${t("下一张")}" ${source.loadedAll && current >= source.items.length - 1 ? "disabled" : ""}><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></button>
+      </div><aside id="viewer-details" class="viewer-panel" aria-label="${t("信息")}" ${panelOpen ? "" : "hidden"}>${detail ? panelHtml(item) : ""}</aside></div>`;
+    backdrop.querySelector(".viewer-more").open = menuOpen;
+    // Shared metadata markup also belongs to the viewer's three action roles.
+    for (const button of backdrop.querySelectorAll("button")) {
+      if (!["viewer-action", "viewer-primary", "viewer-icon"].includes(button.className)) {
+        button.className = button.closest("form") && button.type === "submit" ? "viewer-primary" : "viewer-action";
+      }
+    }
     if (frame) {
       frame.alt = detail.filename;
       backdrop.querySelector(".viewer-stage").prepend(frame);
@@ -185,7 +207,7 @@ export function openViewer(source, index) {
     if (!d.work) return "";
     const labels = {original: "原图版本", compressed: "压缩版", crop: "裁剪版", resize: "尺寸版本", revision: "修订版", other: "其他版本"};
     return `<section><h3>${t("作品文件")} · ${escapeHtml(d.work.name)}</h3><div class="add-row">${d.work.images.map(image =>
-      `<button class="btn small" data-work-image="${image.id}" ${image.missing || image.id === d.id ? "disabled" : ""}>${escapeHtml(image.filename)} · ${t(labels[image.role])}${image.id === d.work.preferred_image_id ? ` · ${t("首选")}` : ""}</button>`
+      `<button class="viewer-action" data-work-image="${image.id}" ${image.missing || image.id === d.id ? "disabled" : ""}>${escapeHtml(image.filename)} · ${t(labels[image.role])}${image.id === d.work.preferred_image_id ? ` · ${t("首选")}` : ""}</button>`
     ).join("")}</div></section>`;
   }
 
@@ -194,32 +216,32 @@ export function openViewer(source, index) {
     if (!d) return "";
     const editable = d.metadata_editable;
     const chips = (items, render) => items.map(render).join("");
-    return workflowHtml(d) + `
-      <section><h3>${t("我的评分")} <span class="muted">${t("平均 {score}", {score:d.avg_rating ?? "—"})}</span></h3>
-        ${can("rate") ? `<div class="rate-row">${Array.from({length:11}, (_,value) =>
-          `<button class="rate-btn ${d.my_rating === value ? "on" : ""}" data-rate="${value}" aria-pressed="${d.my_rating === value}" title="${t("{n} 分", {n:value})}">${value}</button>`).join("")}
-          <button class="rate-btn" data-rate="clear" title="${t("清除评分")}">×</button></div>` : `<p class="muted">${d.my_rating >= 0 ? d.my_rating : t("未评")}</p>`}
+    return `<div class="viewer-panel-heading"><h2>${t("信息")}</h2><p>${escapeHtml(d.filename)}</p></div>` + workflowHtml(d) + `
+      <section class="viewer-rating"><div class="viewer-rating-heading"><label for="v-rating">${t("我的评分")}</label><output id="v-rating-value" for="v-rating">${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}</output>
+        ${can("rate") ? `<button class="viewer-action" id="v-rating-clear" ${d.my_rating == null || d.my_rating < 0 ? "disabled" : ""}>${t("清除评分")}</button>` : ""}</div>
+        ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}"><div class="viewer-rating-scale" aria-hidden="true">${Array.from({length:11}, (_,value) => `<span>${value}</span>`).join("")}</div>` : ""}
+        <span class="viewer-caption">${t("平均 {score}", {score:d.avg_rating ?? "—"})}</span>
       </section>
-      <section><h3>${t("标签")}</h3><div>${chips(d.tags || [], tag =>
-        `<span class="tag-chip pill">${escapeHtml(tag.name)}${editable ? `<button data-untag="${escapeHtml(tag.name)}" title="${t("移除")}">×</button>` : ""}</span>`)}</div>
-        ${editable ? `<div class="add-row"><input list="tag-dl" id="tag-input" aria-label="${t("添加标签")}" placeholder="${t("添加标签")}"><datalist id="tag-dl"></datalist><button class="btn small" id="tag-add">${t("添加")}</button></div>` : ""}
+      <section><h3>${t("标签")}</h3><div class="viewer-values">${chips(d.tags || [], tag =>
+        `<span class="viewer-tag">${escapeHtml(tag.name)}${editable ? `<button class="viewer-icon" data-untag="${escapeHtml(tag.name)}" aria-label="${t("移除")} ${escapeHtml(tag.name)}" title="${t("移除")} ${escapeHtml(tag.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
+        ${editable ? `<details class="viewer-editor" data-section="tag-editor"><summary>${t("添加标签")}</summary><div class="add-row"><input list="tag-dl" id="tag-input" aria-label="${t("添加标签")}" placeholder="${t("添加标签")}"><datalist id="tag-dl"></datalist><button class="viewer-primary" id="tag-add">${t("添加")}</button></div></details>` : ""}
       </section>
-      <section><h3>${t("艺术家")}</h3><div>${chips(d.artists || [], artist =>
-        `<span class="tag-chip pill">${escapeHtml(artist.name)}${editable ? `<button data-unartist="${artist.id}" title="${t("取消关联")}">×</button>` : ""}</span>`)}</div>
-        ${editable ? `<div class="add-row"><input list="artist-dl" id="artist-input" aria-label="${t("关联艺术家")}" placeholder="${t("关联艺术家")}"><datalist id="artist-dl"></datalist><button class="btn small" id="artist-add">${t("关联")}</button></div>` : ""}
+      <section><h3>${t("艺术家")}</h3><div class="viewer-values">${chips(d.artists || [], artist =>
+        `<span class="viewer-tag">${escapeHtml(artist.name)}${editable ? `<button class="viewer-icon" data-unartist="${artist.id}" aria-label="${t("取消关联")} ${escapeHtml(artist.name)}" title="${t("取消关联")} ${escapeHtml(artist.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
+        ${editable ? `<details class="viewer-editor" data-section="artist-editor"><summary>${t("关联艺术家")}</summary><div class="add-row"><input list="artist-dl" id="artist-input" aria-label="${t("关联艺术家")}" placeholder="${t("关联艺术家")}"><datalist id="artist-dl"></datalist><button class="viewer-primary" id="artist-add">${t("关联")}</button></div></details>` : ""}
       </section>
-      <section><h3>${t("专辑")}</h3><div>${chips(d.albums || [], album => `<button class="tag-chip pill" data-album="${album.id}">${escapeHtml(album.name)}</button>`)}</div>
-        ${editable ? `<div class="add-row"><button class="btn small" id="album-add">${t("加入手工专辑")}</button></div>` : ""}
+      <section><h3>${t("专辑")}</h3><div class="viewer-values">${chips(d.albums || [], album => `<button class="viewer-action" data-album="${album.id}">${escapeHtml(album.name)}</button>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
+        ${editable ? `<div class="add-row"><button class="viewer-action" id="album-add">${t("加入手工专辑")}</button><button class="viewer-action" id="album-create">${t("新建专辑")}</button></div>` : ""}
       </section>
       ${workHtml(d)}
       <details data-section="comments"><summary>${t("评论")} · ${(d.comments || []).length}</summary>
         <div id="comment-list">${chips(d.comments || [], comment => `<div class="comment"><div class="meta">${escapeHtml(comment.username)} · ${formatTimestamp(comment.created_at)}
-          ${comment.user_id === state.user.id || state.user.is_admin ? `<button class="icon-btn" data-del-comment="${comment.id}" title="${t("删除")}">×</button>` : ""}</div>${escapeHtml(comment.body)}</div>`)}</div>
-        ${can("comment") ? `<div class="add-row"><textarea id="comment-input" rows="2" aria-label="${t("写评论…")}" placeholder="${t("写评论…")}"></textarea><button class="btn small" id="comment-add">${t("发表")}</button></div>` : ""}
+          ${comment.user_id === state.user.id || state.user.is_admin ? `<button class="viewer-icon" data-del-comment="${comment.id}" aria-label="${t("删除评论")}" title="${t("删除评论")}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 3h6l1 4H8l1-4ZM6 7l1 14h10l1-14M10 11v6m4-6v6"/></svg></button>` : ""}</div>${escapeHtml(comment.body)}</div>`)}</div>
+        ${can("comment") ? `<div class="add-row"><textarea id="comment-input" rows="2" aria-label="${t("写评论…")}" placeholder="${t("写评论…")}"></textarea><button class="viewer-primary" id="comment-add">${t("发表")}</button></div>` : ""}
       </details>
       <details data-section="notes"><summary>${t("笔记")} · ${(d.notes || []).length}</summary>
         ${chips(d.notes || [], note => `<div class="comment"><div class="meta">${escapeHtml(note.username)}</div>${escapeHtml(note.body)}</div>`)}
-        ${can("note") ? `<div class="add-row"><input id="note-input" aria-label="${t("写笔记…")}" placeholder="${t("写笔记…")}"><button class="btn small" id="note-add">${t("添加")}</button></div>` : ""}
+        ${can("note") ? `<div class="add-row"><input id="note-input" aria-label="${t("写笔记…")}" placeholder="${t("写笔记…")}"><button class="viewer-primary" id="note-add">${t("添加")}</button></div>` : ""}
       </details>
       ${metadataHtml(d)}
       <details data-section="file"><summary>${t("文件信息")}</summary><div class="kv">
@@ -239,7 +261,7 @@ export function openViewer(source, index) {
     const q = (sel) => backdrop.querySelector(sel);
     q("#v-close").addEventListener("click", close);
     q("#v-retry").onclick = () => show(current);
-    q("#v-bg").onclick = () => { transparent = !transparent; render(); };
+    q("#v-bg").onclick = () => { q(".viewer-more").open = false; transparent = !transparent; render(); };
     async function write(path, options, clear = []) {
       if (saving) throw new Error(t("正在保存…"));
       saving = true;
@@ -268,9 +290,13 @@ export function openViewer(source, index) {
         controls.forEach(([el, disabled]) => { el.disabled = disabled; });
       }
     }
-    q(".nav-btn.prev").addEventListener("click", () => show(current - 1));
-    q(".nav-btn.next").addEventListener("click", () => show(current + 1));
-    q("#v-slideshow")?.addEventListener("click", () => openSlideshow(source, {startImage:source.items[current]}));
+    q("#v-prev").addEventListener("click", () => show(current - 1));
+    q("#v-next").addEventListener("click", () => show(current + 1));
+    q("#v-slideshow")?.addEventListener("click", () => {
+      q(".viewer-more").open = false;
+      q(".viewer-more > summary").focus();
+      openSlideshow(source, {startImage:source.items[current]});
+    });
     for (const button of backdrop.querySelectorAll("[data-work-image]")) button.addEventListener("click", () => {
       if (saving) { setStatus(t("正在保存…")); return; }
       const id = Number(button.dataset.workImage);
@@ -280,6 +306,7 @@ export function openViewer(source, index) {
       openViewer({title: detail.work.name, items: related, loadedAll: true, onChange: () => refresh(item.id)}, related.findIndex(image => image.id === id));
     });
     q("#v-zoom").addEventListener("click", () => {
+      q(".viewer-more").open = false;
       zoom = SIZE_CYCLE[(SIZE_CYCLE.indexOf(zoom) + 1) % SIZE_CYCLE.length];
       savePrefs();
       show(current);
@@ -299,13 +326,19 @@ export function openViewer(source, index) {
       savePrefs();
       q(".viewer-panel").hidden = !panelOpen;
       q("#v-panel").setAttribute("aria-expanded", String(panelOpen));
+      q("#v-panel").setAttribute("aria-label", panelOpen ? t("收起信息") : t("信息"));
+      q(".viewer-info-full").textContent = panelOpen ? t("收起信息") : t("信息");
+      q(".viewer-info-compact").textContent = panelOpen ? t("收起") : t("信息");
+      backdrop.dataset.infoOpen = String(panelOpen);
     });
 
     if (!detail) return;
-    q(".viewer-panel").addEventListener("input", () => setStatus(t("尚未保存")));
+    q(".viewer-panel").addEventListener("input", event => { if (!event.target.matches("[data-autosave]")) setStatus(t("尚未保存")); });
     bindMetadata(backdrop, detail, () => refresh(item.id), write);
-    backdrop.querySelectorAll("[data-rate]").forEach((btn) => btn.addEventListener("click", async () => {
-      const v = btn.dataset.rate === "clear" ? null : Number(btn.dataset.rate);
+    const rating = q("#v-rating");
+    async function saveRating(v) {
+      if (saving || (detail?.my_rating >= 0 ? detail.my_rating : null) === v) return;
+      const restoreRatingFocus = document.activeElement === rating;
       try {
         const r = await write(`/images/${item.id}/rating`, { method: "POST", body: { value: v } });
         item.my_rating = r.my_rating;
@@ -315,8 +348,31 @@ export function openViewer(source, index) {
         detail.avg_rating = r.avg_rating;
         detail.rating_count = r.rating_count;
         render();
-      } catch (e) { toast(e.message, "error"); }
-    }));
+        if (restoreRatingFocus && isTopDialog(backdrop)) q("#v-rating")?.focus({preventScroll:true});
+      } catch (e) {
+        if (rating?.isConnected) {
+          rating.value = String(detail?.my_rating ?? 0);
+          const label = detail?.my_rating == null || detail.my_rating < 0 ? t("未评") : t("{n} 分", {n:detail.my_rating});
+          rating.setAttribute("aria-valuetext", label);
+          q("#v-rating-value").textContent = label;
+        }
+        toast(e.message, "error");
+      }
+    }
+    if (rating) {
+      rating.addEventListener("input", () => {
+        const label = t("{n} 分", {n:Number(rating.value)});
+        q("#v-rating-value").textContent = label;
+        rating.setAttribute("aria-valuetext", label);
+      });
+      rating.addEventListener("change", () => saveRating(Number(rating.value)));
+      // The first click/Home at zero must set a real 0 even from an unrated state.
+      rating.addEventListener("pointerup", () => saveRating(Number(rating.value)));
+      rating.addEventListener("keyup", event => {
+        if (["Home", "End", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) saveRating(Number(rating.value));
+      });
+      q("#v-rating-clear").addEventListener("click", () => saveRating(null));
+    }
 
     const tagInput = q("#tag-input");
     if (tagInput) {
@@ -387,25 +443,31 @@ export function openViewer(source, index) {
       } catch (e) { toast(e.message, "error"); }
     }));
 
-    const albumAdd = q("#album-add");
-    if (albumAdd) albumAdd.onclick = async () => {
-      albumAdd.disabled = true;
+    async function chooseAlbum(button, choose) {
+      button.disabled = true;
       try {
-        const album = await pickEntity("albums", {libraryId:item.library_id, allowCreate:true});
+        const album = await choose();
         if (!album || closed || source.items[current]?.id !== item.id) return;
         await write(`/albums/${album.id}/images`, {method:"POST", body:{image_ids:[item.id]}});
         await refresh(item.id);
-      } catch (error) { toast(error.message, "error"); } finally { albumAdd.disabled = false; }
-    };
+      } catch (error) { toast(error.message, "error"); } finally { button.disabled = false; }
+    }
+    const albumAdd = q("#album-add"), albumCreate = q("#album-create");
+    if (albumAdd) albumAdd.onclick = () => chooseAlbum(albumAdd,
+      () => pickEntity("albums", {libraryId:item.library_id, allowCreate:false}));
+    // A separate entry keeps creation out of a second dialog over the picker.
+    if (albumCreate) albumCreate.onclick = () => chooseAlbum(albumCreate,
+      () => editAlbum(null, item.library_id));
     backdrop.querySelectorAll("[data-album]").forEach(button => { button.onclick = async () => {
       button.disabled = true;
       try {
         const album = await api(`/albums/${button.dataset.album}`);
         if (closed || source.items[current]?.id !== item.id) return;
-        showModal({title:album.name,
-          bodyHtml:`<div class="catalog-form"><button class="btn" data-browse>${t("浏览专辑")}</button>
-            ${album.can_edit ? `<button class="btn" data-cover>${t("设为封面")}</button>` : ""}
-            ${album.can_edit && album.kind === "manual" ? `<button class="btn danger" data-remove>${t("移出专辑")}</button>` : ""}</div>
+        viewerModal({title:album.name,
+          bodyHtml:`<div class="catalog-form"><button class="viewer-action" data-browse>${t("浏览专辑")}</button>
+            ${album.can_edit ? `<button class="viewer-action" data-cover>${t("设为封面")}</button>` : ""}
+            ${album.can_edit && album.kind === "manual" ? `<button class="viewer-action" data-remove>${t("移出专辑")}</button>
+              <div data-remove-review hidden><p>${t("将这张图片移出专辑？原文件会保留。")}</p><div class="viewer-confirm-actions"><button class="viewer-primary" data-yes>${t("移出专辑")}</button><button class="viewer-action" data-no>${t("取消")}</button></div></div>` : ""}</div>
             <p class="error" role="status" hidden></p>`,
           onMount(el, dismiss) {
             el.querySelector("[data-browse]").onclick = async () => { dismiss(); await close(); if (closed) location.hash = `#/album/${album.id}`; };
@@ -415,12 +477,19 @@ export function openViewer(source, index) {
             ]) {
               const action = el.querySelector(selector);
               if (!action) continue;
-              action.onclick = async () => {
-                if (selector === "[data-remove]" && !await uiConfirm(t("移出专辑"), t("将这张图片移出专辑？原文件会保留。"))) return;
+              const apply = async () => {
                 action.disabled = true;
+                const confirm = el.querySelector("[data-yes]");
+                if (confirm) confirm.disabled = true;
                 try { await write(path, options); dismiss(); await refresh(item.id); toast(t("已保存")); }
-                catch (error) { const message = el.querySelector(".error"); message.textContent = error.message; message.hidden = false; action.disabled = false; }
+                catch (error) { const message = el.querySelector(".error"); message.textContent = error.message; message.hidden = false; action.disabled = false; if (confirm) confirm.disabled = false; }
               };
+              if (selector === "[data-remove]") {
+                const review = el.querySelector("[data-remove-review]"), cancel = el.querySelector("[data-no]");
+                action.onclick = () => { action.hidden = true; review.hidden = false; cancel.focus(); };
+                cancel.onclick = () => { review.hidden = true; action.hidden = false; action.focus(); };
+                el.querySelector("[data-yes]").onclick = apply;
+              } else action.onclick = apply;
             }
           },
         });
