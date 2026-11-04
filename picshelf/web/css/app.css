@@ -680,13 +680,15 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 }
 :is(.viewer-backdrop, .viewer-modal) .viewer-top {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--viewer-space-3); padding: var(--viewer-space-3) var(--viewer-space-4);
+  height: 48px; flex: 0 0 48px; align-items: center; overflow: visible;
+  gap: var(--viewer-space-3); padding: 2px var(--viewer-space-4);
   background: var(--panel); border-bottom: 1px solid var(--border); z-index: 2;
 }
-:is(.viewer-backdrop, .viewer-modal) .viewer-heading { min-width: 0; display: grid; gap: var(--viewer-space-1); }
+:is(.viewer-backdrop, .viewer-modal) .viewer-heading { min-width: 0; display: flex; align-items: center; gap: var(--viewer-space-2); }
+:is(.viewer-backdrop, .viewer-modal) .viewer-heading .meta-count { flex: 0 0 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 :is(.viewer-backdrop, .viewer-modal) .viewer-top .title {
   font-size: var(--viewer-title); font-weight: 600; line-height: 1.5;
-  max-width: none; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 0 1 auto; max-width: none; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 :is(.viewer-backdrop, .viewer-modal) :is(.meta-count, .viewer-caption, .muted, .comment .meta) {
   font-size: var(--viewer-text-xs); line-height: 1.5; color: var(--muted);
@@ -767,11 +769,11 @@ details.batch-controls[open] { padding-bottom: .875rem; }
 :is(.viewer-backdrop, .viewer-modal) .kv { font-size: var(--viewer-text); line-height: 1.5; padding-bottom: var(--viewer-space-3); }
 :is(.viewer-backdrop, .viewer-modal) .kv > div { margin: 0 0 var(--viewer-space-2); }
 @media (max-width: 700px) {
-  :is(.viewer-backdrop, .viewer-modal) .viewer-top { grid-template-columns: auto 1fr; gap: var(--viewer-space-2); padding: var(--viewer-space-3); }
-  :is(.viewer-backdrop, .viewer-modal) .viewer-actions { justify-self: end; grid-column: 2; grid-row: 1; }
+  :is(.viewer-backdrop, .viewer-modal) .viewer-top { gap: var(--viewer-space-2); }
+  :is(.viewer-backdrop, .viewer-modal) .viewer-top :is(#v-close, #v-panel) { padding: var(--viewer-space-2); }
+  :is(.viewer-backdrop, .viewer-modal) .viewer-actions { justify-self: end; gap: 0; }
   :is(.viewer-backdrop, .viewer-modal) .viewer-info-full { display: none; }
   :is(.viewer-backdrop, .viewer-modal) .viewer-info-compact { display: inline; }
-  :is(.viewer-backdrop, .viewer-modal) .viewer-heading { grid-column: 1 / -1; grid-row: 2; }
   :is(.viewer-backdrop, .viewer-modal) .viewer-top .title { font-size: var(--viewer-text-lg); }
   :is(.viewer-backdrop, .viewer-modal) .viewer-body { flex-direction: column; }
   :is(.viewer-backdrop, .viewer-modal) .viewer-stage { padding: var(--viewer-space-3); }
