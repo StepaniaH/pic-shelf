@@ -416,7 +416,7 @@ def test_viewer_ignores_late_response_for_previous_image(page, web_server):
     page.evaluate("window.releaseSlowResponse()")
     page.wait_for_function("window.slowResponseFinished === true")
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", expected)
-    expect(page.locator(".viewer-panel .kv")).to_contain_text(expected)
+    expect(page.locator(".viewer-panel #viewer-identity")).to_contain_text(expected)
     expect(page.locator("[data-untag]")).to_have_count(0)
 
 
@@ -850,10 +850,10 @@ def test_viewer_failed_pixels_and_saves_keep_context_and_inputs(page, web_server
     cards.first.click()
     expect(page.locator(".viewer-status")).to_contain_text("could not be displayed")
     expect(page.locator(".viewer-stage img")).to_have_count(0)
-    expect(page.locator(".viewer-panel .kv")).to_have_count(0)
+    expect(page.locator(".viewer-panel #viewer-identity")).to_have_count(0)
     page.locator("#v-next").click()
     expect(page.locator(".viewer-stage img")).to_have_attribute("alt", second_name)
-    expect(page.locator(".viewer-panel .kv")).to_contain_text(second_name)
+    expect(page.locator(".viewer-panel #viewer-identity")).to_contain_text(second_name)
     page.unroute(f"**/media/preview/{first}?*")
     draft = "A comment to keep through a failed save"
     show_viewer_info(page).locator('[data-section="comments"] > summary').click()
@@ -1898,6 +1898,11 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
     expect(viewer.locator('#v-close')).to_contain_text('Esc')
     show_viewer_info(page)
     expect(viewer.locator('#v-panel')).to_have_attribute('aria-label', 'Hide info')
+    # Closed details can retain layout rectangles; assert actual visibility instead.
+    for field in viewer.locator('#viewer-details input:not([type=range]), #viewer-details textarea, #viewer-details select').all():
+        expect(field).to_be_hidden()
+    expect(viewer.locator('#viewer-identity')).to_contain_text(card.locator('.fname').text_content())
+    expect(viewer.locator('.viewer-summary')).to_contain_text('×')
     # Count the actual panel, including every editor and menu, rather than a quiet collapsed shell.
     viewer.locator('details').evaluate_all('elements => elements.forEach(el => el.open = true)')
     measured = viewer.evaluate('''root => {
@@ -1910,7 +1915,14 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
         return {fonts: values(['fontSize']), radii: values(['borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius']),
           padding: values(['paddingTop','paddingRight','paddingBottom','paddingLeft']), gaps: values(['rowGap','columnGap']),
           buttonPadding: [...new Set(buttons.map(el => getComputedStyle(el).padding))], buttonFonts: [...new Set(buttons.map(el => getComputedStyle(el).fontSize))],
-          roles: [...new Set(buttons.map(el => el.className))], tiny: elements.filter(el => el.matches('button,input,select,textarea,summary,a[href]'))
+          roles: [...new Set(buttons.map(el => el.className))],
+          maxFont: Math.max(...values(['fontSize'])),
+          maxTargets: elements.filter(el=>parseFloat(getComputedStyle(el).fontSize)===Math.max(...values(['fontSize']))).map(el=>el.id),
+          headings: elements.filter(el=>el.matches('h2,h3')).length,
+          pills: elements.filter(el=>el.matches('.pill,.chip,[class*="chip"]')).length,
+          boxes: elements.filter(el=>['Top','Right','Bottom','Left'].filter(side=>parseFloat(getComputedStyle(el)['border'+side+'Width'])>0 && getComputedStyle(el)['border'+side+'Style']!=='none').length>=3).length,
+          primaryActions: buttons.filter(el=>el.className==='viewer-primary').map(el=>el.getAttribute('data-workflow')),
+          tiny: elements.filter(el => el.matches('button,input,select,textarea,summary,a[href]'))
             .filter(el => {const r = el.getBoundingClientRect(); return r.height < 43.9 || r.width < 43.9;}).map(el => el.outerHTML)};
       };
       return {chrome: measure(root, true), panel: measure(panel), overflow: root.scrollWidth > root.clientWidth};
@@ -1926,6 +1938,12 @@ def test_viewer_pilot_defaults_to_image_and_all_expanded_controls_follow_rules(p
         assert data['buttonFonts'] == ['14px'], data
         assert set(data['roles']) <= {'viewer-action', 'viewer-primary', 'viewer-icon'}, data
         assert not data['tiny'], data
+    content = measured['panel']
+    assert set(content['fonts']) <= {12, 14, 16}, content
+    assert content['maxFont'] == 16 and content['maxTargets'] == ['viewer-identity'], content
+    assert content['headings'] == 0 and content['pills'] == 0, content
+    assert content['boxes'] <= 6, content
+    assert len(content['primaryActions']) <= 1 and set(content['primaryActions']) <= {'done'}, content
     # A panel on a phone shares space with the image; it must not cover the stage.
     stage = viewer.locator('.viewer-stage').bounding_box()
     panel = viewer.locator('#viewer-details').bounding_box()

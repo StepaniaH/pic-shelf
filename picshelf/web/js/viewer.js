@@ -186,6 +186,11 @@ export function openViewer(source, index) {
         button.className = button.closest("form") && button.type === "submit" ? "viewer-primary" : "viewer-action";
       }
     }
+    for (const button of backdrop.querySelectorAll(".viewer-panel button")) {
+      button.className = button.matches('[data-workflow="done"]') ? "viewer-primary"
+        : button.className === "viewer-icon" ? "viewer-icon" : "viewer-action";
+    }
+    for (const status of backdrop.querySelectorAll(".viewer-panel .workflow-row .pill")) status.classList.remove("pill");
     if (frame) {
       frame.alt = detail.filename;
       backdrop.querySelector(".viewer-stage").prepend(frame);
@@ -206,7 +211,7 @@ export function openViewer(source, index) {
   function workHtml(d) {
     if (!d.work) return "";
     const labels = {original: "原图版本", compressed: "压缩版", crop: "裁剪版", resize: "尺寸版本", revision: "修订版", other: "其他版本"};
-    return `<section><h3>${t("作品文件")} · ${escapeHtml(d.work.name)}</h3><div class="add-row">${d.work.images.map(image =>
+    return `<section><p class="viewer-caption">${t("作品文件")} · ${escapeHtml(d.work.name)}</p><div class="add-row">${d.work.images.map(image =>
       `<button class="viewer-action" data-work-image="${image.id}" ${image.missing || image.id === d.id ? "disabled" : ""}>${escapeHtml(image.filename)} · ${t(labels[image.role])}${image.id === d.work.preferred_image_id ? ` · ${t("首选")}` : ""}</button>`
     ).join("")}</div></section>`;
   }
@@ -216,23 +221,25 @@ export function openViewer(source, index) {
     if (!d) return "";
     const editable = d.metadata_editable;
     const chips = (items, render) => items.map(render).join("");
-    return `<div class="viewer-panel-heading"><h2>${t("信息")}</h2><p>${escapeHtml(d.filename)}</p></div>` + workflowHtml(d) + `
+    const size = d.size_bytes >= 1024 * 1024 ? `${(d.size_bytes / (1024 * 1024)).toFixed(1)} MB` : `${(d.size_bytes / 1024).toFixed(1)} KB`;
+    return `<div class="viewer-panel-heading"><p class="viewer-identity" id="viewer-identity">${escapeHtml(d.filename)}<span class="viewer-summary">${formatTimestamp(d.imported_at)} · ${d.width}×${d.height} · ${size}</span></p></div>` + `
       <section class="viewer-rating"><div class="viewer-rating-heading"><label for="v-rating">${t("我的评分")} <span class="viewer-caption">0–10</span></label><output id="v-rating-value" for="v-rating">${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}</output>
         ${can("rate") ? `<button class="viewer-action" id="v-rating-clear" ${d.my_rating == null || d.my_rating < 0 ? "disabled" : ""}>${t("清除评分")}</button>` : ""}</div>
         ${can("rate") ? `<input id="v-rating" type="range" data-autosave min="0" max="10" step="1" value="${d.my_rating != null && d.my_rating >= 0 ? d.my_rating : 0}" aria-label="${t("我的评分")}" aria-valuetext="${d.my_rating == null || d.my_rating < 0 ? t("未评") : t("{n} 分", {n:d.my_rating})}">` : ""}
         <span class="viewer-caption">${t("平均 {score}", {score:d.avg_rating ?? "—"})}</span>
       </section>
-      <section><h3>${t("标签")}</h3><div class="viewer-values">${chips(d.tags || [], tag =>
+      <section aria-label="${t("标签")}"><div class="viewer-values">${chips(d.tags || [], tag =>
         `<span class="viewer-tag">${escapeHtml(tag.name)}${editable ? `<button class="viewer-icon" data-untag="${escapeHtml(tag.name)}" aria-label="${t("移除")} ${escapeHtml(tag.name)}" title="${t("移除")} ${escapeHtml(tag.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
         ${editable ? `<details class="viewer-editor" data-section="tag-editor"><summary>${t("添加标签")}</summary><div class="add-row"><input list="tag-dl" id="tag-input" aria-label="${t("添加标签")}" placeholder="${t("添加标签")}"><datalist id="tag-dl"></datalist><button class="viewer-primary" id="tag-add">${t("添加")}</button></div></details>` : ""}
       </section>
-      <section><h3>${t("艺术家")}</h3><div class="viewer-values">${chips(d.artists || [], artist =>
+      <section aria-label="${t("艺术家")}"><div class="viewer-values">${chips(d.artists || [], artist =>
         `<span class="viewer-tag">${escapeHtml(artist.name)}${editable ? `<button class="viewer-icon" data-unartist="${artist.id}" aria-label="${t("取消关联")} ${escapeHtml(artist.name)}" title="${t("取消关联")} ${escapeHtml(artist.name)}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12h12"/></svg></button>` : ""}</span>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
         ${editable ? `<details class="viewer-editor" data-section="artist-editor"><summary>${t("关联艺术家")}</summary><div class="add-row"><input list="artist-dl" id="artist-input" aria-label="${t("关联艺术家")}" placeholder="${t("关联艺术家")}"><datalist id="artist-dl"></datalist><button class="viewer-primary" id="artist-add">${t("关联")}</button></div></details>` : ""}
       </section>
-      <section><h3>${t("专辑")}</h3><div class="viewer-values">${chips(d.albums || [], album => `<button class="viewer-action" data-album="${album.id}">${escapeHtml(album.name)}</button>`) || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
+      <section aria-label="${t("专辑")}"><div class="viewer-values">${(d.albums || []).map(album => `<button class="viewer-action" data-album="${album.id}">${escapeHtml(album.name)}</button>`).join('<span class="viewer-caption" aria-hidden="true">·</span>') || `<span class="viewer-caption">${t("（无）")}</span>`}</div>
         ${editable ? `<div class="add-row"><button class="viewer-action" id="album-add">${t("加入手工专辑")}</button><button class="viewer-action" id="album-create">${t("新建专辑")}</button></div>` : ""}
       </section>
+      ${workflowHtml(d)}
       ${workHtml(d)}
       <details data-section="comments"><summary>${t("评论")} · ${(d.comments || []).length}</summary>
         <div id="comment-list">${chips(d.comments || [], comment => `<div class="comment"><div class="meta">${escapeHtml(comment.username)} · ${formatTimestamp(comment.created_at)}
@@ -244,15 +251,10 @@ export function openViewer(source, index) {
         ${can("note") ? `<div class="add-row"><input id="note-input" aria-label="${t("写笔记…")}" placeholder="${t("写笔记…")}"><button class="viewer-primary" id="note-add">${t("添加")}</button></div>` : ""}
       </details>
       ${metadataHtml(d)}
-      <details data-section="file"><summary>${t("文件信息")}</summary><div class="kv">
-        <div><b>${escapeHtml(d.filename)}</b></div>
-        <div>${d.width} × ${d.height} · ${(d.size_bytes / 1024).toFixed(1)} KB · ${escapeHtml(d.ext)}</div>
-        <div>${t("库")}：<b>${escapeHtml(d.library?.name || "—")}</b></div>
-        <div>${t("路径")}：<b>${escapeHtml(d.rel_path)}</b></div>
-        <div>${t("首次入库时间")}：${formatTimestamp(d.imported_at)}</div>
-        <div>SHA-256：<b>${escapeHtml(d.sha256 || "—")}</b></div>
-        <div>pHash：<b>${escapeHtml(d.phash || "—")}</b></div>
-      </div></details>`;
+      <details data-section="file"><summary>${t("文件信息")}</summary>
+        <p class="kv">${escapeHtml(d.library?.name || "—")} / ${escapeHtml(d.rel_path)}</p>
+        <p class="kv">SHA-256: ${escapeHtml(d.sha256 || "—")}<br>pHash: ${escapeHtml(d.phash || "—")}</p>
+      </details>`;
   }
 
   // ---------------------------------------------------------------- 事件
