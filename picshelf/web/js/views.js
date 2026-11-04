@@ -449,7 +449,7 @@ export async function renderInbox(view, sort = "newest") {
 }
 
 export async function renderSearch(view, q, sort="newest") {
-  const title = t(q ? "搜索结果" : "全部图片");
+  const title = t(q ? "搜索结果" : "图片");
   const source = new Source(title, {title, q}, {q, sort});
   if (!await loadSource(view, source)) return;
   renderGridInto(view, source);
@@ -527,7 +527,7 @@ export async function renderDeepLink(view, imageId, params, sort) {
     source = new Source(t("标签：{v0}", {v0: params.get("tag")}), { tag: params.get("tag") },
       { sort:sort || "newest", filters: { tag: params.get("tag") } });
   } else {
-    source = new Source(t("全部图片"), {}, {sort:sort || "newest"});
+    source = new Source(t("图片"), {}, {sort:sort || "newest"});
   }
   const image = await api(`/images/${imageId}`);
   if (!await loadSource(view, source)) return;

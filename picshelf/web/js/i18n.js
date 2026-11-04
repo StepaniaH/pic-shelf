@@ -2,6 +2,9 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {n} 张", { n: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "整理": "Organize",
+    "设置": "Settings",
+    "回到图库": "Go to library",
     "快捷键": "Keyboard shortcuts",
     "关闭当前层级或返回图片列表": "Close the current layer or return to the image list",
     "收藏或取消收藏": "Add or remove favorite",

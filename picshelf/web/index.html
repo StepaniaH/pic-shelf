@@ -16,23 +16,23 @@
 <a href="#view" class="skip-link" data-i18n="跳到内容">跳到内容</a>
 <div id="sidebar-backdrop" hidden></div>
 <aside id="sidebar" aria-label="主导航" data-i18n-label="主导航">
-  <div class="sidebar-brand"><a class="brand" href="#/home"><img class="brand-mark" src="/icons/icon-192.png" width="32" height="32" alt="">Pic Shelf</a>
+  <div class="sidebar-brand"><a class="brand" href="#/home" aria-label="回到图库" data-i18n-label="回到图库"><img class="brand-mark" src="/icons/icon-192.png" width="32" height="32" alt="">Pic Shelf</a>
     <button class="icon-btn" id="nav-close" type="button" aria-label="关闭导航" data-i18n-label="关闭导航"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6"/></svg></button></div>
   <nav id="nav" aria-label="主导航" data-i18n-label="主导航">
-    <div class="nav-group">
-      <a href="#/home"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span data-i18n="图库">图库</span></a>
-      <a href="#/search"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="16" height="16" rx="2"/><path d="M17 22H4a2 2 0 0 1-2-2V7m4 8 4-4 4 4 3-3 3 3"/><circle cx="15.5" cy="7.5" r="1"/></svg><span data-i18n="全部图片">全部图片</span></a>
+    <div class="nav-group" role="group" aria-labelledby="nav-browse">
+      <p class="nav-label" id="nav-browse" data-i18n="浏览">浏览</p>
+      <a href="#/search"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="16" height="16" rx="2"/><path d="M17 22H4a2 2 0 0 1-2-2V7m4 8 4-4 4 4 3-3 3 3"/><circle cx="15.5" cy="7.5" r="1"/></svg><span data-i18n="图片">图片</span></a>
       <a href="#/favorites"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 5a5 5 0 0 0-8 1 5 5 0 0 0-8-1c-3 3-1 6 1 8l7 7 7-7c2-2 4-5 1-8Z"/></svg><span data-i18n="收藏">收藏</span></a>
-      <a href="#/inbox"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 13 3-8h12l3 8v6H3Zm0 0h5l2 3h4l2-3h5"/></svg><span data-i18n="待整理">待整理</span></a>
-    </div>
-    <div class="nav-group">
-      <p class="nav-label" data-i18n="分类">分类</p>
       <a href="#/albums"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M3 10h18"/></svg><span data-i18n="专辑">专辑</span></a>
-      <a href="#/artists"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><span data-i18n="艺术家">艺术家</span></a>
-      <a href="#/tags"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span data-i18n="标签">标签</span></a>
     </div>
-    <div class="nav-group">
-      <p class="nav-label" data-i18n="工具">工具</p>
+    <div class="nav-group" role="group" aria-labelledby="nav-organize">
+      <p class="nav-label" id="nav-organize" data-i18n="整理">整理</p>
+      <a href="#/inbox"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 13 3-8h12l3 8v6H3Zm0 0h5l2 3h4l2-3h5"/></svg><span data-i18n="待整理">待整理</span></a>
+      <a href="#/tags"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8l10 10-8 8L3 11Z"/><circle cx="7.5" cy="7.5" r="1"/></svg><span data-i18n="标签">标签</span></a>
+      <a href="#/artists"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></svg><span data-i18n="艺术家">艺术家</span></a>
+    </div>
+    <div class="nav-group" role="group" aria-labelledby="nav-settings">
+      <p class="nav-label" id="nav-settings" data-i18n="设置">设置</p>
       <a href="#/queries"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4Z"/></svg><span data-i18n="保存的查询">保存的查询</span></a>
       <a href="#/play-rules"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 12 8-12 8Z"/></svg><span data-i18n="播放规则">播放规则</span></a>
       <a href="#/batches"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4v6h6M3 10a9 9 0 1 1 1 8m8-12v6l4 2"/></svg><span data-i18n="批量修改记录">批量修改记录</span></a>
@@ -42,7 +42,7 @@
 </aside>
 <header id="topbar">
   <button class="icon-btn" id="nav-toggle" type="button" aria-expanded="false" aria-controls="sidebar" aria-label="打开导航" data-i18n-label="打开导航"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
-  <a class="mobile-brand" href="#/home"><img src="/icons/icon-192.png" width="28" height="28" alt="">Pic Shelf</a>
+  <a class="mobile-brand" href="#/home" aria-label="回到图库" data-i18n-label="回到图库"><img src="/icons/icon-192.png" width="32" height="32" alt=""><span class="brand-name">Pic Shelf</span></a>
   <form id="search-form" role="search">
     <svg class="icon search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
     <input id="search-input" type="search" autocomplete="off"

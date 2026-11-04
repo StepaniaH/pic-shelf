@@ -98,6 +98,10 @@ def sign_in(page, web_server, language="en"):
 
 
 def navigate_from_sidebar(page, href):
+    if href == '#/home':
+        home = page.locator('.mobile-brand') if page.locator('.mobile-brand').is_visible() else page.locator('.sidebar-brand .brand')
+        home.click()
+        return
     if page.locator("#nav-toggle").is_visible():
         page.locator("#nav-toggle").click()
     page.locator(f'#nav a[href="{href}"]').click()
@@ -926,6 +930,67 @@ def test_phone_navigation_closes_with_escape_and_restores_search_access(page, we
     expect(page.locator("#grid .card")).to_have_count(1)
 
 
+@pytest.mark.parametrize('width', [390, 1440])
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_shell_groups_tokens_and_logo_preserve_navigation(page, web_server, width, language):
+    from playwright.sync_api import expect
+    page.set_viewport_size({'width': width, 'height': 1000})
+    sign_in(page, web_server, language)
+    sidebar = page.locator('#sidebar')
+    topbar = page.locator('#topbar')
+    expect(topbar).to_have_css('min-height', '48px')
+    assert topbar.bounding_box()['height'] == pytest.approx(48, abs=0.5)
+    if width == 390:
+        expect(sidebar).to_be_hidden()
+        page.locator('#nav-toggle').click()
+        expect(sidebar).to_have_attribute('aria-modal', 'true')
+        assert sidebar.bounding_box()['width'] == 300
+    groups = page.locator('#nav > .nav-group')
+    expect(groups).to_have_count(3)
+    expect(page.locator('#nav .nav-label')).to_have_text(['浏览', '整理', '设置'] if language == 'zh' else ['Browse', 'Organize', 'Settings'])
+    routes = ['#/search', '#/favorites', '#/albums', '#/inbox', '#/tags', '#/artists', '#/queries', '#/play-rules', '#/batches', '#/admin']
+    assert page.locator('#nav a').evaluate_all('links=>links.map(a=>a.getAttribute("href"))') == routes
+    for link in page.locator('#nav a').all():
+        expect(link).to_be_visible()
+        assert link.bounding_box()['height'] >= 44
+        icon, label = link.locator('.icon').bounding_box(), link.locator('span').bounding_box()
+        assert icon['height'] == icon['width'] == 20
+        assert icon['y'] + icon['height'] / 2 == pytest.approx(label['y'] + label['height'] / 2, abs=1)
+    expect(page.locator('#nav a[href="#/home"]')).to_have_count(0)
+
+    def measure_shell():
+        return page.evaluate('''() => {
+          const all=[...document.querySelectorAll('#sidebar,#sidebar *,#topbar,#topbar *')].filter(el=>el.checkVisibility({visibilityProperty:true,opacityProperty:true,contentVisibilityAuto:true}));
+          const values=props=>[...new Set(all.flatMap(el=>props.map(prop=>parseFloat(getComputedStyle(el)[prop]))).filter(n=>Number.isFinite(n)&&n>0))];
+          return {fonts:values(['fontSize']),radii:values(['borderTopLeftRadius','borderTopRightRadius','borderBottomLeftRadius','borderBottomRightRadius']),padding:values(['paddingTop','paddingRight','paddingBottom','paddingLeft']),pills:all.filter(el=>el.matches('.pill,.chip,[class*="chip"]')).length};
+        }''')
+
+    measured = measure_shell()
+    assert set(measured['fonts']) <= {12, 14, 16}, measured
+    assert set(measured['radii']) <= {4, 8}, measured
+    assert len(measured['padding']) <= 6, measured
+    assert measured['pills'] == 0, measured
+    if width == 390:
+        page.keyboard.press('Escape')
+        expect(sidebar).to_be_hidden()
+        expect(page.locator('#nav-toggle')).to_be_focused()
+    page.locator('.account-menu > summary').click()
+    expanded = measure_shell()
+    assert set(expanded['fonts']) <= {12, 14, 16} and set(expanded['radii']) <= {4, 8}, expanded
+    assert len(expanded['padding']) <= 6 and expanded['pills'] == 0, expanded
+    page.keyboard.press('Escape')
+    for route in routes:
+        navigate_from_sidebar(page, route)
+        expect(page).to_have_url(web_server.url + '/' + route)
+        expect(page.locator('#view .page-head h1')).to_be_visible()
+        if width == 390:
+            expect(sidebar).to_be_hidden()
+    navigate_from_sidebar(page, '#/home')
+    expect(page).to_have_url(web_server.url + '/#/home')
+    expect(page.locator('.lib-card')).to_have_count(1)
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+
+
 @pytest.mark.parametrize("width", [320, 390, 1280])
 def test_viewer_actions_stay_reachable_and_escape_closes_the_menu_first(page, web_server, width):
     from playwright.sync_api import expect
@@ -961,7 +1026,7 @@ def test_direct_link_opens_an_image_beyond_the_first_page(page, web_server):
     expect(page.locator("#v-next")).to_be_disabled()
     expect(page.locator("#v-slideshow")).to_have_count(0)
     page.locator("#v-close").click()
-    expect(page.locator("#view h1")).to_have_text("All images")
+    expect(page.locator("#view h1")).to_have_text("Images")
     expect(page.locator("#grid .card")).to_have_count(120)
 
 
