@@ -2901,3 +2901,48 @@ def test_touch_tag_actions_reveal_the_correct_editor_and_preserve_browsing(brows
         assert not errors
     finally:
         context.close()
+
+
+@pytest.mark.parametrize('width', [390, 1440])
+def test_hover_capable_hybrid_devices_keep_one_action_per_tag_row(browser, tmp_path, width):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    folder = tmp_path / 'images'
+    password = secrets.token_urlsafe(24)
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        uid = auth.create_user(conn, 'browser-test', password, is_admin=True)
+        make_image(folder / 'sample.png', (40, 90, 150), size=(60, 40))
+        lid = libsvc.create_library(conn, 'Gallery', str(folder))
+        indexer.scan_library(conn, cfg, lid)
+        iid = conn.execute('SELECT id FROM images').fetchone()[0]
+        ops.add_tags(conn, iid, ['Hybrid one', 'Hybrid two', 'Hybrid three'], uid)
+    # Chromium pointer flags: coarse=2, fine=4, so both available types require 6.
+    options = {'args':['--blink-settings=primaryPointerType=4,availablePointerTypes=6,primaryHoverType=2,availableHoverTypes=2']}
+    if os.environ.get('PICSHELF_TEST_BROWSER'):
+        options['executable_path'] = os.environ['PICSHELF_TEST_BROWSER']
+    hybrid = browser.browser_type.launch(**options)
+    page = hybrid.new_page(viewport={'width':width, 'height':1000})
+    try:
+        with http_server(cfg) as client:
+            sign_in(page, WebServer(str(client.base_url), password, folder, folder))
+            navigate_from_sidebar(page, '#/tags')
+            expect(page.locator('[data-tag-actions]')).to_have_count(3)
+            media = page.evaluate("({hover:matchMedia('(hover: hover)').matches, fine:matchMedia('(pointer: fine)').matches, coarseAvailable:matchMedia('(any-pointer: coarse)').matches})")
+            assert media == {'hover':True, 'fine':True, 'coarseAvailable':True}
+            visible = lambda selector: page.locator(selector).evaluate_all('els=>els.filter(el=>el.checkVisibility({opacityProperty:true,visibilityProperty:true})).length')
+            page.mouse.move(0, 0)
+            static = {'management':visible('[data-edit-tag]'), 'triggers':visible('[data-tag-actions]')}
+            row = page.locator('.entity-row').first
+            row.hover()
+            hover = {'management':visible('[data-edit-tag]'), 'triggers':visible('[data-tag-actions]')}
+            assert static == {'management':0, 'triggers':3}, {'media':media, 'static':static, 'hover':hover}
+            assert hover == {'management':1, 'triggers':2}
+            counts = page.locator('.entity-row').evaluate_all(
+                'rows=>rows.map(row=>[...row.querySelectorAll("[data-edit-tag], [data-tag-actions]")].filter(el=>el.checkVisibility({opacityProperty:true,visibilityProperty:true})).length)')
+            assert counts == [1, 1, 1]
+            row.locator('[data-edit-tag]').click()
+            expect(page.locator('[data-rename] [name=name]')).to_have_value('Hybrid one')
+    finally:
+        hybrid.close()

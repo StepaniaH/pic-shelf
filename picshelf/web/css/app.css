@@ -948,6 +948,7 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 }
 @media (hover: hover) and (pointer: fine) {
   .tags-page .entity-row:hover [data-edit-tag] { opacity: 1; pointer-events: auto; }
+  .tags-page .entity-row:hover .tag-action-trigger { visibility: hidden; pointer-events: none; }
 }
 .catalog-page .entity-link { min-width: 0; gap: var(--content-space); }
 .catalog-page .entity-link:hover .entity-name { text-decoration: underline; }

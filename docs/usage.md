@@ -95,9 +95,9 @@ Folder albums follow the scanned directories; their membership is automatic.
 
 On **Tags**, administrators can open **Manage tag** to rename a shared tag or
 preview and add an alias. The action appears when you hover over a tag row or
-reach it with the keyboard. On a touch screen, open the tag row's actions button, then choose
-**Manage tag**; tapping the tag name still shows its images. Names cannot take another tag's name or alias. Aliases
-work in search and image association operations. Use [batch organization](batches.md)
+reach it with the keyboard. On a touch screen, open the tag row's actions
+button, then choose **Manage tag**; tapping the tag name still shows its images. Names cannot take another tag's name or alias. Aliases work
+in search and image association operations. Use [batch organization](batches.md)
 to add or remove tags on selected images; undo preserves later edits.
 
 ## Add images in the web app
