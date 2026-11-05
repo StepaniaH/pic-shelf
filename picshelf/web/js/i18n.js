@@ -2,6 +2,7 @@
 // Convention: the Chinese template is the message id; EN maps it to English.
 // Usage: t("共 {v0} 张", { v0: 3 })  →  "共 3 张" (zh) / "3 images" (en)
 export const EN = {
+    "标签操作：{name}": "Tag actions: {name}",
     "收起搜索": "Close search",
     "整理": "Organize",
     "设置": "Settings",

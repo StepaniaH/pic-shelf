@@ -10,6 +10,7 @@ import {attachBatchControls} from "./batches.js";
 import {Source} from "./source.js";
 import {ImageGrid} from "./image-grid.js";
 import {editAlbum, editTag} from "./catalog-ui.js";
+import {attachTagActions} from "./tag-actions.js";
 import {openImport} from "./importer.js";
 import {openLibraryForm} from "./libraries.js";
 export {Source} from "./source.js";
@@ -371,6 +372,7 @@ async function renderCatalogList(view, kind) {
   const more = view.querySelector("[data-list-more]");
   const error = view.querySelector("[data-list-error]");
   const retry = view.querySelector("[data-list-retry]");
+  const disposeTagActions = artists ? () => {} : attachTagActions(view);
   let offset = 0, revision = 0, controller, timer, lastReset = true;
   async function load(reset = false) {
     lastReset = reset;
@@ -388,7 +390,7 @@ async function renderCatalogList(view, kind) {
       list.insertAdjacentHTML("beforeend", rows.map(item => `<div class="entity-row"><a class="entity-link" title="${escapeHtml(item.name)}" href="${artists ? `#/artist/${item.id}` : `#/tag/${encodeURIComponent(item.name)}`}">
         <span class="entity-symbol" aria-hidden="true">${artists ? escapeHtml(item.name.slice(0, 1)) : "#"}</span>
         <span class="entity-name">${escapeHtml(item.name)}</span><span class="muted">${t("共 {v0} 张", {v0:artists ? item.image_count : item.count})}</span></a>
-        ${!artists && can("admin") ? `<button class="btn small" data-edit-tag="${item.id}" aria-label="${escapeHtml(t("管理标签：{name}", {name:item.name}))}">${t("管理标签")}</button>` : ""}</div>`).join(""));
+        ${!artists && can("admin") ? `<div class="tag-row-actions"><button class="icon-btn tag-action-trigger" type="button" tabindex="-1" data-tag-actions aria-controls="tag-management-${item.id}" aria-expanded="false" aria-label="${escapeHtml(t("标签操作：{name}", {name:item.name}))}" title="${escapeHtml(t("标签操作：{name}", {name:item.name}))}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button><button class="btn small" id="tag-management-${item.id}" type="button" data-edit-tag="${item.id}" aria-label="${escapeHtml(t("管理标签：{name}", {name:item.name}))}">${t("管理标签")}</button></div>` : ""}</div>`).join(""));
       for (const item of rows) {
         const edit = list.querySelector(`[data-edit-tag="${item.id}"]`);
         if (edit) edit.onclick = async () => { if (await editTag(item) && view.isConnected) await load(true); };
@@ -408,7 +410,7 @@ async function renderCatalogList(view, kind) {
   retry.onclick = () => load(lastReset);
   input.oninput = () => { clearTimeout(timer); controller?.abort(); revision++; more.disabled = true; retry.hidden = true; timer = setTimeout(() => load(true), 200); };
   view.querySelector("form").onsubmit = event => { event.preventDefault(); clearTimeout(timer); load(true); };
-  state.dispose = () => { clearTimeout(timer); controller?.abort(); revision++; };
+  state.dispose = () => { disposeTagActions(); clearTimeout(timer); controller?.abort(); revision++; };
   await load(true);
 }
 

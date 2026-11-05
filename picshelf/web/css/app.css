@@ -937,6 +937,18 @@ body:has(#view > .quiet-collection-page) { font-size: var(--shell-text); }
 .catalog-page .entity-list { gap: var(--content-space); }
 .catalog-page .entity-row { min-width: 0; min-height: 44px; gap: var(--content-space); padding: var(--content-space) 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
 .catalog-page .entity-row:hover { background: transparent; }
+.tags-page .tag-row-actions { display: grid; flex-shrink: 0; align-items: center; }
+.tags-page .tag-row-actions > * { grid-area: 1 / 1; justify-self: end; }
+.tags-page .tag-action-trigger { display: none; }
+.tags-page [data-edit-tag] { opacity: 0; pointer-events: none; }
+.tags-page .entity-row:focus-within [data-edit-tag] { opacity: 1; pointer-events: auto; }
+@media (hover: none), (any-pointer: coarse) {
+  .tags-page .tag-action-trigger { display: inline-flex; }
+  .tags-page .entity-row:focus-within .tag-action-trigger { visibility: hidden; pointer-events: none; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .tags-page .entity-row:hover [data-edit-tag] { opacity: 1; pointer-events: auto; }
+}
 .catalog-page .entity-link { min-width: 0; gap: var(--content-space); }
 .catalog-page .entity-link:hover .entity-name { text-decoration: underline; }
 .catalog-page .entity-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }

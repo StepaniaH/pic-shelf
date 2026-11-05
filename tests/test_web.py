@@ -584,7 +584,9 @@ def test_tag_manager_renames_and_adds_searchable_alias(page,tmp_path):
         page.locator("#login-form button").click()
         page.locator('#nav a[href="#/tags"]').click()
         page.locator(".entity-search input").fill("Evening")
-        page.get_by_role("button",name="Manage tag: Evening",exact=True).click()
+        edit = page.get_by_role("button", name="Manage tag: Evening", exact=True)
+        edit.locator("..").hover()
+        edit.click()
         page.locator('[data-rename] [name="name"]').fill("Twilight views")
         with page.expect_response("**/api/v1/tags/*") as saved:
             page.locator("[data-rename] button").click()
@@ -1129,6 +1131,7 @@ def test_catalog_records_keep_filter_paging_retry_and_entry_actions(page, tmp_pa
         expect(content.locator('.entity-row')).to_have_count(1)
         if kind == 'tags':
             edit = content.locator('[data-edit-tag]')
+            edit.locator('..').hover()
             edit.click()
             expect(page.locator('[data-rename] [name=name]')).to_have_value(primary)
             page.locator('.modal [data-close]').click()
@@ -2748,6 +2751,7 @@ def test_counted_image_text_is_consistent_across_pages_and_batch_states(page, tm
         navigate_from_sidebar(page, '#/tags')
         expect(page.locator('.entity-row .muted')).to_have_text([expected, expected])
         primary = page.locator('.entity-row').filter(has=page.locator('a[href="#/tag/Primary"]'))
+        primary.hover()
         primary.locator('[data-edit-tag]').click()
         page.locator('[data-alias] [name=alias]').fill('Merge source')
         page.locator('[data-alias] button').click()
@@ -2765,3 +2769,135 @@ def test_counted_image_text_is_consistent_across_pages_and_batch_states(page, tm
         page.locator('[data-batch-apply]').click()
         status = page.locator('[data-batch-status] [role=status]:not([data-status-error])')
         expect(status).to_have_text(('已完成' if language == 'zh' else 'Completed') + ' · ' + expected + ' · ' + (f'已修改 {count}' if language == 'zh' else f'changed {count}'))
+
+
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_tag_management_reveals_independently_for_mouse_and_keyboard(page, tmp_path, language):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    folder = tmp_path / 'images'
+    password = secrets.token_urlsafe(24)
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        uid = auth.create_user(conn, 'browser-test', password, is_admin=True)
+        make_image(folder / 'sample.png', (40, 90, 150), size=(60, 40))
+        lid = libsvc.create_library(conn, 'Gallery', str(folder))
+        indexer.scan_library(conn, cfg, lid)
+        iid = conn.execute('SELECT id FROM images').fetchone()[0]
+        ops.add_tags(conn, iid, [f'Tag {n:02}' for n in range(30)], uid)
+    with http_server(cfg) as client:
+        live = WebServer(str(client.base_url), password, folder, folder)
+        page.set_viewport_size({'width': 1440, 'height': 1000})
+        sign_in(page, live, language)
+        navigate_from_sidebar(page, '#/tags')
+        buttons = page.locator('.tags-page [data-edit-tag]')
+        expect(buttons).to_have_count(30)
+        search = page.locator('.tags-page input[type=search]')
+        search.focus()
+        page.mouse.move(0, 0)
+        visible = lambda: buttons.evaluate_all('els=>els.filter(el=>el.checkVisibility({opacityProperty:true,visibilityProperty:true,contentVisibilityAuto:true})).length')
+        assert visible() == 0
+        first = buttons.first
+        row = page.locator('.tags-page .entity-row').first
+        row.hover()
+        expect(first).to_have_css('opacity', '1')
+        assert visible() == 1
+        page.mouse.move(0, 0)
+        expect(first).to_have_css('opacity', '0')
+        assert visible() == 0
+        # Real Tab navigation must reveal the row, then reach the edit button.
+        search.press('Tab')
+        expect(row.locator('.entity-link')).to_be_focused()
+        expect(first).to_have_css('opacity', '1')
+        page.keyboard.press('Tab')
+        expect(first).to_be_focused()
+        assert visible() == 1
+        assert first.evaluate('el=>{const r=el.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return r.top>=0&&r.bottom<=innerHeight&&el.contains(hit)}')
+        page.keyboard.press('Enter')
+        expect(page.locator('[data-rename] [name=name]')).to_have_value('Tag 00')
+        page.locator('.modal [data-close]').click()
+        expect(first).to_be_focused()
+        expect(first).to_have_css('opacity', '1')
+        search.focus()
+        page.mouse.move(0, 0)
+        expect(first).to_have_css('opacity', '0')
+        assert visible() == 0
+        # The independent mouse path still opens the same record's editor.
+        row.hover()
+        first.click()
+        expect(page.locator('[data-rename] [name=name]')).to_have_value('Tag 00')
+
+
+@pytest.mark.parametrize('language', ['zh', 'en'])
+def test_touch_tag_actions_reveal_the_correct_editor_and_preserve_browsing(browser, tmp_path, language):
+    from playwright.sync_api import expect
+    from tests.scenario_support import http_server
+    cfg = Config(tmp_path / 'data').ensure()
+    folder = tmp_path / 'images'
+    password = secrets.token_urlsafe(24)
+    with dbm.open_db(cfg.db_path) as conn:
+        auth.ensure_default_groups(conn)
+        uid = auth.create_user(conn, 'browser-test', password, is_admin=True)
+        make_image(folder / 'sample.png', (40, 90, 150), size=(60, 40))
+        lid = libsvc.create_library(conn, 'Gallery', str(folder))
+        indexer.scan_library(conn, cfg, lid)
+        iid = conn.execute('SELECT id FROM images').fetchone()[0]
+        ops.add_tags(conn, iid, [f'Tag {n:02}' for n in range(30)], uid)
+    context = browser.new_context(viewport={'width':390, 'height':844}, is_mobile=True, has_touch=True)
+    page = context.new_page()
+    errors = []
+    page.on('pageerror', lambda error: errors.append(str(error)))
+    try:
+        with http_server(cfg) as client:
+            live = WebServer(str(client.base_url), password, folder, folder)
+            sign_in(page, live, language)
+            navigate_from_sidebar(page, '#/tags')
+            buttons = page.locator('.tags-page [data-edit-tag]')
+            triggers = page.locator('.tags-page [data-tag-actions]')
+            expect(buttons).to_have_count(30)
+            expect(triggers).to_have_count(30)
+            visible = lambda: buttons.evaluate_all('els=>els.filter(el=>el.checkVisibility({opacityProperty:true,visibilityProperty:true,contentVisibilityAuto:true})).length')
+            assert visible() == 0
+            row = page.locator('.tags-page .entity-row').nth(1)
+            trigger, edit = row.locator('[data-tag-actions]'), row.locator('[data-edit-tag]')
+            expect(trigger).to_have_attribute('aria-label', '标签操作：Tag 01' if language == 'zh' else 'Tag actions: Tag 01')
+            expect(trigger).to_have_attribute('aria-expanded', 'false')
+            trigger.tap()
+            expect(edit).to_be_focused()
+            expect(edit).to_have_css('opacity', '1')
+            expect(trigger).to_have_attribute('aria-expanded', 'true')
+            assert visible() == 1
+            expect(page.locator('.modal')).to_have_count(0)
+            assert edit.evaluate('el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}')
+            edit.tap()
+            expect(page.locator('[data-rename] [name=name]')).to_have_value('Tag 01')
+            page.locator('.modal [data-close]').tap()
+            expect(edit).to_be_focused()
+            expect(edit).to_have_css('opacity', '1')
+            page.locator('.tags-page h1').tap()
+            expect(edit).to_have_css('opacity', '0')
+            expect(trigger).to_have_attribute('aria-expanded', 'false')
+            assert visible() == 0
+            # Touch does not introduce a second keyboard stop for the same action.
+            search = page.locator('.tags-page input[type=search]')
+            search.focus()
+            search.press('Tab')
+            expect(page.locator('.entity-link').first).to_be_focused()
+            page.keyboard.press('Tab')
+            expect(buttons.first).to_be_focused()
+            expect(buttons.first).to_have_css('opacity', '1')
+            page.keyboard.press('Escape')
+            expect(search).to_be_focused()
+            assert visible() == 0
+            # The name keeps its existing destination: the tag's image grid.
+            link = row.locator('.entity-link')
+            href = link.get_attribute('href')
+            link.tap()
+            expect(page).to_have_url(str(client.base_url) + '/' + href)
+            expect(page.locator('#grid .card')).to_have_count(1)
+            page.mouse.move(0, 0)
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        assert not errors
+    finally:
+        context.close()
