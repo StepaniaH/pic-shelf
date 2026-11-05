@@ -4,6 +4,41 @@ User-facing changes, newest first. The format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-11-05
+
+The interface was redesigned around one rule: content is the subject, controls stay quiet.
+
+### Changed
+
+- The sidebar groups pages into Browse, Organize and Settings. Library is reached from the
+  logo, and the image grid is named Images.
+- List and grid pages use text actions instead of filled buttons and outlined boxes; sort and
+  density selectors carry a background instead of a border, while the search field keeps its
+  outline as the primary input.
+- The image, favorites and inbox grids show a selection bar under the heading with the selected
+  count and a single exit action.
+- The viewer labels every panel row, and its shortcuts are listed in one place on screen.
+- Album cards show the image count and album type once, without repeating the album name.
+- Admin uses text tabs with an underline for the current section. Libraries are listed as
+  records with their actions on the right, and adding a library sits at the end of the list.
+- Tag rows reveal Manage tag on hover or keyboard focus. On touch devices an actions button
+  opens it, and tapping the tag name still lists its images.
+- The library home page uses the same quiet controls for adding, importing and viewing all.
+- On a phone the search field collapses to an icon in the top bar. Tapping it opens the field and
+  focuses it; Enter submits and closes it, and closing keeps the query. Desktop keeps the field
+  in the bar.
+
+### Fixed
+
+- Counted English strings use the singular for one item, including templates that count two
+  different sets in one sentence.
+- Undoing a batch restores every card that was removed instead of leaving the list one short.
+
+### Upgrading
+
+No database changes. Interface changes apply on reload; no configuration or migration is
+required.
+
 ## [0.0.2] - 2026-11-02
 
 First published build. Everything below landed between the initial commit and this release.
