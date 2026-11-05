@@ -105,8 +105,7 @@ button switches between create and preview as the selection changes; thumbnail o
 when the selection is replaced and when the dialog closes. Closing the dialog aborts unfinished source
 requests and releases staged uploads that never executed; already-queued jobs continue. After a completed
 close, the original list refreshes while keeping filters, sorting and the page, and focus returns to the
-triggering button. Old deep links still open the dialog; the admin page no longer offers a separate
-import tab.
+triggering button. Old deep links still open the dialog.
 
 Album import stores `album_id` in an immutable preview and rechecks album edit permission and its library
 when creating, reading, executing per file and publishing results. Only manual albums in the same library
