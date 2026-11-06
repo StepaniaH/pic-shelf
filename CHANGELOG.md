@@ -4,7 +4,7 @@ User-facing changes, newest first. The format follows [Keep a Changelog](https:/
 
 ## [Unreleased]
 
-## [0.0.4] - 2026-11-05
+## [0.0.4] - 2026-11-06
 
 Maintenance release. The interface and behaviour are unchanged from 0.0.3; this build exists so
 the published version points at the exact revision that was tested.
